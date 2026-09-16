@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Slack Kanal Aynalama (C08TKRJQ96G → C0BMBT1A6KX)
 // @namespace    slack-kanal-aynala
-// @version      1.0.0
-// @description  Kaynak kanala düşen her mesajı ve her thread cevabını hedef kanala olduğu gibi aktarır. WebSocket kancası ile anlık, periyodik yoklama ile kayıpsız; düzenleme ve silmeleri de aynalar.
+// @version      1.1.0
+// @description  Kaynak kanala düşen her mesajı ve her thread cevabını hedef kanala BİREBİR aktarır: ekleme yok, çıkarma yok. WebSocket kancası ile anlık, periyodik yoklama ile kayıpsız; düzenleme ve silmeleri de aynalar.
 // @author       —
 // @match        https://app.slack.com/*
 // @match        https://*.slack.com/*
@@ -21,13 +21,27 @@
     SRC: 'C08TKRJQ96G',          // kaynak kanal (dinlenen)
     DST: 'C0BMBT1A6KX',          // hedef kanal (yazılan)
 
-    INCLUDE_AUTHOR: true,        // mesajın başına "*Yazar*" satırı ekle
-    INCLUDE_PERMALINK: true,     // yazar satırına orijinal mesajın bağlantısını ekle
+    // BİREBİR KOPYA: metne hiç dokunulmaz, hiçbir şey eklenmez.
+    // Zengin biçimlendirme (kalın, liste, kod, alıntı, emoji) `blocks` olarak
+    // olduğu gibi taşınır. Aşağıdaki INCLUDE_* / KEEP_* ayarları yalnız
+    // EXACT_COPY:false iken devreye girer.
+    EXACT_COPY: true,
+
+    // Deneysel: mesajı orijinal yazarın adı ve avatarıyla göndermeyi dener.
+    // Çoğu workspace bunu kullanıcı oturumuna kapatır; kapalıysa script
+    // kendiliğinden normal gönderime döner. Kapalıyken mesajlar SENİN
+    // adınla görünür (tarayıcı oturumuyla çalışmanın kaçınılmaz sonucu).
+    IMPERSONATE_AUTHOR: false,
+
     MIRROR_THREADS: true,        // thread cevaplarını hedefte de thread olarak tut
     MIRROR_EDITS: true,          // kaynakta düzenlenen mesajı hedefte güncelle
     MIRROR_DELETES: true,        // kaynakta silinen mesajı hedefte de sil
-    KEEP_USER_MENTIONS: false,   // false → <@U123> düz "@ad" metnine çevrilir (kimse ping'lenmez)
     UNFURL: true,                // hedefte bağlantı önizlemeleri açılsın mı
+
+    // --- yalnız EXACT_COPY:false iken --------------------------------
+    INCLUDE_AUTHOR: true,        // mesajın başına "*Yazar*" satırı ekle
+    INCLUDE_PERMALINK: true,     // yazar satırına orijinal mesajın bağlantısını ekle
+    KEEP_USER_MENTIONS: false,   // false → <@U123> düz "@ad" metnine çevrilir
 
     BACKFILL_MINUTES: 0,         // ilk açılışta kaç dakikalık geçmiş aktarılsın (0 = yok)
     POLL_SECONDS: 20,            // WebSocket'in kaçırdıklarını toplayan yoklama aralığı
@@ -45,7 +59,7 @@
     DEBUG: false,
   };
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
   const PREFIX = '[SLACK AYNA]';
   const STATE_KEY = `slackMirror.state.${CONFIG.SRC}.${CONFIG.DST}.v1`;
   const USERS_KEY = 'slackMirror.users.v1';
@@ -181,19 +195,27 @@
     throw new Error(`Hiçbir oturum ${CONFIG.SRC} kanalını göremiyor (kanalın üyesi misiniz?)`);
   }
 
-  async function getUserName(id) {
-    if (!id) return 'bilinmeyen';
-    if (userCache[id]) return userCache[id];
+  // { n: görünen ad, i: avatar url }
+  async function getUserProfile(id) {
+    if (!id) return { n: 'bilinmeyen', i: '' };
+    const hit = userCache[id];
+    if (hit && typeof hit === 'object') return hit;
+    if (typeof hit === 'string' && !CONFIG.IMPERSONATE_AUTHOR) return { n: hit, i: '' };
+    let out = { n: id, i: '' };
     try {
       const r = await api('users.info', { user: id });
       const p = r.user.profile || {};
-      userCache[id] = p.display_name || p.real_name || r.user.real_name || r.user.name || id;
-    } catch (_) {
-      userCache[id] = id;
-    }
+      out = {
+        n: p.display_name || p.real_name || r.user.real_name || r.user.name || id,
+        i: p.image_72 || p.image_48 || p.image_192 || '',
+      };
+    } catch (_) { /* ad yerine id ile devam */ }
+    userCache[id] = out;
     writeJSON(USERS_KEY, userCache);
-    return userCache[id];
+    return out;
   }
+
+  const getUserName = async (id) => (await getUserProfile(id)).n;
 
   // ============================================================
   // 4. METİN DÖNÜŞÜMÜ
@@ -232,6 +254,13 @@
     return text;
   }
 
+  // Dosyalar hedef kanala yeniden yüklenemez; Slack'in kendi kalıcı bağlantısı
+  // gönderildiğinde önizleme hedefte de olduğu gibi açılır.
+  function fileLinks(msg) {
+    if (!Array.isArray(msg.files) || !msg.files.length) return '';
+    return msg.files.map((f) => f.permalink || f.url_private || '').filter(Boolean).join('\n');
+  }
+
   function fileLines(msg) {
     if (!Array.isArray(msg.files) || !msg.files.length) return '';
     return '\n' + msg.files.map((f) => {
@@ -240,13 +269,18 @@
     }).join('\n');
   }
 
-  async function authorOf(msg) {
-    if (msg.user) return getUserName(msg.user);
-    if (msg.bot_profile && msg.bot_profile.name) return msg.bot_profile.name;
-    if (msg.username) return msg.username;
-    if (msg.bot_id) return `bot ${msg.bot_id}`;
-    return 'bilinmeyen';
+  async function authorInfo(msg) {
+    if (msg.user) {
+      const p = await getUserProfile(msg.user);
+      return { name: p.n, icon: p.i };
+    }
+    const icons = (msg.bot_profile && msg.bot_profile.icons) || msg.icons || {};
+    const name = (msg.bot_profile && msg.bot_profile.name) || msg.username ||
+      (msg.bot_id ? `bot ${msg.bot_id}` : 'bilinmeyen');
+    return { name, icon: icons.image_72 || icons.image_48 || '' };
   }
+
+  const authorOf = async (msg) => (await authorInfo(msg)).name;
 
   async function permalinkOf(ts) {
     if (!CONFIG.INCLUDE_PERMALINK) return '';
@@ -256,9 +290,41 @@
     } catch (_) { return ''; }
   }
 
-  // Gönderilecek payload'u kurar. Metni olmayan (yalnız blok/eklenti içeren)
-  // bot mesajlarında bloklar olduğu gibi taşınır.
+  // Gönderilecek payload'u kurar.
   async function buildPayload(msg) {
+    const payload = {
+      channel: CONFIG.DST,
+      unfurl_links: CONFIG.UNFURL,
+      unfurl_media: CONFIG.UNFURL,
+      mrkdwn: true,
+    };
+
+    if (CONFIG.IMPERSONATE_AUTHOR) {
+      const a = await authorInfo(msg);
+      payload.username = a.name;
+      if (a.icon) payload.icon_url = a.icon;
+      payload.as_user = false;
+    }
+
+    // ---- BİREBİR KOPYA ----------------------------------------------
+    // Metin ham hâliyle gider: biçimlendirme, emoji, bahsetmeler, kanal
+    // bağlantıları — hepsi kaynaktaki kodlamasıyla. Zengin içerik `blocks`
+    // olarak birebir taşınır, böylece hedefte aynı görünür.
+    if (CONFIG.EXACT_COPY) {
+      const links = fileLinks(msg);
+      payload.text = [msg.text || '', links].filter(Boolean).join('\n');
+      if (Array.isArray(msg.blocks) && msg.blocks.length) {
+        payload.blocks = links
+          ? [...msg.blocks, { type: 'section', text: { type: 'mrkdwn', text: links } }]
+          : msg.blocks;
+      }
+      if (Array.isArray(msg.attachments) && msg.attachments.length) {
+        payload.attachments = msg.attachments;
+      }
+      return payload;
+    }
+
+    // ---- AÇIKLAMALI KİP (yazar satırı + kalıcı bağlantı) -------------
     const [author, body, link] = await Promise.all([
       authorOf(msg),
       transformText(msg.text),
@@ -271,12 +337,6 @@
 
     const files = fileLines(msg);
     const hasText = Boolean((msg.text || '').trim());
-    const payload = {
-      channel: CONFIG.DST,
-      unfurl_links: CONFIG.UNFURL,
-      unfurl_media: CONFIG.UNFURL,
-      mrkdwn: true,
-    };
 
     if (!hasText && Array.isArray(msg.blocks) && msg.blocks.length) {
       const blocks = header
@@ -344,10 +404,24 @@
     return null;
   }
 
+  // Kullanıcı oturumuyla yazar taklidi çoğu workspace'te kapalıdır.
+  const IMPERSONATE_ERRORS = [
+    'not_allowed_token_type', 'as_user_not_supported', 'invalid_arguments', 'cannot_post_as_user',
+  ];
+
   async function postMessage(msg, parentDstTs) {
     const payload = await buildPayload(msg);
     if (parentDstTs) payload.thread_ts = parentDstTs;
-    const r = await api('chat.postMessage', payload);
+    let r;
+    try {
+      r = await api('chat.postMessage', payload);
+    } catch (e) {
+      if (!CONFIG.IMPERSONATE_AUTHOR || !IMPERSONATE_ERRORS.includes(e.slackError)) throw e;
+      warn(`yazar taklidi bu oturumda desteklenmiyor (${e.slackError}), kapatıldı`);
+      CONFIG.IMPERSONATE_AUTHOR = false;
+      delete payload.username; delete payload.icon_url; delete payload.as_user;
+      r = await api('chat.postMessage', payload);
+    }
     state.map[msg.ts] = r.ts;
     state.count++;
     markSeen(msg.ts);
@@ -620,7 +694,7 @@
       save(); updateBadge();
     },
     // testler için saf yardımcılar
-    _: { neutralizeBroadcasts, plainMentions, mentionIds, isMirrorable, fileLines, tsGreater },
+    _: { neutralizeBroadcasts, plainMentions, mentionIds, isMirrorable, fileLinks, fileLines, tsGreater },
   };
 
   log(`v${VERSION} yüklendi — ${CONFIG.SRC} → ${CONFIG.DST}`);

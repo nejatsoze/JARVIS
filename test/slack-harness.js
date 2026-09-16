@@ -53,6 +53,8 @@ function respond(method, params) {
     case 'chat.getPermalink':
       return { ok: true, permalink: `https://t.slack.com/archives/${params.channel}/p${String(params.message_ts).replace('.', '')}` };
     case 'chat.postMessage':
+      // gerçek workspace'lerin çoğu gibi: kullanıcı oturumuyla yazar taklidine izin yok
+      if (params.as_user !== undefined) return { ok: false, error: 'not_allowed_token_type' };
       return { ok: true, ts: `900${++postSeq}.000000` };
     case 'chat.update':
     case 'chat.delete':

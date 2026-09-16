@@ -3,7 +3,7 @@
 | Dosya | Ne yapar |
 |---|---|
 | `gamingtec-ai-ozet.user.js` | Oyuncu işlemlerinde yüksek `Win/Bet` oranlı turları yakalar |
-| `slack-kanal-aynala.user.js` | Bir Slack kanalındaki her mesajı/cevabı başka kanala aynalar |
+| `slack-kanal-aynala.user.js` | Bir Slack kanalındaki her mesajı/cevabı başka kanala birebir aynalar |
 
 ```bash
 node test/analysis.test.js       # AI ÖZET testleri
@@ -125,16 +125,36 @@ hesabınızdan gönderilir; script masaüstü uygulamasında değil, tarayıcıd
 
 ### Aktarılan mesajın biçimi
 
+Varsayılan **birebir kopya** (`EXACT_COPY: true`): metne hiç dokunulmaz. Yazar satırı
+yok, kalıcı bağlantı yok, hiçbir dönüşüm yok. Zengin biçimlendirme (kalın, liste, kod
+bloğu, alıntı, emoji) mesajın `blocks` yapısı olduğu gibi taşındığı için hedefte
+kaynaktakiyle aynı görünür; `attachments` da aynen geçer.
+
+Dosyalar hedef kanala yeniden yüklenemez — Slack'in kendi kalıcı bağlantısı gönderilir,
+erişimi olanlarda önizleme olduğu gibi açılır.
+
+İki kaçınılmaz sınır:
+
+- **Gönderen sensin.** Tarayıcı oturumuyla çalışıldığı için mesajlar senin adınla düşer.
+  `IMPERSONATE_AUTHOR: true` yaparak orijinal ad/avatarla göndermeyi deneyebilirsin;
+  çoğu workspace bunu kullanıcı oturumuna kapatır, kapalıysa script uyarı yazıp
+  kendiliğinden normal gönderime döner (mesaj kaybolmaz).
+- **Bahsetmeler gerçek ping'tir.** Birebir kopyada `@channel` / `@here` / `@kişi`
+  aynen gider, yani hedef kanalda da bildirim üretir. İstemiyorsan `EXACT_COPY: false`
+  yap — o zaman aşağıdaki açıklamalı kip devreye girer.
+
+`EXACT_COPY: false` iken mesaj şöyle aktarılır:
+
 ```
 *Ada Yılmaz* ↗
-orijinal metin (biçimlendirme, emoji, bağlantılar olduğu gibi)
+orijinal metin
 📎 rapor.pdf
 ```
 
-`↗` orijinal mesajın kalıcı bağlantısıdır. `@channel` / `@here` / `@grup` çağrıları düz
-metne indirgenir ve `<@U123>` bahsetmeleri `@ad` olarak yazılır — ayna kanalı her
-aktarımda kimseyi uyandırmasın diye. Metni olmayan bot mesajlarında `blocks` /
-`attachments` olduğu gibi taşınır.
+`↗` orijinal mesajın kalıcı bağlantısıdır, `@channel`/`@grup` çağrıları ve `<@U123>`
+bahsetmeleri düz metne indirgenir. **Not:** Slack bu kalıcı bağlantıyı bir alıntı kutusu
+olarak açar, yani aktarılan mesaj "iç içe alıntı" gibi görünür. Bunu istemiyorsan
+`INCLUDE_PERMALINK: false` yap ya da birebir kipte kal.
 
 ### Ayarlar
 
@@ -143,15 +163,18 @@ Dosyanın başındaki `CONFIG` bloğu:
 | Anahtar | Varsayılan | Açıklama |
 |---|---|---|
 | `SRC` / `DST` | `C08TKRJQ96G` / `C0BMBT1A6KX` | kaynak ve hedef kanal |
-| `INCLUDE_AUTHOR` | `true` | yazar satırı eklensin mi |
-| `INCLUDE_PERMALINK` | `true` | yazar satırına orijinal bağlantı |
+| `EXACT_COPY` | `true` | birebir kopya; `false` → yazar satırlı açıklamalı kip |
+| `IMPERSONATE_AUTHOR` | `false` | orijinal ad/avatarla göndermeyi dene (deneysel) |
 | `MIRROR_THREADS` | `true` | cevaplar hedefte de thread olsun |
 | `MIRROR_EDITS` / `MIRROR_DELETES` | `true` | düzenleme / silme aynalansın mı |
-| `KEEP_USER_MENTIONS` | `false` | `true` yaparsanız bahsetmeler gerçek ping olur |
+| `UNFURL` | `true` | hedefte bağlantı önizlemeleri açılsın mı |
 | `BACKFILL_MINUTES` | `0` | ilk açılışta kaç dakikalık geçmiş aktarılsın |
 | `POLL_SECONDS` | `20` | yedek yoklama aralığı |
 | `POST_INTERVAL_MS` | `1200` | iki gönderim arası asgari bekleme |
 | `DEBUG` | `false` | ayrıntılı konsol günlüğü |
+
+Yalnız `EXACT_COPY: false` iken: `INCLUDE_AUTHOR` (`true`), `INCLUDE_PERMALINK` (`true`),
+`KEEP_USER_MENTIONS` (`false`).
 
 İlk çalıştırmada geçmiş **aktarılmaz**; yalnız o andan sonraki mesajlar gider.
 
@@ -170,8 +193,9 @@ Durum `localStorage` altında `slackMirror.state.<SRC>.<DST>.v1` anahtarında sa
 
 ### Testler
 
-WebSocket, `fetch` ve Slack API taklidi üzerinde uçtan uca doğrulama (token elemesi,
-tekilleştirme, thread eşleme, düzenleme/silme, yoklama yedeği, duraklatma):
+WebSocket, `fetch` ve Slack API taklidi üzerinde uçtan uca doğrulama (birebir kopya,
+token elemesi, tekilleştirme, thread eşleme, dosya eki, düzenleme/silme, yoklama yedeği,
+yazar taklidi geri düşüşü, duraklatma):
 
 ```bash
 node test/slack-mirror.test.js
