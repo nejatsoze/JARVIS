@@ -592,12 +592,10 @@ GT.define({
             clearHighlights();
             activeMode = 'CHK';
             setActive('CHK');
-            results = { invalid: [], valid: [], unpairedBets: [], skipped: 0, total: 0, ratio: results.ratio };
-            status = { msg: '🔍 GT Sports (Betby) taranıyor...', color: 'var(--gt-warn)' };
-            renderAll();
+            log('[Ratio Checker] GT Sports (Betby) taranıyor...');
 
             const table = ratioFindTable();
-            if (!table) { status = { msg: '⚠️ Tablo bulunamadı.', color: 'var(--gt-warn)' }; renderAll(); return; }
+            if (!table) { warn('[Ratio Checker] Tablo bulunamadı.'); return; }
 
             const headers = ratioHeaderCells(table).map(cell => txt(cell).toUpperCase());
             const productIdx = headers.findIndex(t => t === 'PRODUCT');
@@ -605,8 +603,7 @@ GT.define({
             const gameIdIdx = headers.findIndex(t => t === 'GAME ID');
 
             if (productIdx === -1 || instanceIdx === -1) {
-                status = { msg: '⚠️ PRODUCT veya Game Instance sütunu bulunamadı.', color: 'var(--gt-warn)' };
-                renderAll();
+                warn('[Ratio Checker] PRODUCT veya Game Instance sütunu bulunamadı.');
                 return;
             }
 
@@ -658,8 +655,7 @@ GT.define({
                 }
             }
 
-            status = { msg: `✅ ${pairCounter} eşleşmiş çift · ⏳ ${unpairedBets.length} kayıp/beklemede oran çekiliyor...`, color: 'var(--gt-accent)' };
-            renderAll();
+            log(`[Ratio Checker] ${pairCounter} eşleşmiş çift · ${unpairedBets.length} kayıp/beklemede oran çekiliyor...`);
 
             if (unpairedBets.length) {
                 await ratioRunWithConcurrency(unpairedBets, 4, async (bet) => {
@@ -672,13 +668,9 @@ GT.define({
                 });
             }
 
-            status = {
-                msg: pairCounter || unpairedBets.length
-                    ? `✅ ${pairCounter} eşleşmiş, ${unpairedBets.length} beklemede/kayıp bet işaretlendi.`
-                    : 'ℹ️ GT Sports (Betby) pair bulunamadı.',
-                color: 'var(--gt-success)',
-            };
-            renderAll();
+            log(pairCounter || unpairedBets.length
+                ? `[Ratio Checker] ${pairCounter} eşleşmiş, ${unpairedBets.length} beklemede/kayıp bet işaretlendi.`
+                : '[Ratio Checker] GT Sports (Betby) pair bulunamadı.');
         }
 
         function onClear() {
@@ -696,9 +688,9 @@ GT.define({
             runScan(r);
         }
 
+        // Popover açmadan doğrudan tabloya işler: tekrar tıklamak rozetleri temizler.
         function onChkClick() {
-            if (activeMode === 'CHK' && pop.isOpen) { pop.close(); return; }
-            pop.open();
+            if (activeMode === 'CHK') { onClear(); return; }
             runGtSportsCheck();
         }
 
