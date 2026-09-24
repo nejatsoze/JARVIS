@@ -1,0 +1,1398 @@
+// ==UserScript==
+// @name         GT Player — oyuncu detayı
+// @namespace    palentis.gt
+// @version      1.0.3
+// @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
+// @match        https://core-secundus.gmntc.com/*
+// @noframes
+// @grant        none
+// @run-at       document-idle
+// ==/UserScript==
+
+(() => {
+'use strict';
+
+const W = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
+
+(W.__GT__ = W.__GT__ || []).push((GT) => {
+
+const { h, $, $$, txt, esc, css, log, warn, oops, at, api, ui, ICON, fmtTRY } = GT;
+
+/* ════════════════════════════════════════════════════════════
+   SABİTLER
+   ════════════════════════════════════════════════════════════ */
+
+const BTAG = {
+    p3726p175p7b4a: 'CenkBey', p3481p89p3361: 'CenkBey Eski', p3433p36pdf8e: 'BahisciPablo',
+    p3541p131pe562: 'RealSeo', p3262p14p299a: 'HamdiSEO', p3261p13p6c9f: 'MAILING',
+    p3547p136p49ea: 'SlotBuse', p3546p135pee84: 'BonusSemti', p3551p140pf416: 'KodTime',
+    p3549p138p3ff5: 'SlotJack', p3545p134pcdbf: 'BonusSoft', p3550p139pb944: 'SlotBeko',
+    p3548p137p68b5: 'Papiboy',
+};
+
+const VIP_ICON = { BRONZE: '🎖️', SILVER: '♛', GOLD: '🪙', PLATINUM: '🪩', PLATINIUM: '🪩', DIAMOND: '💎' };
+
+const STAFF = {
+    Destek17ZB: ['Ecem', false], Destek4ZB: ['Bulut', false], Destek18ZB: ['Mila', false],
+    Destek2ZB: ['Alina', false], Destek6ZB: ['Minerva', true], Destek8ZB: ['Marcus', true],
+    Destek5ZB: ['Anderson', true], 'Ciomantony Ciomantony': ['Cioman', false], Destek1ZB: ['Arya', false],
+};
+
+const BALANCE_NOTES = {
+    OLD: 'Süresi geçen etkinlik bonusu',
+    IP:  'Çoklu hesap veya IP çakismasi tespit edilmesi sebebiyle, kurallar geregince promosyon iptal edilmis ve elde edilen kazanç geçersiz sayilmistir.',
+    PT:  'Daha önce etkinlik kapsamında çekim yapıldıysa veya etkinlikten 5 kez faydalanılıp yatırım yapılmadıysa, yeni bir yatırım yaparak etkinliklerden tekrar faydalanabilirsiniz.',
+    UST: 'Üst Bakiye',
+};
+
+const SKIP_BONUS = ['Freespin Zuma', 'Zumabet Hosgeldin Freesin'];
+
+/** Yeni panelin yerini aldığı, sayfadan kaldırılan alanlar. */
+const HIDE_LABELS = new Set([
+    'Status', 'Partyid', 'Deposits', 'Withdrawals', 'NET',
+    'Bonus Granted', 'Bonus Released', 'Bonus Withdrawn',
+    'Locked Until', 'Lock Status', 'Account Status', 'Winners List', 'Display Msgs', 'Subscription',
+    'Brand', 'Joined', 'VIP', 'KYC', 'KYC Age', 'KYC System', 'Registration Type', 'NickName',
+    'Bingo Alias', 'Gender', 'CCLEVEL', 'Phone', 'Antifraud Status', 'Antifraud Check', 'AML/PEP Check',
+    'Primary Wallet UUID', 'Trust Level', 'User Session',
+]);
+
+const PERIODS = [
+    ['TODAY', 'Bugün'], ['YESTERDAY', 'Dün'], ['WTD', 'WTD'], ['MTD', 'MTD'],
+    ['LM', 'Geçen ay'], ['YTD', 'YTD'], ['LTD', 'LTD'],
+];
+
+/** Gizlenen alanlar: etiket → {text, pencil}. Kartlar buradan okur. */
+const hidden = new Map();
+
+function field(label) {
+    const hit = hidden.get(label);
+    if (hit?.pencil?.isConnected || hit) return hit;
+    for (const cell of $$('td.text-xs-left')) {
+        if (txt(cell) !== label) continue;
+        const value = cell.nextElementSibling;
+        const edit = value?.nextElementSibling;
+        if (value) return { text: txt(value), pencil: edit?.querySelector('i.fa-pencil-square-o') || null };
+    }
+    return null;
+}
+
+const pref = (k, d) => { try { return localStorage.getItem('gt.player.' + k) ?? d; } catch { return d; } };
+const setPref = (k, v) => { try { localStorage.setItem('gt.player.' + k, v); } catch { /* kota */ } };
+const asList = (b) => Array.isArray(b) ? b : (b?.data || b?.content || b?.items || []);
+const money = (n) => Number(n || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const ymd = (offsetDays = 0) => {
+    const d = new Date(); d.setDate(d.getDate() + offsetDays);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const dmy = (offsetDays = 0) => {
+    const d = new Date(); d.setDate(d.getDate() + offsetDays);
+    return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+};
+const hhmm = (d) => d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+
+/* ════════════════════════════════════════════════════════════
+   VERİ KATMANI
+   ════════════════════════════════════════════════════════════ */
+
+async function profile(pid) {
+    try {
+        const data = await api.json(api.ics(`players/${pid}/full-profile`), { ttl: 300000 });
+        const codes = data?.userTrackingCodes;
+        let btag = null;
+        if (Array.isArray(codes)) {
+            const entry = codes.find(c => c.codeKey === 'btag');
+            if (entry?.value) btag = BTAG[entry.value.split('&')[0].trim()] || 'Marketing';
+        }
+        return {
+            firstName: data?.firstName || '', lastName: data?.lastName || '',
+            birthDate: (data?.birthDate && data.birthDate !== 'N/A') ? data.birthDate : null,
+            city: (data?.city && data.city !== 'N/A') ? data.city : null,
+            btag,
+        };
+    } catch (e) { oops('[Player] full-profile:', e); return null; }
+}
+
+async function games24h(pid) {
+    try {
+        const data = await api.json(api.ics('player-game-play', {
+            partyId: pid, startDate: ymd(-1), endDate: ymd(0), currency: 'undefined',
+        }), { ttl: 120000 });
+        if (!Array.isArray(data)) return [];
+        return [...new Set(data.map(v => v.gameName).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'tr'));
+    } catch (e) { oops('[Player] game-play:', e); return []; }
+}
+
+async function accounting(pid) {
+    const list = asList(await api.json(api.ics(`players/${pid}/financial/deposits-and-withdrawals`), { ttl: 60000 }));
+    const out = {};
+    for (const row of list) {
+        const period = String(row.period || '').toUpperCase();
+        const type = String(row.tranType || '').toLowerCase();
+        const amount = Number(row.amount) || 0;
+        if (!out[period]) out[period] = { dep: 0, wd: 0 };
+        if (type.startsWith('dep')) out[period].dep += amount;
+        else if (type.startsWith('with')) out[period].wd += amount;
+    }
+    return out;
+}
+
+/* ── KYCAID portresi (ayrı CSRF akışı — Bearer ile karıştırma) ── */
+const portraitCache = new Map();
+
+function deepFind(obj, test, seen = new Set()) {
+    if (!obj || typeof obj !== 'object' || seen.has(obj)) return undefined;
+    seen.add(obj);
+    for (const [k, v] of Object.entries(obj)) {
+        if (test(k, v)) return v;
+        if (v && typeof v === 'object') { const r = deepFind(v, test, seen); if (r !== undefined) return r; }
+    }
+    return undefined;
+}
+
+async function portrait(pid) {
+    if (portraitCache.has(pid)) return portraitCache.get(pid);
+    try {
+        const session = await api.gm({ method: 'GET', url: 'https://app.kycaid.com/api/session', headers: { Accept: 'application/json' } });
+        const csrf = JSON.parse(session.responseText)?.session?.['csrf-token'];
+        if (!csrf) throw new Error('CSRF yok');
+
+        const search = await api.gm({
+            method: 'POST', url: 'https://app.kycaid.com/api/verifications',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'CSRF-Token': csrf },
+            data: JSON.stringify({ customer_id: 24931, timezone: 'Europe/Kiev', searchType: 'external_id', page: 1, count: 10, search: String(pid) }),
+        });
+
+        const ids = new Set();
+        (function walk(o, seen = new Set()) {
+            if (!o || typeof o !== 'object' || seen.has(o)) return;
+            seen.add(o);
+            for (const [k, v] of Object.entries(o)) {
+                if (typeof v === 'string' && /id/i.test(k) && /^[0-9a-f-]{16,}$/i.test(v)) ids.add(v);
+                walk(v, seen);
+            }
+        })(JSON.parse(search.responseText));
+
+        for (const id of ids) {
+            const res = await api.gm({ method: 'GET', url: `https://app.kycaid.com/api/verifications/${id}`, headers: { Accept: 'application/json', 'CSRF-Token': csrf } });
+            let json; try { json = JSON.parse(res.responseText); } catch { continue; }
+            const url = deepFind(json, (_, v) => typeof v === 'string' && /portraits\//i.test(v) && /\.(jpg|jpeg|png|webp)/i.test(v));
+            if (url) { portraitCache.set(pid, url); return url; }
+        }
+    } catch (e) { oops('[Player] KYCAID:', e); }
+    portraitCache.set(pid, null);
+    return null;
+}
+
+/* ── giriş kayıtları + IP konumu ── */
+const pickField = (obj, names) => {
+    const keys = Object.keys(obj || {});
+    for (const name of names) {
+        const key = keys.find(k => k.toLowerCase() === name.toLowerCase());
+        if (key !== undefined && obj[key] != null && obj[key] !== '') return obj[key];
+    }
+    return undefined;
+};
+
+function osFromUa(ua) {
+    if (/iPhone|iPad|iPod|iOS/i.test(ua)) return 'iOS';
+    if (/Android/i.test(ua)) return 'Android';
+    if (/Windows/i.test(ua)) return 'Windows';
+    if (/Mac OS X|Macintosh/i.test(ua)) return 'macOS';
+    if (/Linux|X11/i.test(ua)) return 'Linux';
+    return '';
+}
+
+function normalizeLog(r) {
+    const ua = String(pickField(r, ['userAgent', 'ua', 'agent']) || '');
+    const status = pickField(r, ['status', 'success', 'successful', 'loginStatus', 'result']);
+    const mobile = pickField(r, ['mobile', 'isMobile']);
+    let country = pickField(r, ['country', 'countryCode', 'countryIso', 'ipCountry']);
+    if (country && typeof country === 'object') country = country.code || country.name || '';
+    return {
+        time: Number(pickField(r, ['loginTime', 'logoutTime', 'logTime', 'time', 'createdAt', 'date'])) || 0,
+        type: String(pickField(r, ['type', 'logType', 'actionType', 'action', 'loginType', 'eventType']) || '').toUpperCase(),
+        failed: status === false || /fail|error|denied|invalid|block/i.test(String(status ?? '')),
+        mobile: mobile === true || String(mobile).toLowerCase() === 'true',
+        ip: String(pickField(r, ['ip', 'ipAddress', 'loginIp', 'clientIp', 'remoteIp', 'ipAddr']) || ''),
+        country: String(country || ''),
+        os: String(pickField(r, ['deviceOs', 'deviceOS', 'os', 'osName', 'operatingSystem', 'platform']) || '') || osFromUa(ua),
+        browser: String(pickField(r, ['browser', 'browserName', 'browserType']) || '') || ua,
+        device: String(pickField(r, ['device', 'deviceType', 'deviceModel']) || ''),
+    };
+}
+
+async function loginLogs(pid, days) {
+    const list = asList(await api.json(api.ics(`players/${pid}/login-logs/more`, {
+        startDate: ymd(-(days - 1)), endDate: ymd(1),
+    }), { ttl: 60000 }));
+    return list.map(normalizeLog).sort((a, b) => b.time - a.time);
+}
+
+const GEO_TTL = 7 * 864e5;
+let geoCache = {};
+try { geoCache = JSON.parse(localStorage.getItem('gt.geo') || '{}'); } catch { /* bozuk kayıt */ }
+const geoPending = new Set();
+
+const isPrivateIp = (ip) => /^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1$|f[cd])/i.test(ip);
+const geoOf = (ip) => { const g = geoCache[ip]; return g && Date.now() - g.t < GEO_TTL ? g : null; };
+
+function saveGeo() {
+    try {
+        geoCache = Object.fromEntries(Object.entries(geoCache).sort((a, b) => b[1].t - a[1].t).slice(0, 500));
+        localStorage.setItem('gt.geo', JSON.stringify(geoCache));
+    } catch { /* kota */ }
+}
+
+async function geoLookup(ip, onDone) {
+    if (!ip || isPrivateIp(ip) || geoOf(ip) || geoPending.has(ip)) return;
+    geoPending.add(ip);
+    try {
+        const res = await api.gm({ method: 'GET', url: `https://ipwho.is/${encodeURIComponent(ip)}`, timeout: 8000 });
+        const j = JSON.parse(res.responseText);
+        geoCache[ip] = (j && j.success !== false)
+            ? { t: Date.now(), city: j.city || '', region: j.region || '', cc: j.country_code || '', isp: j.connection?.isp || j.connection?.org || '' }
+            : { t: Date.now(), failed: true };
+        saveGeo();
+    } catch { /* ağ hatası: sonraki yüklemede tekrar denenir */ }
+    finally { geoPending.delete(ip); onDone?.(); }
+}
+
+/* ── bonus / deposit / withdrawal / duplicate ── */
+const parseStamp = (s) => { if (!s) return null; const d = new Date(String(s).replace(' ', 'T')); return isNaN(d) ? null : d; };
+
+async function bonuses(pid) {
+    try {
+        const data = await api.json(api.ics(`player-bonus/${pid}`, { currency: 'undefined' }), { ttl: 60000 });
+        return (data || [])
+            .filter(b => b.triggerDate && !SKIP_BONUS.includes(b.planName))
+            .sort((a, b) => (parseStamp(b.triggerDate)?.getTime() || 0) - (parseStamp(a.triggerDate)?.getTime() || 0));
+    } catch (e) { oops('[Player] bonus:', e); return []; }
+}
+
+async function bonusPlanNames(pid) {
+    try {
+        const list = await api.json(api.ics(`player-bonus/${pid}`, { currency: 'undefined' }), { ttl: 60000 });
+        const ids = [...new Set((list || []).map(b => b.bonusPlanId).filter(Boolean))];
+        if (!ids.length) return [];
+        const plans = await api.json(api.ics('bonusplan/id', { ids: ids.join(',') }), { ttl: 300000 });
+        return (plans || []).map(p => p.planName).filter(n => n && n !== 'Freespin Zuma');
+    } catch { return []; }
+}
+
+async function lastDeposit(pid) {
+    try {
+        const data = await api.json(api.ics('player-deposit/query', {
+            partyId: pid, startDate: ymd(-90), endDate: ymd(1), currency: 'TRY',
+        }), { ttl: 60000 });
+        return (data || [])
+            .filter(d => d.paymentStatus === 'COMPLETED')
+            .sort((a, b) => (b.processDate || 0) - (a.processDate || 0))[0] || null;
+    } catch (e) { oops('[Player] deposit:', e); return null; }
+}
+
+async function lastWithdrawal(pid) {
+    try {
+        const doc = await api.doc(api.legacy('player/PlayerWithdrawals.action', {
+            partyId: pid, startDate: dmy(-180), endDate: dmy(1), execute: 'Go',
+        }), { ttl: 60000 });
+        const table = doc.querySelector('#withdrawals');
+        if (!table) { warn('[Player] #withdrawals tablosu yok'); return null; }
+        for (const row of $$('tbody.tbody tr, tbody tr[id^="withdrawals_row"]', table)) {
+            const c = row.cells;
+            if (c.length < 7) continue;
+            const status = (c[4]?.textContent || '').replace(/[a-z]+_[a-z]+/gi, '').replace(/\s+/g, ' ').trim();
+            if (!status.toLowerCase().includes('completed')) continue;
+            return { processDate: txt(c[2]), amount: txt(c[3]), method: txt(c[6]) };
+        }
+        return null;
+    } catch (e) { oops('[Player] withdrawal:', e); return null; }
+}
+
+/** PlayerDuplicates.action'ı verilen ölçütle çalıştırır, satırları tekilleştirir. */
+async function duplicateRows(pid, criteria) {
+    const doc = await api.doc(api.legacy('player/PlayerDuplicates.action', {
+        partyId: pid, matchingItems: '1', execute: 'Search Duplicates', ...criteria,
+    }), { ttl: 60000 });
+    const seen = new Set();
+    const out = [];
+    for (const row of doc.querySelectorAll('tbody tr')) {
+        const c = row.querySelectorAll('td');
+        if (c.length < 5) continue;
+        const id = txt(c[2]);
+        if (!/^\d{8}$/.test(id) || seen.has(id)) continue;
+        seen.add(id);
+        out.push({ id, first: txt(c[3]), last: txt(c[4]) });
+    }
+    return out;
+}
+
+/** Türkçe karakterleri ve noktalamayı düzler: "İbrahim Çağlar" ile
+ *  "ibrahim caglar" aynı isim sayılsın. */
+function normalizeName(s) {
+    return String(s || '')
+        .toLocaleLowerCase('tr-TR')
+        .replace(/ı/g, 'i').replace(/ş/g, 's').replace(/ğ/g, 'g')
+        .replace(/ü/g, 'u').replace(/ö/g, 'o').replace(/ç/g, 'c')
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+}
+
+/* ════════════════════════════════════════════════════════════
+   STİL
+   ════════════════════════════════════════════════════════════ */
+css('gt-player-style', `
+.gt-hidden-field{display:none !important}
+
+#gt-dash{display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start; margin:14px 0 0; text-align:left;
+  font-family:var(--gt-font); font-size:12px; line-height:1.4; color:var(--gt-ink)}
+#gt-dash *{box-sizing:border-box}
+#gt-dash .fa{font-family:FontAwesome; font-style:normal}
+#gt-dash .card{background:#fff; border:1px solid var(--gt-line); border-radius:14px;
+  box-shadow:0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06); min-width:0}
+#gt-dash .card.pad{padding:14px 16px 8px}
+#gt-ozet{flex:0 0 auto; max-width:420px; position:relative; overflow:hidden; --fade:#fff;
+  transition:background-color .2s, border-color .2s}
+#gt-acc{flex:0 0 auto}
+#gt-logs{flex:1 1 460px; min-width:420px; max-width:760px}
+#gt-dash.floating{position:fixed; right:16px; bottom:56px; z-index:99998; flex-direction:column; flex-wrap:nowrap;
+  width:560px; max-width:calc(100vw - 32px); max-height:78vh; overflow:auto; margin:0; padding:8px;
+  background:rgba(255,255,255,.72); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  border-radius:18px; box-shadow:0 18px 48px rgba(0,0,0,.18)}
+#gt-dash.floating .card{width:100%; max-width:none}
+#gt-dash.floating #gt-logs{min-width:0}
+
+#gt-dash .head{display:flex; align-items:flex-start; justify-content:space-between; gap:8px; margin-bottom:12px}
+#gt-dash .title{font-size:14px; font-weight:600; letter-spacing:-.01em}
+#gt-dash .sub{color:var(--gt-muted); font-size:11px; margin-top:1px; display:flex; flex-wrap:wrap; gap:0 10px}
+#gt-dash .refresh{all:unset; width:28px; height:28px; flex:none; border-radius:50%; color:var(--gt-muted);
+  cursor:pointer; display:inline-flex; align-items:center; justify-content:center}
+#gt-dash .refresh:hover{background:rgba(118,118,128,.12); color:var(--gt-ink)}
+#gt-dash .refresh.busy svg{animation:gt-spin .8s linear infinite}
+
+#gt-dash .seg{display:inline-flex; background:rgba(118,118,128,.12); border-radius:9px; padding:2px; white-space:nowrap}
+#gt-dash .seg button{all:unset; padding:4px 10px; border-radius:7px; font-size:11.5px; font-weight:500; cursor:pointer; color:var(--gt-ink)}
+#gt-dash .seg button[aria-selected="true"]{background:#fff; font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.12)}
+#gt-dash .toolbar{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between}
+#gt-dash .segwrap{overflow-x:auto; max-width:100%}
+#gt-dash .content{margin-top:10px}
+#gt-dash .msg{padding:10px 0 12px; color:var(--gt-muted)}
+#gt-dash .msg.err{color:var(--gt-danger)}
+
+#gt-dash table{width:100%; border-collapse:collapse; background:transparent}
+#gt-dash th, #gt-dash td{padding:7px 0; border:0; border-bottom:1px solid var(--gt-line); background:transparent; vertical-align:middle; text-align:left}
+#gt-dash th{color:var(--gt-muted); font-size:11px; font-weight:500}
+#gt-dash tbody tr:last-child td{border-bottom:0}
+#gt-dash th + th, #gt-dash td + td{padding-left:12px}
+#gt-dash .num{text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums}
+#gt-dash td.lbl{color:var(--gt-muted)}
+#gt-dash .pos{color:#248a3d} #gt-dash .neg{color:#d70015}
+#gt-dash .line{display:flex; justify-content:space-between; align-items:baseline; padding:8px 0; border-bottom:1px solid var(--gt-line)}
+#gt-dash .line span:first-child{color:var(--gt-muted)}
+#gt-dash .line:last-child{border-bottom:0; padding-top:10px}
+#gt-dash .line.total span:first-child{color:var(--gt-ink); font-weight:600}
+#gt-dash .line.total span:last-child{font-size:18px; font-weight:600}
+
+#gt-logs .scroll{max-height:340px; overflow:auto}
+#gt-logs thead th{position:sticky; top:0; background:#fff; z-index:1}
+#gt-logs td.when{white-space:nowrap}
+#gt-logs td.when .d{font-weight:600}
+#gt-logs td.when .t{color:var(--gt-muted); font-variant-numeric:tabular-nums}
+#gt-logs .ip{display:flex; align-items:center; gap:6px; font-weight:500; font-variant-numeric:tabular-nums; flex-wrap:wrap}
+#gt-logs .ipdot{width:7px; height:7px; border-radius:50%; flex:none}
+#gt-logs .loc{color:var(--gt-muted); font-size:11px; margin-top:2px; padding-left:13px}
+#gt-logs .loc .isp{display:block; opacity:.85}
+#gt-logs .badge{display:inline-flex; align-items:center; gap:5px; white-space:nowrap; padding:2px 9px 2px 8px;
+  border-radius:999px; font-size:11px; font-weight:500; background:rgba(0,0,0,.05); color:var(--gt-ink)}
+#gt-logs .badge.ios,#gt-logs .badge.mac{background:rgba(29,29,31,.08)}
+#gt-logs .badge.android{background:rgba(52,199,89,.14); color:#1b7a36}
+#gt-logs .badge.win{background:rgba(0,113,227,.10); color:#0058b0}
+#gt-logs .badge.linux{background:rgba(255,159,10,.15); color:#935400}
+#gt-logs .kind{display:block; color:var(--gt-muted); font-size:10.5px; margin-top:3px}
+#gt-logs .pill{font-size:10.5px; font-weight:600; padding:1px 7px; border-radius:999px}
+#gt-logs .pill.in{background:rgba(52,199,89,.14); color:#1b7a36}
+#gt-logs .pill.out{background:rgba(0,0,0,.05); color:var(--gt-muted)}
+#gt-logs .pill.fail{background:rgba(215,0,21,.10); color:var(--gt-danger)}
+#gt-logs tr.failed td.when .d{color:var(--gt-danger)}
+
+#gt-ozet .top{display:flex; align-items:center; gap:14px; padding:14px 90px 14px 16px; border-bottom:.5px solid rgba(0,0,0,.06)}
+#gt-ozet .photo,#gt-ozet .ph{width:52px; height:52px; border-radius:50%; flex-shrink:0; background:var(--gt-surface-2); border:.5px solid var(--gt-line)}
+#gt-ozet .photo{object-fit:cover; cursor:pointer; transition:transform .15s}
+#gt-ozet .photo:hover{transform:scale(1.06)}
+#gt-ozet .ph{display:flex; align-items:center; justify-content:center; color:#c7c7cc; font-size:18px; font-weight:600}
+#gt-ozet .names{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+#gt-ozet .who{font-weight:600; font-size:14.5px; letter-spacing:-.2px}
+#gt-ozet .meta{color:var(--gt-muted); font-size:12px; margin-top:3px; display:flex; flex-direction:column; gap:2px}
+#gt-ozet .body{padding:12px 16px 14px}
+#gt-ozet .ids{display:flex; align-items:center; justify-content:space-between; gap:10px;
+  margin-bottom:12px; padding-bottom:12px; border-bottom:.5px solid rgba(0,0,0,.06)}
+#gt-ozet .idrow{display:flex; align-items:center; gap:6px; font-size:12px; color:var(--gt-ink-2)}
+#gt-ozet .idlabel{color:var(--gt-muted); font-weight:600; min-width:58px}
+#gt-ozet .copy{all:unset; display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px;
+  border-radius:5px; background:var(--gt-accent-soft); border:.5px solid rgba(0,113,227,.25); color:var(--gt-accent); cursor:pointer}
+#gt-ozet .copy:hover{background:rgba(0,113,227,.16)}
+#gt-ozet .copy svg{width:10px; height:10px}
+#gt-ozet .endsession{all:unset; display:inline-flex; align-items:center; height:24px; padding:0 11px; border-radius:12px;
+  border:.5px solid rgba(255,59,48,.35); background:rgba(255,59,48,.08); color:var(--gt-danger);
+  font-size:10.5px; font-weight:600; cursor:pointer; white-space:nowrap; flex-shrink:0}
+#gt-ozet .endsession:hover{background:rgba(255,59,48,.16)}
+#gt-ozet .section{font-size:10px; font-weight:600; letter-spacing:.4px; text-transform:uppercase; color:var(--gt-muted); margin-bottom:8px}
+#gt-ozet .games{display:flex; flex-wrap:wrap; gap:7px}
+#gt-ozet .game{padding:5px 12px; font-size:11.5px; font-weight:600; background:#fff;
+  border:.5px solid rgba(0,0,0,.10); border-radius:20px; box-shadow:0 1px 2px rgba(0,0,0,.06)}
+#gt-ozet .gameswrap{position:relative; overflow:hidden; max-height:1000px; transition:max-height .25s ease}
+#gt-ozet .fade{position:absolute; left:0; right:0; bottom:0; height:26px; opacity:0; pointer-events:none;
+  background:linear-gradient(to bottom, rgba(255,255,255,0), var(--fade) 80%); transition:opacity .2s, background .2s}
+#gt-ozet .fade.on{opacity:1}
+#gt-ozet .more{all:unset; display:none; align-items:center; justify-content:center; width:26px; height:16px;
+  margin:6px auto 0; border-radius:8px; background:rgba(0,0,0,.05); border:.5px solid rgba(0,0,0,.09);
+  color:var(--gt-muted); font-size:10px; font-weight:700; cursor:pointer}
+#gt-ozet .more:hover{background:rgba(0,0,0,.10); color:var(--gt-ink-2)}
+#gt-ozet .kyc{position:absolute; top:10px; right:10px; padding:6px 16px; border-radius:20px; font-size:13px;
+  font-weight:700; letter-spacing:.3px; color:#fff; box-shadow:0 2px 6px rgba(0,0,0,.15)}
+
+#gt-reveal{position:fixed; right:16px; bottom:16px; z-index:99999; display:flex; align-items:center; gap:5px;
+  height:28px; padding:0 12px; border-radius:14px; border:.5px solid rgba(0,113,227,.28);
+  background:rgba(235,245,254,.95); color:var(--gt-accent); font-size:11px; font-weight:600; cursor:pointer;
+  box-shadow:0 1px 6px rgba(0,0,0,.12); font-family:var(--gt-font)}
+#gt-reveal:hover{background:rgba(217,232,252,.98)}
+.gt-hidden-row{display:flex; justify-content:space-between; gap:12px; font-size:12px; padding:4px 0; border-bottom:.5px solid rgba(0,0,0,.04)}
+.gt-hidden-row .k{color:var(--gt-muted); font-weight:600; flex-shrink:0}
+.gt-hidden-row .v{text-align:right; word-break:break-all; display:flex; align-items:center; gap:5px}
+
+#gt-lookup{display:inline-flex; align-items:center; gap:8px; margin-left:12px; vertical-align:middle; position:relative; top:2px}
+#gt-lookup .lastbonus{font-family:var(--gt-font); font-size:12px; font-weight:500; color:var(--gt-accent); white-space:nowrap}
+#gt-lookup .lastbonus b{font-weight:700}
+#gt-lookup .lk{all:unset; display:inline-flex; align-items:center; gap:5px; padding:4px 11px; box-sizing:border-box;
+  font-family:var(--gt-font); font-size:12px; font-weight:600; line-height:16px; white-space:nowrap;
+  border-radius:20px; border:.5px solid; cursor:pointer;
+  transition:background .15s, border-color .15s, transform .1s}
+#gt-lookup .lk svg{width:12px; height:12px; flex:none}
+#gt-lookup .lk:active{transform:scale(.97)}
+#gt-lookup .lk.ip{background:rgba(255,59,48,.08); border-color:rgba(255,59,48,.35); color:var(--gt-danger)}
+#gt-lookup .lk.ip:hover{background:rgba(255,59,48,.16); border-color:rgba(255,59,48,.5)}
+#gt-lookup .lk.pt{background:rgba(0,113,227,.08); border-color:rgba(0,113,227,.35); color:#0071e3}
+#gt-lookup .lk.pt:hover{background:rgba(0,113,227,.16); border-color:rgba(0,113,227,.5)}
+#gt-lookup .lk.nm{background:rgba(52,199,89,.08); border-color:rgba(52,199,89,.35); color:var(--gt-success)}
+#gt-lookup .lk.nm:hover{background:rgba(52,199,89,.16); border-color:rgba(52,199,89,.5)}
+
+#gt-comments{position:fixed; top:20px; right:20px; width:340px; max-width:calc(100vw - 20px); max-height:70vh;
+  background:rgba(255,255,255,.88); backdrop-filter:blur(20px) saturate(180%); -webkit-backdrop-filter:blur(20px) saturate(180%);
+  border-radius:18px; box-shadow:0 10px 40px rgba(0,0,0,.18); z-index:999999; overflow:hidden;
+  font-family:var(--gt-font); opacity:0; transform:translateY(-12px) scale(.98); transition:opacity .45s, transform .45s}
+#gt-comments.in{opacity:1; transform:none}
+#gt-comments.out{opacity:0; transform:translateY(-6px) scale(.96); pointer-events:none}
+#gt-comments .h{display:flex; align-items:center; justify-content:space-between; padding:14px 16px 10px;
+  border-bottom:1px solid rgba(0,0,0,.06); font-size:15px; font-weight:600}
+#gt-comments .n{background:var(--gt-accent); color:#fff; font-size:11px; font-weight:700; border-radius:10px; padding:1px 7px; margin-left:6px}
+#gt-comments .b{max-height:calc(70vh - 52px); overflow-y:auto; padding:8px 10px 12px}
+#gt-comments .i{background:rgba(120,120,128,.08); border-radius:12px; padding:10px 12px; margin:6px 4px}
+#gt-comments .t{display:flex; justify-content:space-between; font-size:11px; color:var(--gt-muted); margin-bottom:4px}
+#gt-comments .s{font-weight:600; color:var(--gt-ink-2)}
+#gt-comments .s.hot{color:var(--gt-danger); font-weight:800}
+#gt-comments .c{font-size:13.5px; line-height:1.4; white-space:pre-wrap; word-break:break-word}
+#gt-comments .g{margin-top:6px; font-size:10.5px; color:var(--gt-accent); font-weight:600}
+
+img[src*="assets/flags/"]{width:18px !important; height:18px !important; border-radius:50% !important;
+  object-fit:cover !important; object-position:center !important}
+`);
+
+const REFRESH_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>`;
+
+/* ════════════════════════════════════════════════════════════
+   1 · TEMİZLİK — eski alanlar, eski tablolar, gereksiz widget'lar
+   ════════════════════════════════════════════════════════════ */
+GT.define({
+    id: 'player-declutter',
+    match: at.playerDetail,
+    source: 'player',
+    setup(ctx) {
+        const hide = (el) => el?.classList.add('gt-hidden-field');
+
+        function sweepLabelled() {
+            const touched = new Set();
+            for (const cell of $$('td.text-xs-left')) {
+                if (cell.closest('#gt-dash') || cell.classList.contains('gt-hidden-field')) continue;
+                const label = txt(cell);
+                if (!HIDE_LABELS.has(label)) continue;
+
+                const value = cell.nextElementSibling;
+                const edit = value?.nextElementSibling;
+                hidden.set(label, { text: value ? txt(value) : '', pencil: edit?.querySelector('i.fa-pencil-square-o') || null });
+
+                hide(cell); hide(value);
+                if (edit?.querySelector('i.fa-pencil-square-o')) hide(edit);
+                const row = cell.parentElement;
+                if (label === 'Status' || label === 'Partyid') {
+                    for (const gap of row.querySelectorAll('td.gap-30, td.gap-80')) hide(gap);
+                }
+                touched.add(row);
+            }
+
+            // Etiketi boş, sadece ayraç olan hücreleri de kapat
+            for (const row of touched) {
+                if (row?.tagName !== 'TR') continue;
+                for (const gap of row.querySelectorAll('td.gap-30, td.gap-80')) {
+                    if (!txt(gap) && !gap.querySelector('*')) hide(gap);
+                }
+                const cells = [...row.children];
+                if (cells.length && cells.every(c => c.classList.contains('gt-hidden-field'))) hide(row);
+            }
+        }
+
+        function sweepFlex() {
+            for (const item of $$('div.td-flex-item')) {
+                const label = txt(item.children[0]);
+                if (!HIDE_LABELS.has(label)) continue;
+                const value = item.children[1];
+                hidden.set(label, { text: value ? txt(value) : '', pencil: value?.querySelector('i.fa-pencil-square-o') || null });
+                hide(item);
+            }
+        }
+
+        function sweepOldPanels() {
+            // Eski Accounting başlığı — yerini yeni kart aldı
+            for (const el of $$('td, th, div.underlined-header')) {
+                if (el.closest('#gt-dash') || el.classList.contains('gt-hidden-field')) continue;
+                const text = txt(el);
+                const isHeader = el.classList.contains('underlined-header') ? /^Accounting\b/.test(text) : text === 'Accounting';
+                if (!isHeader) continue;
+                hide(el);
+                if (el.tagName !== 'DIV') continue;
+                const cell = el.parentElement;
+                if (cell && /^(TH|TD)$/.test(cell.tagName)
+                    && [...cell.children].every(c => c.classList.contains('gt-hidden-field'))) hide(cell);
+            }
+            // Eski mini giriş kayıtları tablosu
+            for (const table of $$('table.player-login-logs-table')) {
+                if (table.closest('#gt-dash')) continue;
+                hide(table);
+                if (table.parentElement?.tagName === 'TD') hide(table.parentElement);
+            }
+            for (const th of $$('th.player-login-logs-headers')) hide(th);
+            // Grafik/özet widget'ları ve Revenue/LTD filtreleri
+            for (const td of $$('td.churn-factor')) hide(td);
+            for (const tag of ['login-device', 'player-financial', 'player-game-play-summary']) {
+                for (const el of $$(tag)) hide(el.closest('td'));
+            }
+            for (const btn of $$('button.filter-dropdown')) {
+                const label = txt(btn);
+                if (!label.startsWith('Revenue') && !label.startsWith('LTD')) continue;
+                (btn.closest('ss-multiselect-dropdown') || btn).classList.add('gt-hidden-field');
+            }
+            // Etiketi boş, değeri sadece ikon olan satırlar
+            for (const cell of $$('td.text-xs-left')) {
+                if (txt(cell) !== '') continue;
+                const value = cell.nextElementSibling;
+                if (!value?.querySelector('i.fa') || !value.classList.contains('gap-30')) continue;
+                cell.remove(); value.remove();
+            }
+            for (const cell of $$('td.text-xs-left')) {
+                if (txt(cell) !== 'Automation Withdrawals Processing' || cell.dataset.gtDone) continue;
+                cell.dataset.gtDone = '1';
+                hide(cell); hide(cell.nextElementSibling);
+            }
+        }
+
+        ctx.tick(() => { sweepLabelled(); sweepFlex(); sweepOldPanels(); }, { lazy: true });
+
+        /* Gizlenen bilgileri gösteren küçük buton */
+        ctx.mount(() => document.body, 'gt-reveal', () =>
+            h('button', {
+                type: 'button', title: 'Gizlenen alanları göster',
+                html: ICON.eye + '<span>Bilgileri göster</span>',
+                onclick: () => {
+                    const rows = [...hidden.entries()];
+                    const modal = ui.modal({ title: 'Gizlenen bilgiler', width: 420 }).open();
+                    modal.html = rows.length
+                        ? rows.map(([label, info], i) => `<div class="gt-hidden-row">
+                             <span class="k">${esc(label)}</span>
+                             <span class="v">${esc(info.text)}${info.pencil ? `<button type="button" class="gt-icon-btn" data-i="${i}">${ICON.pencil}</button>` : ''}</span>
+                           </div>`).join('')
+                        : ui.empty('Gizli alan bulunamadı.');
+                    modal.body.addEventListener('click', (e) => {
+                        const btn = e.target.closest('[data-i]');
+                        if (!btn) return;
+                        const info = rows[+btn.dataset.i]?.[1];
+                        modal.close();
+                        info?.pencil?.click();
+                    });
+                },
+            }), 'body');
+    },
+});
+
+/* ════════════════════════════════════════════════════════════
+   2 · GÖSTERGE PANELİ — kimlik + hesap + giriş kayıtları
+   Sayfanın bu bölgesinin TEK sahibi. Üç kart tek satırda durur,
+   böylece yerleşim için birbiriyle yarışan panel kalmaz.
+   ════════════════════════════════════════════════════════════ */
+GT.define({
+    id: 'player-dashboard',
+    match: at.playerDetail,
+    key: () => api.partyId(),   // oyuncu değişince panel baştan kurulur
+    source: 'player',
+    setup(ctx) {
+        const pid = api.partyId();
+        if (!pid) return;
+
+        const acc = { data: null, error: null, busy: false, at: null, period: pref('accPeriod', 'ALL') };
+        const logs = { rows: null, error: null, busy: false, at: null, days: Number(pref('logDays', '7')), filter: pref('logFilter', 'LOGIN') };
+
+        /* ── yerleşim ──
+           Bilgi bloğu üç yoldan aranıyor: etiketlerin bir kısmı temizlik
+           modülü tarafından gizlenmiş olabilir ve düzen tablo ya da flex
+           olabilir. Üçü de tutmazsa panel sağ alta sabitlenir — görünmez
+           kalmasındansa yanlış yerde durması yeğ. */
+        function infoBlock() {
+            const seen = new Set();
+            for (const name of ['Status', 'Partyid', 'USERID']) {
+                const snap = document.evaluate(
+                    `//*[normalize-space(text())='${name}']`, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+                for (let i = 0; i < snap.snapshotLength; i++) {
+                    const label = snap.snapshotItem(i);
+                    if (!label || seen.has(label) || label.closest('#gt-dash')) continue;
+                    seen.add(label);
+                    let el = label.parentElement;
+                    for (let depth = 0; el && el !== document.body && depth < 10; depth++, el = el.parentElement) {
+                        if (el.querySelector('button.filter-dropdown')) break;
+                        const text = el.textContent;
+                        if (text.includes('USERID') && text.includes('EMAIL')) return el;
+                    }
+                }
+            }
+            const userId = $$('td.text-xs-left, div.td-flex-item > div, div').find(el => txt(el) === 'USERID');
+            return userId?.closest('tr') || null;
+        }
+
+        /** Çapa bulunamadı: paneli sağ alta sabitle. */
+        function floatPanel() {
+            dash.classList.add('floating');
+            if (dash.parentElement !== document.body) document.body.append(dash);
+            document.getElementById('gt-dash-row')?.remove();
+            warn('[Player] Bilgi bloğu bulunamadı — panel sağ alta sabitlendi.');
+        }
+
+        /** Paneli tablo sütunlarını bozmadan bilgi bloğunun altına koyar. */
+        function place(dash, info) {
+            const table = info.tagName === 'TABLE' ? null : info.closest('table');
+            if (!table) { info.insertAdjacentElement('afterend', dash); return; }
+
+            const isPageTable = table.querySelector('button.filter-dropdown, table.player-login-logs-table');
+            if (!isPageTable) { table.insertAdjacentElement('afterend', dash); return; }
+
+            const cols = Math.max(1, ...[...table.rows].map(r => [...r.cells].reduce((a, c) => a + c.colSpan, 0)));
+            const cell = h('td', { colspan: cols, style: { padding: '0', border: '0', verticalAlign: 'top' } }, dash);
+            const row = ctx.own(h('tr', { id: 'gt-dash-row' }, cell));
+
+            const rows = info.tagName === 'TR' ? [info] : [...info.querySelectorAll('tr')];
+            const anchor = rows.length ? rows[rows.length - 1] : info.closest('tr');
+            anchor ? anchor.insertAdjacentElement('afterend', row) : info.insertAdjacentElement('afterend', dash);
+        }
+
+        /* ── kart iskeletleri ── */
+        const card = (id, title) => h('section', { id, class: 'card pad' },
+            h('div', { class: 'head' },
+                h('div', {}, h('div', { class: 'title' }, title), h('div', { class: 'sub' })),
+                h('button', { class: 'refresh', type: 'button', title: 'Yenile', html: REFRESH_SVG })),
+            h('div', { class: 'toolbar' }),
+            h('div', { class: 'content' }));
+
+        const seg = (items, current, key) => items.map(([value, label]) =>
+            `<button type="button" role="tab" aria-selected="${value === current}" data-${key}="${value}">${label}</button>`).join('');
+
+        const ozet = h('section', { id: 'gt-ozet', class: 'card' },
+            h('div', { style: { padding: '14px 16px', color: 'var(--gt-muted)', fontSize: '12px' } }, 'Kimlik yükleniyor…'));
+        const accCard = card('gt-acc', 'Yatırım / çekim');
+        const logCard = card('gt-logs', 'Giriş kayıtları');
+        const dash = h('div', { id: 'gt-dash' }, ozet, accCard, logCard);
+
+        /* ── Accounting ── */
+        async function loadAcc() {
+            acc.busy = true; acc.error = null; renderAcc();
+            try { acc.data = await accounting(pid); acc.at = new Date(); }
+            catch (e) { acc.error = e.message; }
+            finally { acc.busy = false; renderAcc(); }
+        }
+
+        function renderAcc() {
+            accCard.querySelector('.refresh').classList.toggle('busy', acc.busy);
+            accCard.querySelector('.sub').innerHTML = acc.at ? `<span>Güncellendi ${hhmm(acc.at)}</span>` : '';
+            accCard.querySelector('.toolbar').innerHTML =
+                `<div class="segwrap"><div class="seg" role="tablist">${seg([...PERIODS, ['ALL', 'Tümü']], acc.period, 'period')}</div></div>`;
+
+            const box = accCard.querySelector('.content');
+            if (acc.error) { box.innerHTML = `<div class="msg err">${esc(acc.error)}</div>`; return; }
+            if (!acc.data) { box.innerHTML = `<div class="msg">${acc.busy ? 'Yükleniyor…' : 'Veri yok.'}</div>`; return; }
+
+            const get = (p) => acc.data[p] || { dep: 0, wd: 0 };
+            const cls = (n) => n > 0 ? 'pos' : n < 0 ? 'neg' : '';
+
+            if (acc.period === 'ALL') {
+                box.innerHTML = `<table>
+                  <thead><tr><th>Periyot</th><th class="num">Yatırım</th><th class="num">Çekim</th><th class="num">NET</th></tr></thead>
+                  <tbody>${PERIODS.map(([k, label]) => {
+                      const { dep, wd } = get(k); const net = dep - wd;
+                      return `<tr><td class="lbl">${label}</td><td class="num">${money(dep)}</td>
+                        <td class="num">${money(wd)}</td><td class="num ${cls(net)}" style="font-weight:600">${money(net)}</td></tr>`;
+                  }).join('')}</tbody></table>`;
+            } else {
+                const { dep, wd } = get(acc.period); const net = dep - wd;
+                box.innerHTML = `
+                  <div class="line"><span>Yatırım</span><span>${money(dep)}</span></div>
+                  <div class="line"><span>Çekim</span><span>${money(wd)}</span></div>
+                  <div class="line total"><span>NET</span><span class="${cls(net)}">${money(net)}</span></div>`;
+            }
+        }
+
+        /* ── giriş kayıtları ── */
+        const IP_COLORS = ['#0071e3', '#bf5af2', '#ff9f0a', '#30b0c7', '#ff375f', '#34c759', '#8e8e93'];
+
+        const osInfo = (raw, mobile) => {
+            const s = raw.toLowerCase();
+            if (/ios|iphone|ipad|ipod/.test(s)) return { label: 'iOS', icon: 'fa-apple', cls: 'ios' };
+            if (/mac|os x/.test(s)) return { label: 'macOS', icon: 'fa-apple', cls: 'mac' };
+            if (/android/.test(s)) return { label: 'Android', icon: 'fa-android', cls: 'android' };
+            if (/win/.test(s)) return { label: 'Windows', icon: 'fa-windows', cls: 'win' };
+            if (/linux|ubuntu|x11/.test(s)) return { label: 'Linux', icon: 'fa-linux', cls: 'linux' };
+            return { label: raw || 'Bilinmiyor', icon: mobile ? 'fa-mobile' : 'fa-desktop', cls: '' };
+        };
+
+        const browserInfo = (raw) => {
+            const s = raw.toLowerCase();
+            if (/edg/.test(s)) return { label: 'Edge', icon: 'fa-edge' };
+            if (/samsung/.test(s)) return { label: 'Samsung Internet', icon: 'fa-globe' };
+            if (/opera|opr\//.test(s)) return { label: 'Opera', icon: 'fa-opera' };
+            if (/firefox|fxios/.test(s)) return { label: 'Firefox', icon: 'fa-firefox' };
+            if (/chrome|crios|chromium/.test(s)) return { label: 'Chrome', icon: 'fa-chrome' };
+            if (/safari/.test(s)) return { label: /mobile/.test(s) ? 'Mobile Safari' : 'Safari', icon: 'fa-safari' };
+            return { label: raw ? raw.slice(0, 24) : 'Bilinmiyor', icon: 'fa-globe' };
+        };
+
+        async function loadLogs() {
+            logs.busy = true; logs.error = null; renderLogs();
+            try {
+                logs.rows = await loginLogs(pid, logs.days);
+                logs.at = new Date();
+                for (const ip of new Set(logs.rows.map(r => r.ip).filter(Boolean))) geoLookup(ip, renderLogs);
+            } catch (e) { logs.error = e.message; }
+            finally { logs.busy = false; renderLogs(); }
+        }
+
+        function locationCell(r) {
+            if (!r.ip) return '';
+            if (!isPrivateIp(r.ip)) {
+                const g = geoOf(r.ip);
+                if (g && !g.failed) {
+                    const place = [g.city, g.region && g.region !== g.city ? g.region : '', g.cc].filter(Boolean).join(', ');
+                    return `${esc(place || r.country)}${g.isp ? `<span class="isp">${esc(g.isp)}</span>` : ''}`;
+                }
+                if (!g && geoPending.has(r.ip)) return 'Konum aranıyor…';
+            }
+            return esc(r.country);
+        }
+
+        function renderLogs() {
+            if (!logCard.isConnected) return;
+            logCard.querySelector('.refresh').classList.toggle('busy', logs.busy);
+            logCard.querySelector('.toolbar').innerHTML = `
+              <div class="segwrap"><div class="seg" role="tablist">${seg([['3', '3 gün'], ['7', '7 gün'], ['30', '30 gün']], String(logs.days), 'days')}</div></div>
+              <div class="segwrap"><div class="seg" role="tablist">${seg([['LOGIN', 'Girişler'], ['ALL', 'Tümü']], logs.filter, 'filter')}</div></div>`;
+
+            const sub = logCard.querySelector('.sub');
+            const box = logCard.querySelector('.content');
+            if (logs.error) { sub.innerHTML = ''; box.innerHTML = `<div class="msg err">${esc(logs.error)}</div>`; return; }
+            if (!logs.rows) { sub.innerHTML = ''; box.innerHTML = `<div class="msg">${logs.busy ? 'Yükleniyor…' : 'Veri yok.'}</div>`; return; }
+
+            const typed = logs.rows.some(r => r.type);
+            const rows = (logs.filter === 'LOGIN' && typed) ? logs.rows.filter(r => r.type.startsWith('LOGIN')) : logs.rows;
+
+            const colors = new Map();
+            for (const r of rows) if (r.ip && !colors.has(r.ip)) colors.set(r.ip, IP_COLORS[colors.size % IP_COLORS.length]);
+
+            sub.innerHTML = `<span>${rows.length} kayıt, ${colors.size} farklı IP</span>`
+                + (logs.at ? `<span>Güncellendi ${hhmm(logs.at)}</span>` : '');
+
+            if (!rows.length) { box.innerHTML = '<div class="msg">Bu aralıkta kayıt yok.</div>'; return; }
+
+            const fmtDay = (d) => d.toLocaleDateString('tr-TR', { timeZone: 'UTC', day: 'numeric', month: 'short' });
+            const fmtTime = (d) => d.toLocaleTimeString('tr-TR', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+
+            box.innerHTML = `<div class="scroll"><table>
+              <thead><tr><th>Zaman (UTC)</th><th>IP ve konum</th><th>Cihaz</th><th>Tarayıcı</th></tr></thead>
+              <tbody>${rows.map(r => {
+                  const d = new Date(r.time);
+                  const os = osInfo(r.os, r.mobile);
+                  const br = browserInfo(r.browser);
+                  const kind = /ipad|tablet/i.test(r.device + ' ' + r.os) ? 'Tablet' : r.mobile ? 'Mobil' : 'Masaüstü';
+                  const typePill = (logs.filter === 'ALL' && r.type)
+                      ? `<span class="pill ${r.type.startsWith('LOGIN') ? 'in' : 'out'}">${r.type.startsWith('LOGIN') ? 'Giriş' : 'Çıkış'}</span>` : '';
+                  const failPill = r.failed ? '<span class="pill fail">Başarısız</span>' : '';
+                  return `<tr class="${r.failed ? 'failed' : ''}">
+                    <td class="when"><div class="d">${r.time ? fmtDay(d) : '—'}</div><div class="t">${r.time ? fmtTime(d) : ''}</div></td>
+                    <td><div class="ip"><span class="ipdot" style="background:${colors.get(r.ip) || 'transparent'}"></span>${esc(r.ip) || '—'}${typePill}${failPill}</div>
+                        <div class="loc">${locationCell(r)}</div></td>
+                    <td><span class="badge ${os.cls}"><i class="fa ${os.icon}"></i>${esc(os.label)}</span><span class="kind">${kind}</span></td>
+                    <td><span class="badge"><i class="fa ${br.icon}"></i>${esc(br.label)}</span></td>
+                  </tr>`;
+              }).join('')}</tbody></table></div>`;
+        }
+
+        /* ── kimlik kartı ── */
+        function renderOzet({ p, photo, games }) {
+            const name = [p?.firstName, p?.lastName].filter(Boolean).join(' ') || 'İsim bulunamadı';
+            const meta = [p?.birthDate?.replace(/-/g, '.'), p?.city].filter(Boolean).join(' · ') || '—';
+            const initials = ((p?.firstName || '')[0] || '') + ((p?.lastName || '')[0] || '');
+            const joined = field('Joined');
+            const userId = field('USERID');
+
+            ozet.innerHTML = `
+            <div class="top">
+              ${photo ? `<img class="photo" src="${esc(photo)}" title="Büyütmek için tıkla">`
+                      : `<div class="ph">${esc(initials.toUpperCase()) || '—'}</div>`}
+              <div style="flex:1;min-width:0">
+                <div class="names">
+                  <span class="who">${esc(name)}</span>
+                  ${p?.btag ? `<span class="gt-chip gt-chip--warn">${esc(p.btag)}</span>` : ''}
+                  <span data-lock></span><span data-vip></span>
+                </div>
+                <div class="meta"><span>${esc(meta)}</span>${joined ? `<span>Katılım: ${esc(joined.text)}</span>` : ''}</div>
+              </div>
+            </div>
+            <div class="body">
+              <div class="ids">
+                <div style="display:flex;flex-direction:column;gap:4px">
+                  ${userId ? `<div class="idrow"><span class="idlabel">USERID</span><span>${esc(userId.text)}</span></div>` : ''}
+                  <div class="idrow"><span class="idlabel">PartyID</span><span>${esc(pid)}</span>
+                    <button type="button" class="copy" data-copy title="Kopyala">${ICON.copy}</button></div>
+                </div>
+                <button type="button" class="endsession" data-end>Oturumu sonlandır</button>
+              </div>
+              <div class="section">Son 24 saatte oynanan oyunlar</div>
+              <div class="gameswrap" data-open="0">
+                <div class="games">${games.length
+                    ? games.map(g => `<span class="game">${esc(g)}</span>`).join('')
+                    : '<span style="color:#c7c7cc;font-size:12px">Son 24 saatte oyun oynanmamış.</span>'}</div>
+                <div class="fade"></div>
+              </div>
+              <button type="button" class="more" title="Listeyi genişlet">v</button>
+            </div>`;
+
+            ozet.querySelector('.photo')?.addEventListener('click', () => {
+                document.body.append(h('div', {
+                    style: { position: 'fixed', inset: '0', background: 'rgba(0,0,0,.5)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: '999999' },
+                    html: `<img src="${esc(photo)}" style="max-width:80vw;max-height:80vh;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.4)">`,
+                    onclick: (e) => e.currentTarget.remove(),
+                }));
+            });
+
+            ozet.querySelector('[data-copy]')?.addEventListener('click', (e) => {
+                const btn = e.currentTarget;
+                navigator.clipboard.writeText(String(pid)).then(() => {
+                    btn.innerHTML = ICON.check; btn.style.color = 'var(--gt-success)';
+                    setTimeout(() => { btn.innerHTML = ICON.copy; btn.style.color = ''; }, 1200);
+                }).catch(err => oops('[Player] kopyalama:', err));
+            });
+
+            ozet.querySelector('[data-end]')?.addEventListener('click', () => {
+                const icon = $$('td.text-xs-right.gap-30').map(td => td.querySelector('i.fa-times')).find(Boolean);
+                icon ? icon.click() : warn('[Player] Oturum sonlandırma ikonu yok.');
+            });
+
+            requestAnimationFrame(foldGames);
+        }
+
+        function foldGames() {
+            const wrap = ozet.querySelector('.gameswrap');
+            const list = ozet.querySelector('.games');
+            const fade = ozet.querySelector('.fade');
+            const more = ozet.querySelector('.more');
+            if (!wrap || !list || !fade || !more) return;
+
+            const chips = $$('.game', list);
+            const lines = [...new Set(chips.map(c => c.offsetTop))].sort((a, b) => a - b);
+            if (!chips.length || lines.length <= 3) {
+                more.style.display = 'none'; fade.classList.remove('on'); wrap.style.maxHeight = 'none';
+                return;
+            }
+            const cut = lines[2];
+            const height = chips.filter(c => c.offsetTop === cut)
+                .reduce((max, c) => Math.max(max, c.offsetTop + c.offsetHeight), 0);
+            more.style.display = 'flex';
+
+            if (wrap.dataset.open === '1') {
+                wrap.style.maxHeight = list.scrollHeight + 'px';
+                fade.classList.remove('on'); more.textContent = '^'; more.title = 'Listeyi daralt';
+            } else {
+                wrap.style.maxHeight = height + 'px';
+                fade.classList.add('on'); more.textContent = 'v'; more.title = 'Listeyi genişlet';
+            }
+        }
+
+        /* ── canlı rozetler (lock / VIP / KYC) ── */
+        let lastLock, lastVip, lastKyc;
+        const editBtn = (kind) => `<button type="button" class="gt-icon-btn" data-edit="${kind}" title="Düzenle">${ICON.pencil}</button>`;
+
+        const KYC_SKIN = {
+            PASS:   { bg: 'rgba(52,199,89,.10)', border: 'rgba(52,199,89,.35)', fade: '#EBF9EE', color: 'rgb(52,199,89)', label: 'PASS' },
+            OPEN:   { bg: 'rgba(255,59,48,.10)', border: 'rgba(255,59,48,.35)', fade: '#FFEBEA', color: 'rgb(255,59,48)', label: 'OPEN' },
+            FAILED: { bg: 'rgba(255,59,48,.10)', border: 'rgba(255,59,48,.35)', fade: '#FFEBEA', color: 'rgb(255,59,48)', label: 'FAIL' },
+        };
+
+        function refreshBadges() {
+            if (!ozet.isConnected) return;
+
+            const lock = field('Lock Status');
+            const lockEl = ozet.querySelector('[data-lock]');
+            if (lockEl && lock?.text !== lastLock) {
+                lastLock = lock?.text;
+                const tone = !lock ? null
+                    : lock.text.toUpperCase().includes('NOT_LOCKED') ? 'success'
+                    : lock.text.toUpperCase().includes('LOCKED') ? 'danger' : 'muted';
+                lockEl.innerHTML = lock ? `<span class="gt-chip gt-chip--${tone}">${esc(lock.text)}${editBtn('lock')}</span>` : '';
+            }
+
+            const vip = field('VIP');
+            const vipEl = ozet.querySelector('[data-vip]');
+            if (vipEl && vip?.text !== lastVip) {
+                lastVip = vip?.text;
+                vipEl.innerHTML = vip
+                    ? `<span class="gt-chip gt-chip--vip">${VIP_ICON[vip.text.toUpperCase()] || '⭐'} ${esc(vip.text)}${editBtn('vip')}</span>` : '';
+            }
+
+            const kyc = field('KYC')?.text?.toUpperCase() || null;
+            if (kyc !== lastKyc) {
+                lastKyc = kyc;
+                const skin = KYC_SKIN[kyc];
+                if (skin) {
+                    ozet.style.setProperty('background-color', skin.bg, 'important');
+                    ozet.style.setProperty('border-color', skin.border, 'important');
+                    ozet.style.setProperty('--fade', skin.fade);
+                } else {
+                    ozet.style.removeProperty('background-color');
+                    ozet.style.removeProperty('border-color');
+                    ozet.style.setProperty('--fade', '#fff');
+                }
+                ozet.querySelector('.kyc')?.remove();
+                if (skin) ozet.append(h('div', { class: 'kyc', style: { background: skin.color }, title: `KYC: ${kyc}` }, skin.label));
+            }
+        }
+
+        /* ── olaylar ── */
+        accCard.addEventListener('click', (e) => {
+            const btn = e.target.closest('button');
+            if (!btn) return;
+            if (btn.classList.contains('refresh')) return void loadAcc();
+            if (btn.dataset.period) { acc.period = btn.dataset.period; setPref('accPeriod', acc.period); renderAcc(); }
+        });
+
+        logCard.addEventListener('click', (e) => {
+            const btn = e.target.closest('button');
+            if (!btn) return;
+            if (btn.classList.contains('refresh')) return void loadLogs();
+            if (btn.dataset.days) { logs.days = Number(btn.dataset.days); setPref('logDays', btn.dataset.days); loadLogs(); }
+            if (btn.dataset.filter) { logs.filter = btn.dataset.filter; setPref('logFilter', logs.filter); renderLogs(); }
+        });
+
+        ozet.addEventListener('click', (e) => {
+            const more = e.target.closest('.more');
+            if (more) {
+                const wrap = ozet.querySelector('.gameswrap');
+                wrap.dataset.open = wrap.dataset.open === '1' ? '0' : '1';
+                foldGames();
+                return;
+            }
+            const edit = e.target.closest('[data-edit]');
+            if (!edit) return;
+            e.stopPropagation();
+            const info = field(edit.dataset.edit === 'vip' ? 'VIP' : 'Lock Status');
+            info?.pencil ? info.pencil.click() : warn('[Player] Düzenleme ikonu bulunamadı.');
+        });
+
+        /* ── kurulum ── */
+        ctx.own(dash);
+        let placed = false;
+
+        const since = Date.now();
+        ctx.tick(() => {
+            if (!placed || !dash.isConnected) {
+                const info = infoBlock();
+                if (info) { place(dash, info); placed = true; }
+                else if (Date.now() - since > 4000) { floatPanel(); placed = true; }
+                else return;
+            }
+            refreshBadges();
+        });
+
+        if (!api.token()) {
+            ozet.innerHTML = '<div style="padding:14px 16px;color:var(--gt-muted);font-size:12px">Oturum token bulunamadı, sayfayı yenile.</div>';
+            return;
+        }
+
+        loadAcc();
+        loadLogs();
+        Promise.all([profile(pid), portrait(pid), games24h(pid)]).then(([p, photo, games]) => {
+            if (!ozet.isConnected) return;
+            renderOzet({ p, photo, games });
+            lastLock = lastVip = lastKyc = undefined;
+            refreshBadges();
+        });
+    },
+});
+
+/* ════════════════════════════════════════════════════════════
+   3 · BAKİYE SIFIRLAMA (Alt+O / Alt+Q / Alt+W)
+   NOT: Eski "ÜST" kısayolu Alt+A idi ve AI ÖZET'in panel kısayolu
+   ile çakışıyordu — aynı tuş hem paneli açıp hem bakiye düşürme
+   deniyordu. ÜST artık Alt+Ü (KeyBracketLeft yerine Semicolon
+   kullanan klavyelerde buton her zaman elle basılabilir).
+   ════════════════════════════════════════════════════════════ */
+GT.define({
+    id: 'player-balance',
+    match: at.playerDetail,
+    source: 'player',
+    setup(ctx) {
+        const fire = (el, value) => {
+            if (!el) return;
+            el.value = value;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+
+        function apply(note) {
+            const balance = $('div[style*="margin-bottom: 5px"]');
+            if (!balance) return warn('[Bakiye] Bakiye alanı bulunamadı.');
+            fire($('input[name="balance-adjust-amount"]'), '-' + balance.innerText.replace('TRY', '').replace(/,/g, '').trim());
+            fire($('textarea[name="balance-adjust-comment"]'), note);
+            setTimeout(() => {
+                const btn = $('button.btn-success');
+                if (btn && /Adjust/.test(btn.textContent)) btn.click();
+            }, 400);
+        }
+
+        function open(note) {
+            if ($('input[name="balance-adjust-amount"]')) return apply(note);
+
+            const pencil = $$('td').find(td => txt(td) === 'Real Money')
+                ?.nextElementSibling?.nextElementSibling
+                ?.querySelector('i.fa-pencil-square-o');
+            if (!pencil) return oops('[Bakiye] "Real Money" satırındaki kalem yok.');
+
+            pencil.click();
+            let tries = 0;
+            const timer = setInterval(() => {
+                if ($('input[name="balance-adjust-amount"]')) { clearInterval(timer); apply(note); }
+                else if (++tries >= 20) { clearInterval(timer); warn('[Bakiye] Popup zamanında açılmadı.'); }
+            }, 150);
+        }
+
+        const BUTTONS = [
+            { label: 'OLD', key: 'alt+o', note: BALANCE_NOTES.OLD },
+            { label: 'IP',  key: 'alt+q', note: BALANCE_NOTES.IP },
+            { label: 'PT',  key: 'alt+w', note: BALANCE_NOTES.PT },
+            { label: 'ÜST', key: null,    note: BALANCE_NOTES.UST },
+        ];
+        for (const b of BUTTONS) if (b.key) ctx.hotkey(b.key, () => open(b.note));
+
+        ctx.mount('div.underlined-header.balance-title', 'gt-balance', (header) => {
+            header.style.display = 'flex';
+            header.style.alignItems = 'center';
+            return h('span', { style: { display: 'inline-flex', gap: '4px', marginLeft: '12px', verticalAlign: 'middle' } },
+                BUTTONS.map(b => ui.button({
+                    label: b.label, small: true,
+                    title: b.key ? b.key.replace('alt+', 'Alt+').toUpperCase() : 'Üst bakiye düzeltmesi',
+                    onClick: () => open(b.note),
+                })));
+        });
+    },
+});
+
+/* ════════════════════════════════════════════════════════════
+   4 · IP (duplicate) + PT (bonus/deposit/withdrawal özeti)
+   ════════════════════════════════════════════════════════════ */
+GT.define({
+    id: 'player-lookup',
+    match: at.playerDetail,
+    key: () => api.partyId(),
+    source: 'player',
+    setup(ctx) {
+        const pid = api.partyId();
+        const clickEl = (el) => el?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+        /* duplicate bulunan hesabı arama sayfasında aç */
+        function pickDropdown(btn, label, done) {
+            if (btn.textContent.includes(label)) return done();
+            clickEl(btn);
+            setTimeout(() => {
+                clickEl($$('a, li').find(el => txt(el) === label && el.offsetParent));
+                setTimeout(done, 200);
+            }, 250);
+        }
+
+        function search(id) {
+            let tries = 0;
+            const timer = setInterval(() => {
+                const input = $('input.player-search-criteria');
+                const dropdowns = $$('button.dropdown-toggle');
+                const go = $$('button, span').find(el => txt(el) === 'Go' && el.offsetParent);
+                if (input && dropdowns.length >= 2 && go) {
+                    clearInterval(timer);
+                    pickDropdown(dropdowns[0], 'Party Id', () => pickDropdown(dropdowns[1], 'Equals', () => {
+                        input.value = id;
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                        setTimeout(() => clickEl(go.closest('button') || go), 300);
+                    }));
+                } else if (++tries > 30) { clearInterval(timer); oops('[Lookup] Arama formu bulunamadı.'); }
+            }, 200);
+        }
+
+        function goSearch(id) {
+            if (location.pathname.includes('/players/search')) return search(id);
+            $('a[routerlink="/app/core/players/search"]')?.click();
+            let tries = 0;
+            const timer = setInterval(() => {
+                if ((location.pathname.includes('/players/search') && $('input.player-search-criteria')) || ++tries > 25) {
+                    clearInterval(timer);
+                    search(id);
+                }
+            }, 200);
+        }
+
+        const PERSON_ICON = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>`;
+
+        /** IP ve NAME sonuçları aynı kartla gösteriliyor. */
+        function renderAccounts(modal, rows, { tone, note }) {
+            modal.html = `
+            <div style="margin-bottom:12px;color:var(--gt-muted);font-size:13px">
+              <b style="color:var(--gt-ink)">${rows.length} hesap</b> bulundu${note ? ` · ${esc(note)}` : ''}</div>
+            ${rows.map((r, i) => `
+              <div class="dup" data-party="${r.id}" style="padding:12px 16px;margin:8px 0;
+                   background:linear-gradient(135deg,#f5f5f7,#fff);border:1px solid rgba(0,0,0,.06);
+                   border-radius:12px;display:flex;justify-content:space-between;align-items:center;cursor:pointer">
+                <div style="display:flex;align-items:center;gap:12px;pointer-events:none">
+                  <span style="background:${tone};color:#fff;width:28px;height:28px;border-radius:8px;
+                        display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600">${i + 1}</span>
+                  <div><div style="font-weight:600">${esc(r.id)}</div>
+                       <div style="color:var(--gt-muted);font-size:12px;margin-top:2px">${esc(r.first)} ${esc(r.last)}</div>
+                       <div class="plans" style="margin-top:4px"><span style="color:#ccc;font-size:10px">⏳</span></div></div>
+                </div>
+                <span class="arrow" style="color:${tone};font-size:12px;pointer-events:none">→</span>
+              </div>`).join('')}
+            <div style="margin-top:20px;padding:12px;background:var(--gt-accent-soft);border-radius:10px;
+                 font-size:12px;color:var(--gt-accent);text-align:center">İlk satır bu hesap. Aramak için satıra tıkla.</div>`;
+
+            modal.body.addEventListener('click', (e) => {
+                const row = e.target.closest('.dup');
+                if (!row) return;
+                row.querySelector('.arrow').textContent = '✓';
+                modal.close();
+                setTimeout(() => goSearch(row.dataset.party), 250);
+            });
+
+            for (const r of rows) {
+                bonusPlanNames(r.id).then(names => {
+                    const box = modal.body.querySelector(`[data-party="${r.id}"] .plans`);
+                    if (!box) return;
+                    box.innerHTML = names.length
+                        ? names.map(n => `<span style="display:inline-block;background:var(--gt-accent-soft);
+                            color:var(--gt-accent);border-radius:4px;padding:1px 6px;font-size:10px;margin:1px 1px 0 0">${esc(n)}</span>`).join('')
+                        : '<span style="color:#ccc;font-size:10px">—</span>';
+                });
+            }
+        }
+
+        async function showDuplicates() {
+            const modal = ui.modal({ title: 'Aynı IP\'deki hesaplar', icon: '🔍', width: 650 }).open();
+            modal.html = ui.spinner('Aranıyor…');
+            try {
+                const rows = await duplicateRows(pid, { checkIp: 'true' });
+                if (!rows.length) { modal.html = ui.empty('Aynı IP\'yi paylaşan başka hesap yok.'); return; }
+                renderAccounts(modal, rows, { tone: 'var(--gt-accent)' });
+            } catch (e) { modal.html = ui.error(e.message); }
+        }
+
+        /** Aynı ad + soyada kayıtlı hesaplar. Sunucu gevşek eşleşme
+         *  döndürebildiği için sonucu normalleştirilmiş tam eşleşmeye süzüyoruz. */
+        async function showSameName() {
+            const modal = ui.modal({ title: 'Aynı isimli hesaplar', icon: '👥', width: 650 }).open();
+            modal.html = ui.spinner('Aranıyor…');
+            try {
+                const all = await duplicateRows(pid, { checkFirstName: 'true', checkLastName: 'true' });
+                const self = all.find(r => r.id === String(pid)) || all[0];
+                if (!self) { modal.html = ui.empty('Kayıt bulunamadı.'); return; }
+
+                const first = normalizeName(self.first);
+                const last = normalizeName(self.last);
+                const matches = all
+                    .filter(r => normalizeName(r.first) === first && normalizeName(r.last) === last)
+                    .sort((a, b) => (a.id === self.id ? -1 : b.id === self.id ? 1 : 0));
+
+                if (matches.length <= 1) {
+                    modal.html = ui.empty(`"${self.first} ${self.last}" adına kayıtlı başka hesap yok — ${all.length} kayıt tarandı.`);
+                    return;
+                }
+                renderAccounts(modal, matches, {
+                    tone: 'var(--gt-success)',
+                    note: `"${self.first} ${self.last}" · ${all.length} kayıt tarandı`,
+                });
+            } catch (e) { modal.html = ui.error(e.message); }
+        }
+
+        async function showSummary() {
+            const modal = ui.modal({ title: 'Genel özet', icon: '📊', width: 650 }).open();
+            modal.html = ui.spinner();
+            try {
+                const [all, deposit, withdrawal] = await Promise.all([bonuses(pid), lastDeposit(pid), lastWithdrawal(pid)]);
+                const list = (deposit
+                    ? all.filter(b => (parseStamp(b.triggerDate)?.getTime() ?? -1) > deposit.processDate)
+                    : all).slice(0, 10);
+
+                const depDate = deposit?.processDateStr
+                    ? deposit.processDateStr.replace(/(\d{4})-(\d{2})-(\d{2}) (.*)/, '$3-$2-$1 $4 UTC') : '—';
+
+                const box = (date, method, amount, color, bg, border) => `
+                <div style="padding:14px 16px;background:${bg};border:1px solid ${border};border-radius:12px;
+                     display:flex;justify-content:space-between;align-items:center">
+                  <div><div style="font-weight:600;font-size:13px">${esc(date)}</div>
+                       <div style="color:var(--gt-muted);font-size:11px;margin-top:2px">${esc(method || '—')}</div></div>
+                  <div style="color:${color};font-size:15px;font-weight:700">${esc(amount)}</div></div>`;
+
+                modal.html = `
+                <div style="margin-bottom:10px;font-weight:600;font-size:13px">💰 Son başarılı yatırım</div>
+                ${deposit ? box(depDate, deposit.methodName, deposit.amount, '#28a745',
+                    'linear-gradient(135deg,rgba(40,167,69,.08),rgba(40,167,69,.02))', 'rgba(40,167,69,.2)')
+                  : ui.empty('Son 90 günde tamamlanmış yatırım yok')}
+
+                <div style="margin:20px 0 10px;font-weight:600;font-size:13px">🏧 Son başarılı çekim</div>
+                ${withdrawal ? box(withdrawal.processDate || '—', withdrawal.method, withdrawal.amount, '#dc3545',
+                    'linear-gradient(135deg,rgba(220,53,69,.08),rgba(220,53,69,.02))', 'rgba(220,53,69,.2)')
+                  : ui.empty('Son 180 günde tamamlanmış çekim yok')}
+
+                <div style="margin:20px 0 10px;font-weight:600;font-size:13px">🎁 ${deposit
+                    ? `Yatırım sonrası alınan bonuslar (${list.length})`
+                    : `Son ${list.length} bonus (yatırım bulunamadı)`}</div>
+                ${list.length ? list.map((b, i) => `
+                  <div style="padding:10px 14px;margin:6px 0;background:linear-gradient(135deg,#f5f5f7,#fff);
+                       border:1px solid rgba(0,0,0,.06);border-radius:12px;display:flex;align-items:center;gap:12px">
+                    <span style="background:var(--gt-accent);color:#fff;width:24px;height:24px;border-radius:8px;
+                          display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600">${i + 1}</span>
+                    <div><div style="font-weight:600;font-size:13px">${esc(b.planName || '—')}</div>
+                         <div style="color:var(--gt-muted);font-size:11px;margin-top:2px">${esc(b.triggerDate || '—')} · ${esc(b.status || '—')}</div></div>
+                  </div>`).join('') : ui.empty('Bonus geçmişi yok')}`;
+            } catch (e) { modal.html = ui.error(e.message); }
+        }
+
+        ctx.hotkey('alt+p', showDuplicates);
+        ctx.hotkey('alt+n', showSameName);
+
+        const lookupBtn = (cls, icon, label, title, run) => h('button', {
+            type: 'button', class: `lk ${cls}`, title, html: icon + `<span>${label}</span>`,
+            onclick: (e) => { e.preventDefault(); e.stopPropagation(); run(); },
+        });
+
+        ctx.mount(
+            () => $$('mat-label').find(el => /Select Tag|Etiket Seç/.test(el.textContent))
+                    ?.closest('.mat-form-field-infix, .mat-mdc-form-field-infix, .mat-form-field-flex'),
+            'gt-lookup',
+            () => {
+                const label = h('span', { class: 'lastbonus' });
+                bonuses(pid).then(list => { label.innerHTML = `<b>Son bonus:</b> ${esc(list[0]?.planName || '—')}`; }).catch(() => {});
+                return h('span', {},
+                    lookupBtn('ip', ICON.search, 'IP', 'Aynı IP\'deki hesaplar (Alt+P)', showDuplicates),
+                    lookupBtn('pt', ICON.search, 'PT', 'Bonus + yatırım + çekim özeti', showSummary),
+                    lookupBtn('nm', PERSON_ICON, 'NAME', 'Aynı ad soyadlı hesaplar (Alt+N)', showSameName),
+                    label);
+            },
+        );
+    },
+});
+
+/* ════════════════════════════════════════════════════════════
+   5 · YORUM POPUP'I — oyuncuda yorum varsa otomatik açılır
+   ════════════════════════════════════════════════════════════ */
+GT.define({
+    id: 'player-comments',
+    match: at.playerDetail,
+    key: () => api.partyId(),
+    source: 'player',
+    setup(ctx) {
+        const pid = api.partyId();
+        let shown = false;
+
+        const drop = () => document.getElementById('gt-comments')?.remove();
+
+        function render(list) {
+            drop();
+            const root = ctx.own(h('div', { id: 'gt-comments' },
+                h('div', { class: 'h' },
+                    h('div', {}, 'Yorumlar', h('span', { class: 'n' }, list.length)),
+                    h('button', { class: 'gt-pop__x', type: 'button', onclick: () => { root.classList.remove('in'); setTimeout(drop, 250); } }, '✕')),
+                h('div', {
+                    class: 'b',
+                    html: [...list].sort((a, b) => new Date(b.date) - new Date(a.date)).map(c => {
+                        const [name, hot] = STAFF[c.staffName] || [c.staffName || '—', false];
+                        const tags = (c.tags || '').trim();
+                        return `<div class="i">
+                          <div class="t"><span class="s${hot ? ' hot' : ''}">${esc(name)}</span><span>${esc(c.date || '')}</span></div>
+                          <div class="c">${esc(c.comment || '')}</div>
+                          ${tags ? `<div class="g">${esc(tags)}</div>` : ''}</div>`;
+                    }).join(''),
+                })));
+            document.body.append(root);
+            requestAnimationFrame(() => root.classList.add('in'));
+            setTimeout(() => { root.classList.add('out'); setTimeout(drop, 700); }, 10000);
+        }
+
+        function commentsTab() {
+            for (const icon of $$('mat-icon.fa-comment.pin-tabs')) {
+                const box = icon.closest('div');
+                if (box && /COMMENTS/i.test(box.textContent)) return box;
+            }
+            return null;
+        }
+
+        ctx.tick(() => {
+            if (shown || !pid) return;
+            const tab = commentsTab();
+            if (!tab) return;
+            const count = Number(tab.textContent.match(/COMMENTS\s*\((\d+)\)/i)?.[1] || 0);
+            if (!count) return;
+            shown = true;
+            api.json(api.ics(`players/${pid}/comment/`), { ttl: 30000 })
+                .then(list => { if (Array.isArray(list) && list.length) render(list); })
+                .catch(e => oops('[Yorumlar]', e));
+        }, { lazy: true });
+    },
+});
+
+/* ════════════════════════════════════════════════════════════
+   6 · OPEN / PASS VURGUSU
+   ════════════════════════════════════════════════════════════ */
+GT.define({
+    id: 'player-status',
+    match: at.playerDetail,
+    source: 'player',
+    setup(ctx) {
+        const SEL = '.player-table > tbody:nth-child(1) > tr:nth-child(6) > td:nth-child(2)';
+        ctx.tick(() => {
+            const cell = $(SEL);
+            if (!cell) return;
+            const value = txt(cell).toUpperCase();
+            if (cell.dataset.gtStatus === value) return;
+            cell.dataset.gtStatus = value;
+            Object.assign(cell.style, {
+                fontWeight: 'bold', fontSize: '13px', textAlign: 'center', borderRadius: '4px', padding: '2px 8px',
+                color: (value === 'OPEN' || value === 'PASS') ? '#fff' : '',
+                backgroundColor: value === 'OPEN' ? '#FF3B30' : value === 'PASS' ? '#34C759' : '',
+            });
+        });
+    },
+});
+
+log('GT Player v1.0.0 kayıtlı.');
+
+});
+})();
