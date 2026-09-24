@@ -12,7 +12,7 @@ core-secundus.gmntc.com (Angular SPA) üzerinde çalışan, tek paylaşılan
   yaması), `sessionKey`'i her istekte taze okuyan API katmanı (`GT.api`),
   tasarım token'ları + UI kiti (`GT.ui`, `GT.css`), kısayol defteri
   (`GT.hotkeys`), modül yaşam döngüsü (`GT.define`).
-- **Uydular** (gt-shell, gt-player, gt-withdrawals) kendilerini şöyle
+- **Uydular** (gt-shell, gt-player, gt-withdrawals, gt-transactions) kendilerini şöyle
   kaydeder — çekirdek onlardan önce ya da sonra yüklense fark etmez:
   ```js
   const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
@@ -144,11 +144,11 @@ branch'i bozma.
 
 ## Eksik / yapılmamış
 
-- **GT Transactions** hiç yazılmadı. AI ÖZET adlı ayrı, bağımsız bir
-  script (v6.7.0) hâlâ eski main-world ağ yakalama desenini kendi
-  başına yapıyor, çekirdeğe taşınmadı. Transaction-history sayfasındaki
-  1./2. Aşama, CRE, `<<` butonları ve kaydırma butonu (eski All-in-One'da
-  vardı) hiçbir uyduya taşınmadı.
+- **GT Transactions** (`gt-transactions.user.js`, 1.0.0) yazıldı:
+  1./2. Aşama + CRE (Alt+X / Alt+D / Alt+C), `<<` bir gün geri, kaydırma
+  butonu — eski All-in-One'daki mantık birebir, çekirdek modüllerine
+  oturtuldu. AI ÖZET (v6.7.0) hâlâ ayrı, bağımsız; eski main-world ağ
+  yakalama desenini kendi başına yapıyor, çekirdeğe taşınmadı.
 - Pingwi Checker (v2.6.0) bilinçli olarak bağımsız kaldı — ikinci bir
   domain'de (safepaymentprocessingservice.com) GM_setValue köprüsüyle
   çalışıyor, GT Core'a bağlı değil.
