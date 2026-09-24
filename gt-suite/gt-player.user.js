@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.7
+// @version      1.0.8
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -347,11 +347,12 @@ css('gt-player-style', `
 
 #gt-dash{display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start; margin:14px 0 0; text-align:left;
   font-family:var(--gt-font); font-size:12px; line-height:1.4; color:var(--gt-ink)}
-#gt-dash *{box-sizing:border-box}
+#gt-dash *{box-sizing:border-box; font-family:var(--gt-font); letter-spacing:normal; text-transform:none;
+  text-shadow:none; -webkit-font-smoothing:antialiased}
 #gt-dash .fa{font-family:FontAwesome; font-style:normal}
-#gt-dash .card{background:#fff; border:1px solid var(--gt-line); border-radius:14px;
-  box-shadow:0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06); min-width:0}
-#gt-dash .card.pad{padding:14px 16px 8px}
+#gt-dash .card{background:#fff; border:.5px solid rgba(0,0,0,.08); border-radius:16px;
+  box-shadow:0 1px 2px rgba(0,0,0,.04), 0 6px 20px rgba(0,0,0,.05); min-width:0}
+#gt-dash .card.pad{padding:16px 18px 12px}
 #gt-ozet{flex:0 0 auto; max-width:420px; position:relative; overflow:hidden; --fade:#fff;
   transition:background-color .2s, border-color .2s}
 #gt-acc{flex:0 0 auto}
@@ -364,7 +365,7 @@ css('gt-player-style', `
 #gt-dash.floating #gt-logs{min-width:0}
 
 #gt-dash .head{display:flex; align-items:flex-start; justify-content:space-between; gap:8px; margin-bottom:12px}
-#gt-dash .title{font-size:14px; font-weight:600; letter-spacing:-.01em}
+#gt-dash .title{font-size:15px; font-weight:600; letter-spacing:-.2px; color:var(--gt-ink)}
 #gt-dash .sub{color:var(--gt-muted); font-size:11px; margin-top:1px; display:flex; flex-wrap:wrap; gap:0 10px}
 #gt-dash .refresh{all:unset; width:28px; height:28px; flex:none; border-radius:50%; color:var(--gt-muted);
   cursor:pointer; display:inline-flex; align-items:center; justify-content:center}
@@ -395,8 +396,25 @@ css('gt-player-style', `
 #gt-dash .line.total span:last-child{font-size:18px; font-weight:600}
 
 #gt-dash .toolbar:empty{display:none}
-#gt-acc tr.ltd td{border-top:1px solid var(--gt-line); padding-top:9px; font-weight:600; color:var(--gt-ink)}
-#gt-acc td.net{font-weight:600}
+#gt-acc{min-width:380px}
+#gt-acc .gta{font-variant-numeric:tabular-nums; margin:0 -8px}
+#gt-acc .gta-head, #gt-acc .gta-row{display:grid; grid-template-columns:78px repeat(3, minmax(86px, 1fr));
+  column-gap:14px; align-items:center; padding:0 8px}
+#gt-acc .gta-head{padding-bottom:6px; font-size:10.5px; font-weight:600; letter-spacing:.4px;
+  text-transform:uppercase; color:var(--gt-muted)}
+#gt-acc .gta-head span, #gt-acc .gta-n{text-align:right; white-space:nowrap}
+#gt-acc .gta-row{height:34px; border-radius:8px; font-size:12.5px; color:var(--gt-ink);
+  border-top:.5px solid rgba(60,60,67,.12); transition:background .12s}
+#gt-acc .gta-head + .gta-row{border-top-color:transparent}
+#gt-acc .gta-row:hover{background:rgba(118,118,128,.07); border-top-color:transparent}
+#gt-acc .gta-row:hover + .gta-row{border-top-color:transparent}
+#gt-acc .gta-lbl{color:var(--gt-ink-2); font-weight:500}
+#gt-acc .gta-n.z{color:#c7c7cc}
+#gt-acc .gta-n.net{font-weight:600}
+#gt-acc .gta-n.net.pos{color:#248a3d}
+#gt-acc .gta-n.net.neg{color:#d70015}
+#gt-acc .gta-row.ltd{margin-top:6px; height:38px; background:var(--gt-surface-2); border-top-color:transparent; font-weight:600}
+#gt-acc .gta-row.ltd .gta-lbl{color:var(--gt-ink); font-weight:600}
 
 /* Giriş kayıtları — tablo değil grid liste: sitenin global table/td
    stilleri buraya sızamaz, sütunlar her satırda aynı hizada kalır. */
@@ -405,9 +423,11 @@ css('gt-player-style', `
   backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
   font-size:11px; font-weight:600; letter-spacing:.2px; color:var(--gt-muted)}
 #gt-logs .gtl-day:first-child{padding-top:2px}
-#gt-logs .gtl-row{display:grid; margin:0; width:auto; grid-template-columns:44px minmax(150px,1fr) 96px minmax(0,120px); column-gap:12px; align-items:center;
+#gt-logs .gtl-row{display:grid; margin:0 -8px; padding-left:8px !important; padding-right:8px !important; border-radius:8px;
+  transition:background .12s; width:auto; grid-template-columns:44px minmax(150px,1fr) 96px minmax(0,120px); column-gap:12px; align-items:center;
   padding:9px 0; border-bottom:.5px solid rgba(60,60,67,.14)}
 #gt-logs .gtl-row:last-child{border-bottom:0}
+#gt-logs .gtl-row:hover{background:rgba(118,118,128,.07)}
 #gt-logs .gtl-row > div{min-width:0}
 #gt-logs .gtl-time{font-size:12px; font-weight:500; font-variant-numeric:tabular-nums; color:var(--gt-ink)}
 #gt-logs .gtl-ip{display:flex; align-items:center; gap:6px; min-width:0; font-size:12.5px; font-weight:500;
@@ -744,23 +764,23 @@ GT.define({
 
         function renderAcc() {
             accCard.querySelector('.refresh').classList.toggle('busy', acc.busy);
-            accCard.querySelector('.sub').innerHTML = acc.at ? `<span>Güncellendi ${hhmm(acc.at)}</span>` : '';
+            accCard.querySelector('.sub').innerHTML = `<span>TRY</span>${acc.at ? `<span>Güncellendi ${hhmm(acc.at)}</span>` : ''}`;
 
             const box = accCard.querySelector('.content');
             if (acc.error) { box.innerHTML = `<div class="msg err">${esc(acc.error)}</div>`; return; }
             if (!acc.data) { box.innerHTML = `<div class="msg">${acc.busy ? 'Yükleniyor…' : 'Veri yok.'}</div>`; return; }
 
-            const cls = (n) => n > 0 ? 'pos' : n < 0 ? 'neg' : '';
-            box.innerHTML = `<table>
-              <thead><tr><th>Periyot</th><th class="num">Yatırım</th><th class="num">Çekim</th><th class="num">NET</th></tr></thead>
-              <tbody>${PERIODS.map(([key, label]) => {
+            const cls = (n) => n > 0 ? 'pos' : n < 0 ? 'neg' : 'z';
+            const num = (n, extra = '') => `<span class="gta-n ${n ? '' : 'z'} ${extra}">${money(n)}</span>`;
+            box.innerHTML = `<div class="gta">
+              <div class="gta-head"><span></span><span>Yatırım</span><span>Çekim</span><span>Net</span></div>
+              ${PERIODS.map(([key, label]) => {
                   const { dep, wd } = acc.data[key] || { dep: 0, wd: 0 };
                   const net = dep - wd;
-                  return `<tr${key === 'LTD' ? ' class="ltd"' : ''}>
-                    <td class="lbl">${label}</td><td class="num">${money(dep)}</td>
-                    <td class="num">${money(wd)}</td>
-                    <td class="num net ${cls(net)}">${money(net)}</td></tr>`;
-              }).join('')}</tbody></table>`;
+                  return `<div class="gta-row${key === 'LTD' ? ' ltd' : ''}">
+                    <span class="gta-lbl">${label}</span>${num(dep)}${num(wd)}${num(net, 'net ' + cls(net))}</div>`;
+              }).join('')}
+            </div>`;
         }
 
         /* ── giriş kayıtları ── */
@@ -1043,7 +1063,17 @@ GT.define({
             };
             const out = [];
             if (emailVal) out.push(entry('E-posta', emailVal));
-            phoneVals.forEach((v, i) => out.push(entry(phoneVals.length > 1 ? `Telefon ${i + 1}` : 'Telefon', v)));
+            // Numara birden fazla hücrede tekrarlanabiliyor (hep aynı) — kartta
+            // tek satır gösterilir, kalanların hepsi yine de gizlenir.
+            if (phoneVals.length) {
+                const [first, ...rest] = phoneVals.map(v => entry('Telefon', v));
+                first.icons = first.icons.filter(td => !td.querySelector('i.fa-phone'));
+                first.parts.push(...rest.flatMap(r => r.parts));
+                out.push(first);
+            }
+            // Telefon ikonlu etiket hücreleri — değerin hemen solunda olmasa da.
+            const icons = $$('td.gap-30').filter(td => outside(td) && td.querySelector('i.fa-phone') && !txt(td));
+            if (icons.length) (out.find(r => r.label === 'Telefon') || out[0])?.parts.push(...icons);
             return out;
         }
 

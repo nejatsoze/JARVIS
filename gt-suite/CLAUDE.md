@@ -130,6 +130,16 @@ branch'i bozma.
   henüz hiçbir uydu kullanmıyor — AI ÖZET / GT Transactions taşınırken
   gerekecek).
 
+## Tasarım kuralları (panel)
+
+- Panel sayfanın kendi `<table>`'ı içine yerleşiyor; sitenin Bootstrap
+  `table/td/.row/.badge/small` kuralları bizim öğelere sızar. Bu yüzden
+  kartların içinde `<table>` KULLANILMAZ (grid div), sınıflar öneklenir
+  (`gta-` Accounting, `gtl-` giriş kayıtları), `#gt-dash *` font/harf
+  aralığı sıfırlaması korunur.
+- Sayfadaki Angular hücrelerine dokunulmaz: kopyala + CSS ile gizle.
+  Kopyadaki tıklamalar `twin` eşlemesiyle ("hücre + sıra") aslına iletilir.
+
 ## Eksik / yapılmamış
 
 - **GT Transactions** hiç yazılmadı. AI ÖZET adlı ayrı, bağımsız bir
