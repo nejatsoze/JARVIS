@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.6
+// @version      1.0.7
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -355,7 +355,7 @@ css('gt-player-style', `
 #gt-ozet{flex:0 0 auto; max-width:420px; position:relative; overflow:hidden; --fade:#fff;
   transition:background-color .2s, border-color .2s}
 #gt-acc{flex:0 0 auto}
-#gt-logs{flex:1 1 460px; min-width:420px; max-width:760px}
+#gt-logs{flex:1 1 480px; min-width:440px; max-width:760px}
 #gt-dash.floating{position:fixed; right:16px; bottom:56px; z-index:99998; flex-direction:column; flex-wrap:nowrap;
   width:560px; max-width:calc(100vw - 32px); max-height:78vh; overflow:auto; margin:0; padding:8px;
   background:rgba(255,255,255,.72); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
@@ -400,32 +400,34 @@ css('gt-player-style', `
 
 /* Giriş kayıtları — tablo değil grid liste: sitenin global table/td
    stilleri buraya sızamaz, sütunlar her satırda aynı hizada kalır. */
-#gt-logs .scroll{max-height:380px; overflow-y:auto; overflow-x:hidden; margin:0 -16px; padding:0 16px}
-#gt-logs .day{position:sticky; top:0; z-index:1; padding:10px 0 6px; background:rgba(255,255,255,.92);
+#gt-logs .gtl-scroll{max-height:380px; overflow-y:auto; overflow-x:hidden; margin:0 -16px; padding:0 16px}
+#gt-logs .gtl-day{position:sticky; top:0; z-index:1; padding:10px 0 6px; background:rgba(255,255,255,.92);
   backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
   font-size:11px; font-weight:600; letter-spacing:.2px; color:var(--gt-muted)}
-#gt-logs .day:first-child{padding-top:2px}
-#gt-logs .row{display:grid; grid-template-columns:52px minmax(0,1fr) 112px 128px; column-gap:12px; align-items:center;
+#gt-logs .gtl-day:first-child{padding-top:2px}
+#gt-logs .gtl-row{display:grid; margin:0; width:auto; grid-template-columns:44px minmax(150px,1fr) 96px minmax(0,120px); column-gap:12px; align-items:center;
   padding:9px 0; border-bottom:.5px solid rgba(60,60,67,.14)}
-#gt-logs .row:last-child{border-bottom:0}
-#gt-logs .row > div{min-width:0}
-#gt-logs .time{font-size:12px; font-weight:500; font-variant-numeric:tabular-nums; color:var(--gt-ink)}
-#gt-logs .ip{display:flex; align-items:center; gap:6px; min-width:0; font-size:12.5px; font-weight:500;
+#gt-logs .gtl-row:last-child{border-bottom:0}
+#gt-logs .gtl-row > div{min-width:0}
+#gt-logs .gtl-time{font-size:12px; font-weight:500; font-variant-numeric:tabular-nums; color:var(--gt-ink)}
+#gt-logs .gtl-ip{display:flex; align-items:center; gap:6px; min-width:0; font-size:12.5px; font-weight:500;
   font-variant-numeric:tabular-nums; color:var(--gt-ink)}
-#gt-logs .ip .addr{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-#gt-logs .ipdot{width:6px; height:6px; border-radius:50%; flex:none}
-#gt-logs .loc{margin-top:2px; padding-left:12px; font-size:11px; color:var(--gt-muted);
+#gt-logs .gtl-ip .gtl-addr{flex:0 1 auto; min-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+#gt-logs .gtl-dot{width:6px; height:6px; border-radius:50%; flex:none}
+#gt-logs .gtl-loc{margin-top:2px; padding-left:12px; font-size:11px; color:var(--gt-muted);
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-#gt-logs .loc .isp{opacity:.75}
-#gt-logs .meta{display:flex; align-items:flex-start; gap:7px; font-size:12px; color:var(--gt-ink); white-space:nowrap}
-#gt-logs .meta .fa{flex:none; width:14px; margin-top:1px; text-align:center; font-size:13px; color:var(--gt-muted)}
-#gt-logs .meta > div{min-width:0; overflow:hidden; text-overflow:ellipsis}
-#gt-logs .meta small{display:block; margin-top:2px; font-size:11px; color:var(--gt-muted)}
-#gt-logs .pill{flex:none; font-size:10px; font-weight:600; padding:1px 6px; border-radius:6px}
-#gt-logs .pill.in{background:rgba(52,199,89,.12); color:#248a3d}
-#gt-logs .pill.out{background:rgba(118,118,128,.12); color:var(--gt-muted)}
-#gt-logs .pill.fail{background:rgba(255,59,48,.10); color:var(--gt-danger)}
-#gt-logs .row.failed .time{color:var(--gt-danger)}
+#gt-logs .gtl-loc .gtl-isp{opacity:.75}
+#gt-logs .gtl-meta{display:flex; align-items:flex-start; gap:7px; font-size:12px; color:var(--gt-ink); white-space:nowrap}
+#gt-logs .gtl-meta .fa{flex:none; width:14px; margin-top:1px; text-align:center; font-size:13px; color:var(--gt-muted)}
+#gt-logs .gtl-meta > div{min-width:0; overflow:hidden; text-overflow:ellipsis}
+#gt-logs .gtl-meta small{display:block; margin-top:2px; font-size:11px; color:var(--gt-muted)}
+#gt-logs .gtl-pill{flex:none; font-size:10px; font-weight:600; padding:1px 6px; border-radius:6px}
+#gt-logs .gtl-pill.in{background:rgba(52,199,89,.12); color:#248a3d}
+#gt-logs .gtl-pill.out{background:rgba(118,118,128,.12); color:var(--gt-muted)}
+#gt-logs .gtl-pill.fail{background:rgba(255,59,48,.10); color:var(--gt-danger)}
+#gt-logs .gtl-row.failed .gtl-time{color:var(--gt-danger)}
+
+#gt-logs .content{min-width:0; overflow:hidden}
 
 #gt-ozet .top{display:flex; align-items:center; gap:14px; padding:14px 90px 14px 16px; border-bottom:.5px solid rgba(0,0,0,.06)}
 #gt-ozet .photo,#gt-ozet .ph{width:52px; height:52px; border-radius:50%; flex-shrink:0; background:var(--gt-surface-2); border:.5px solid var(--gt-line)}
@@ -449,6 +451,9 @@ css('gt-player-style', `
 #gt-ozet .idrow .icons .glyphicon:empty{display:none}
 #gt-ozet .idrow .icons .fa-check-circle{color:#34c759 !important}
 #gt-ozet .idrow .icons .fa-phone{color:var(--gt-muted)}
+#gt-ozet .idrow .icons > *{cursor:pointer}
+#gt-ozet .idrow .icons a{color:var(--gt-accent); font-size:11px; font-weight:500; text-decoration:none}
+#gt-ozet .idrow .icons a:hover{text-decoration:underline}
 #gt-ozet .copy{all:unset; display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px;
   border-radius:5px; background:var(--gt-accent-soft); border:.5px solid rgba(0,113,227,.25); color:var(--gt-accent); cursor:pointer}
 #gt-ozet .copy:hover{background:rgba(0,113,227,.16)}
@@ -798,7 +803,7 @@ GT.define({
                 const g = geoOf(r.ip);
                 if (g && !g.failed) {
                     const place = [g.city, g.region && g.region !== g.city ? g.region : '', g.cc].filter(Boolean).join(', ');
-                    return `${esc(place || r.country)}${g.isp ? `<span class="isp"> · ${esc(g.isp)}</span>` : ''}`;
+                    return `${esc(place || r.country)}${g.isp ? `<span class="gtl-isp"> · ${esc(g.isp)}</span>` : ''}`;
                 }
                 if (!g && geoPending.has(r.ip)) return 'Konum aranıyor…';
             }
@@ -843,24 +848,24 @@ GT.define({
             for (const r of rows) {
                 const d = r.time ? new Date(r.time) : null;
                 const k = d ? dayKey(d) : '—';
-                if (k !== lastDay) { lastDay = k; html.push(`<div class="day">${d ? dayLabel(d) : 'Tarihsiz'}</div>`); }
+                if (k !== lastDay) { lastDay = k; html.push(`<div class="gtl-day">${d ? dayLabel(d) : 'Tarihsiz'}</div>`); }
 
                 const os = osInfo(r.os, r.mobile);
                 const br = browserInfo(r.browser);
                 const kind = /ipad|tablet/i.test(r.device + ' ' + r.os) ? 'Tablet' : r.mobile ? 'Mobil' : 'Masaüstü';
                 const typePill = (logs.filter === 'ALL' && r.type)
-                    ? `<span class="pill ${r.type.startsWith('LOGIN') ? 'in' : 'out'}">${r.type.startsWith('LOGIN') ? 'Giriş' : 'Çıkış'}</span>` : '';
-                const failPill = r.failed ? '<span class="pill fail">Başarısız</span>' : '';
-                html.push(`<div class="row${r.failed ? ' failed' : ''}">
-                    <div class="time" title="${d ? esc(d.toISOString().replace('T', ' ').slice(0, 19)) + ' UTC' : ''}">${d ? fmtTime(d) : '—'}</div>
-                    <div><div class="ip"><span class="ipdot" style="background:${colors.get(r.ip) || 'transparent'}"></span>
-                        <span class="addr">${esc(r.ip) || '—'}</span>${typePill}${failPill}</div>
-                      <div class="loc">${locationCell(r)}</div></div>
-                    <div class="meta" title="${esc(r.os || '')}"><i class="fa ${os.icon}"></i><div>${esc(os.label)}<small>${kind}</small></div></div>
-                    <div class="meta" title="${esc(r.browser || '')}"><i class="fa ${br.icon}"></i><div>${esc(br.label)}</div></div>
+                    ? `<span class="gtl-pill ${r.type.startsWith('LOGIN') ? 'in' : 'out'}">${r.type.startsWith('LOGIN') ? 'Giriş' : 'Çıkış'}</span>` : '';
+                const failPill = r.failed ? '<span class="gtl-pill fail">Başarısız</span>' : '';
+                html.push(`<div class="gtl-row${r.failed ? ' failed' : ''}">
+                    <div class="gtl-time" title="${d ? esc(d.toISOString().replace('T', ' ').slice(0, 19)) + ' UTC' : ''}">${d ? fmtTime(d) : '—'}</div>
+                    <div><div class="gtl-ip"><span class="gtl-dot" style="background:${colors.get(r.ip) || 'transparent'}"></span>
+                        <span class="gtl-addr" title="${esc(r.ip)}">${esc(r.ip) || '—'}</span>${typePill}${failPill}</div>
+                      <div class="gtl-loc">${locationCell(r)}</div></div>
+                    <div class="gtl-meta" title="${esc(r.os || '')}"><i class="fa ${os.icon}"></i><div>${esc(os.label)}<small>${kind}</small></div></div>
+                    <div class="gtl-meta" title="${esc(r.browser || '')}"><i class="fa ${br.icon}"></i><div>${esc(br.label)}</div></div>
                   </div>`);
             }
-            box.innerHTML = `<div class="scroll">${html.join('')}</div>`;
+            box.innerHTML = `<div class="gtl-scroll">${html.join('')}</div>`;
         }
 
         /* ── kimlik kartı ── */
@@ -1009,60 +1014,101 @@ GT.define({
            KOPYASI kimlik kartına konur, asılları sadece CSS ile gizlenir.
            Asıl değişirse (Angular yeniden çizerse) kopya da yenilenir. */
         const outside = (el) => el && !el.closest('#gt-dash');
+        const PHONE_MASK = /^\*{3,}\d{2,}$/;   // *********6181
+        const MASKED = /\*{3,}/;
+
+        /** Değerin solundaki etiket hücresi: boş, EMAIL yazan ya da telefon ikonlu. */
+        const labelOf = (val) => {
+            const l = val?.previousElementSibling;
+            if (!l?.matches('td.text-xs-left, td.gap-30')) return null;
+            const t = txt(l);
+            return (t === '' || /^(e-?mail|phone|telefon)$/i.test(t)) ? l : null;
+        };
+        /** Değerin sağındaki ikon/işlem hücresi (bir sonraki telefonun etiketi değilse). */
+        const extrasOf = (val) => {
+            const n = val?.nextElementSibling;
+            return n?.matches('td.gap-30') && !n.querySelector('i.fa-phone') ? n : null;
+        };
 
         function findContacts() {
-            const phoneLabel = $$('td.gap-30').find(td => outside(td) && td.querySelector('i.fa-phone'));
-            const phoneVal = phoneLabel?.nextElementSibling || null;
-
-            const emailLabel = $$('td.text-xs-left, td.gap-30').find(td => outside(td)
-                && (/^e-?mail$/i.test(txt(td)) || td.querySelector('i.fa-envelope, i.fa-envelope-o')));
-            let emailVal = emailLabel?.nextElementSibling || null;
-            if (!emailVal || !/\*/.test(txt(emailVal))) {
-                // Etiket yoksa: maskeli (***) değer + hemen sağında ikon hücresi
-                emailVal = $$('td.data.strong').find(td => outside(td) && td !== phoneVal
-                    && /\*{3,}/.test(txt(td)) && td.nextElementSibling?.matches('td.gap-30')) || null;
-            }
-            const emailIcons = emailVal?.nextElementSibling?.matches('td.gap-30') ? emailVal.nextElementSibling : null;
-            return { emailLabel: emailVal && emailLabel?.nextElementSibling === emailVal ? emailLabel : null,
-                     emailVal, emailIcons, phoneLabel, phoneVal };
+            const vals = $$('td.data.strong').filter(td => outside(td) && MASKED.test(txt(td)));
+            const emailVal = vals.find(td => !PHONE_MASK.test(txt(td))) || null;
+            const phoneVals = vals.filter(td => PHONE_MASK.test(txt(td)));
+            const entry = (label, val) => {
+                const lab = labelOf(val);
+                const extra = extrasOf(val);
+                // Etiket hücresinde ikon varsa (ör. fa-phone) o da kopyalanır.
+                const icons = [lab?.children.length ? lab : null, extra].filter(Boolean);
+                return { label, val, parts: [lab, val, extra].filter(Boolean), icons };
+            };
+            const out = [];
+            if (emailVal) out.push(entry('E-posta', emailVal));
+            phoneVals.forEach((v, i) => out.push(entry(phoneVals.length > 1 ? `Telefon ${i + 1}` : 'Telefon', v)));
+            return out;
         }
 
-        /** Hücrenin içeriğini temiz bir kopyaya çevirir; tooltip metnini title'a taşır. */
+        /* Kopya → asıl eşlemesi. Kopyaya tıklanınca asıl (gizli) öğeye
+           tıklanır; Angular'ın işleyicisi (resend activation, reset password…)
+           orada çalışır. Asıl düğüm referans olarak değil "hücre + sıra" olarak
+           tutulur: Angular hücrenin içini yeniden çizse de tıklama doğru yere gider. */
+        const twin = new WeakMap();
+
+        /** Hücrenin içeriğini kopyalar; tooltip metnini title'a taşır, her kopyayı aslına bağlar. */
         function copyOf(td) {
             const box = document.createElement('span');
             for (const n of td.childNodes) box.append(n.cloneNode(true));
-            for (const el of box.querySelectorAll('*')) {
-                const msgId = el.getAttribute('aria-describedby');
+            const origs = td.querySelectorAll('*');
+            box.querySelectorAll('*').forEach((el, i) => {
+                const orig = origs[i];
+                twin.set(el, { td, i });
+                const msgId = orig.getAttribute('aria-describedby');
                 const tip = msgId && document.getElementById(msgId)?.textContent?.trim();
                 if (tip) el.setAttribute('title', tip);
                 for (const a of ['id', 'aria-describedby', 'cdk-describedby-host']) el.removeAttribute(a);
-            }
+            });
             return box;
         }
 
+        let lastParts = [];
         function refreshContacts() {
             const slot = ozet.querySelector('[data-contacts]');
             if (!slot) return;
-            const c = findContacts();
-            const parts = [c.emailLabel, c.emailVal, c.emailIcons, c.phoneLabel, c.phoneVal].filter(Boolean);
+            if (!slot.dataset.wired) {
+                slot.dataset.wired = '1';
+                slot.addEventListener('click', (e) => {
+                    for (let el = e.target; el && el !== slot; el = el.parentElement) {
+                        const ref = twin.get(el);
+                        if (!ref) continue;
+                        e.preventDefault(); e.stopPropagation();
+                        const orig = ref.td.isConnected && ref.td.querySelectorAll('*')[ref.i];
+                        if (orig) orig.click();
+                        else { lastParts = []; refreshContacts(); warn('[Player] İletişim öğesi yenilendi, tekrar tıkla.'); }
+                        return;
+                    }
+                });
+            }
+
+            const rows = findContacts();
+            const parts = rows.flatMap(r => r.parts);
             for (const el of parts) el.classList.add('gt-hidden-field');
 
+            // Angular hücreyi yeniden çizdiyse içerik aynı olsa bile düğümler
+            // yenidir — eski kopyaların tıklaması boşa düşmesin diye yeniden kur.
+            const sameNodes = parts.length === lastParts.length && parts.every((el, i) => el === lastParts[i]);
             const sig = parts.map(el => el.innerHTML).join('|');
-            if (slot.dataset.sig === sig) return;
+            if (sameNodes && slot.dataset.sig === sig) return;
+            lastParts = parts;
             slot.dataset.sig = sig;
             slot.textContent = '';
 
-            const row = (label, valTd, iconTds) => {
-                if (!valTd) return;
+            for (const r of rows) {
                 const icons = h('span', { class: 'icons' });
-                for (const td of iconTds) if (td) icons.append(...copyOf(td).childNodes);
+                for (const td of r.icons) icons.append(...copyOf(td).childNodes);
                 slot.append(h('div', { class: 'idrow' },
-                    h('span', { class: 'idlabel' }, label),
-                    h('span', { class: 'val', title: txt(valTd) }, txt(valTd)),
+                    h('span', { class: 'idlabel' }, r.label),
+                    h('span', { class: 'val', title: txt(r.val) }, txt(r.val)),
                     icons));
-            };
-            row('E-posta', c.emailVal, [c.emailIcons]);
-            row('Telefon', c.phoneVal, [c.phoneLabel]);
+            }
         }
 
         /* ── olaylar ── */
