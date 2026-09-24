@@ -67,6 +67,13 @@ repo'da yok — gelince mevcut sürümlerle diff alınmalı. Yeni şüpheli:
 `sweepOldPanels()` içinde Angular'a ait `td` hücrelerini her boşta turunda
 `cell.remove()` ile SİLEN döngü (gizlemek yerine siliyor, aynı sınıf risk).
 
+**Teşhis araçları (core 1.1.3):** `GT.flight()` sayfa yenilemeleri arasında
+kalıcı kara kutuyu (yükleme türü, rota, modül kurulumu, hata, çıkış)
+tablo olarak basar; `GT.off('id' | 'kaynak' | 'önek*')` dosya düzenlemeden
+modül kapatır (localStorage `gt.off`), `GT.on()` hepsini açar. Suçluyu
+bulmak için önce kaynak bazında (player / withdrawals / shell), sonra
+modül bazında daraltılır.
+
 Eski plan (tarihsel):
 - **Düzeldiyse** → adoptContacts kesin suçlu. Özelliği GERİ getirirken
   düğümü TAŞIMAK yerine KLONLAMAK (`cloneNode(true)`) ve orijinali sadece

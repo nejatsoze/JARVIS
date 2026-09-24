@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Core — paylaşılan çalışma zamanı
 // @namespace    http://tampermonkey.net/
-// @version      1.1.2
+// @version      1.1.3
 // @description  GamingTec script ailesinin ortak çekirdeği: tek veriyolu, rota-farkındalıklı modül yaşam döngüsü, sessionKey disiplinli API katmanı, tasarım token'ları + UI kiti, kısayol defteri, gameTranId veri katmanı ve Firefox için main-world ağ köprüsü. UI üretmez — tüm özellikler uydu scriptlerde yaşar. Çapraz origin izinleri (KYCAID, ipwho.is) burada toplanır; uydular GT.api.gm üzerinden kullanır, kendi @grant'ine ihtiyaç duymaz.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
@@ -42,7 +42,7 @@ const W = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow :
 // Çekirdek iki kez yüklenirse (iki sekme scripti, hatalı kurulum) ikincisi çekilir.
 if (W.GT && W.GT.__core) return;
 
-const VERSION   = '1.1.2';
+const VERSION   = '1.1.3';
 const API_LEVEL = 1;
 const IN_FRAME  = window.self !== window.top;
 
@@ -57,6 +57,47 @@ const $   = (sel, root = document) => root.querySelector(sel);
 const $$  = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const txt = (n) => (n?.textContent || '').trim();
 const idle = (fn) => ('requestIdleCallback' in window) ? requestIdleCallback(fn, { timeout: 400 }) : setTimeout(fn, 60);
+
+/* ═══════════════════ teşhis: kara kutu + kapatma anahtarı ═══════════════════
+   Kara kutu sessionStorage'a yazar; sayfa yenilense de kayıt kalır.
+   Konsoldan:  GT.flight()        → son olaylar (yükleme, rota, hata, çıkış)
+               GT.flight.clear()  → kaydı sıfırla
+               GT.off('wd-keepalive', 'withdrawals')  → modül id'si ya da kaynak adı
+               GT.on()            → hepsini geri aç
+   Kapatma localStorage'da durur; değişiklik sayfa yenilenince geçerli olur. */
+const FLIGHT_KEY = 'gt.flight', OFF_KEY = 'gt.off', FLIGHT_MAX = 80;
+const store = (kind) => { try { return W[kind]; } catch { return null; } };
+
+function flight(ev, info = '') {
+    const ss = store('sessionStorage');
+    if (!ss) return;
+    try {
+        const list = JSON.parse(ss.getItem(FLIGHT_KEY) || '[]');
+        list.push({
+            t: new Date().toISOString().slice(11, 23),
+            yer: IN_FRAME ? 'iframe' : 'ana',
+            olay: ev,
+            bilgi: String(info).slice(0, 300),
+            url: location.pathname + location.search,
+        });
+        ss.setItem(FLIGHT_KEY, JSON.stringify(list.slice(-FLIGHT_MAX)));
+    } catch { /* depolama dolu/kapalı — teşhis sessizce devre dışı */ }
+}
+
+function offList() {
+    try { return (store('localStorage')?.getItem(OFF_KEY) || '').split(',').map(s => s.trim()).filter(Boolean); }
+    catch { return []; }
+}
+
+function isOff(def, off) {
+    return off.some(p => p === def.id || p === def.source
+        || (p.endsWith('*') && def.id.startsWith(p.slice(0, -1))));
+}
+
+flight('yükleme', `${performance.getEntriesByType?.('navigation')?.[0]?.type || '?'} · kapalı: ${offList().join(',') || '—'}`);
+addEventListener('error', (e) => flight('hata', `${e.message} @ ${(e.filename || '').split('/').pop()}:${e.lineno}`));
+addEventListener('unhandledrejection', (e) => flight('promise', e.reason?.stack?.split('\n')[0] || e.reason));
+addEventListener('pagehide', () => flight('çıkış', location.href));
 
 function h(tag, props = {}, ...kids) {
     const node = document.createElement(tag);
@@ -146,6 +187,7 @@ const router = (() => {
     const emit = () => {
         if (location.href === href) return;
         href = location.href;
+        flight('rota', href);
         for (const fn of subs) safe(fn, href);
     };
     for (const m of ['pushState', 'replaceState']) {
@@ -774,10 +816,12 @@ function stop(def) {
 }
 
 function sync() {
+    const off = offList();
     for (const def of modules) {
         const scope = def.scope || 'top';
         const scopeOk = scope === 'both' || (IN_FRAME ? scope === 'frame' : scope === 'top');
-        const active = scopeOk && (!def.match || safe(def.match, location.href, location.pathname) === true);
+        const active = scopeOk && !isOff(def, off)
+            && (!def.match || safe(def.match, location.href, location.pathname) === true);
 
         if (!active) { if (def._ctx) stop(def); continue; }
 
@@ -786,15 +830,17 @@ function sync() {
         // geçtim ama panel A'nın verisiyle duruyor" sorunu böyle biter.
         const key = def.key ? safe(def.key) : null;
         if (def._ctx && def._key !== key) stop(def);
-        if (!def._ctx) { def._key = key; start(def); }
+        if (!def._ctx) { def._key = key; flight('kurulum', def.id); start(def); }
     }
 }
 
 /* ═══════════════════ hata ayıklama ═══════════════════ */
 function debug() {
+    const off = offList();
     console.table(modules.map(m => ({
         id: m.id,
         aktif: !!m._ctx,
+        kapalı: isOff(m, off),
         kapsam: m.scope || 'top',
         'kurulum(ms)': m._ms ?? '—',
         kaynak: m.source || '—',
@@ -815,6 +861,18 @@ const GT = {
 
     // çekirdek
     define, sync, modules, debug,
+    flight: Object.assign(() => {
+        let list = [];
+        try { list = JSON.parse(store('sessionStorage')?.getItem(FLIGHT_KEY) || '[]'); } catch { /* boş */ }
+        console.table(list);
+        return list.length;
+    }, { clear: () => store('sessionStorage')?.removeItem(FLIGHT_KEY) }),
+    off(...ids) {
+        const next = [...new Set([...offList(), ...ids])];
+        store('localStorage')?.setItem(OFF_KEY, next.join(','));
+        log('kapalı:', next.join(', ') || '—', '· sayfayı yenile');
+    },
+    on() { store('localStorage')?.removeItem(OFF_KEY); log('tüm modüller açık · sayfayı yenile'); },
     bus, router, at, hotkeys, api, capture, rounds, ui, ICON, css,
 
     // yardımcılar
