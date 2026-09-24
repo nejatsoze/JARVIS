@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         GT Core — paylaşılan çalışma zamanı
 // @namespace    http://tampermonkey.net/
-// @version      1.1.3
-// @description  GamingTec script ailesinin ortak çekirdeği: tek veriyolu, rota-farkındalıklı modül yaşam döngüsü, sessionKey disiplinli API katmanı, tasarım token'ları + UI kiti, kısayol defteri, gameTranId veri katmanı ve Firefox için main-world ağ köprüsü. UI üretmez — tüm özellikler uydu scriptlerde yaşar. Çapraz origin izinleri (KYCAID, ipwho.is) burada toplanır; uydular GT.api.gm üzerinden kullanır, kendi @grant'ine ihtiyaç duymaz.
+// @version      1.1.4
+// @description  GamingTec script ailesinin ortak çekirdeği: tek veriyolu, rota-farkındalıklı modül yaşam döngüsü, sessionKey disiplinli API katmanı, tasarım token'ları + UI kiti (sitenin kendi CSS'iyle çakışmaya karşı !important + kaybolursa kendini onaran stil enjeksiyonu), kısayol defteri, gameTranId veri katmanı ve Firefox için main-world ağ köprüsü. UI üretmez — tüm özellikler uydu scriptlerde yaşar. Çapraz origin izinleri (KYCAID, ipwho.is) burada toplanır; uydular GT.api.gm üzerinden kullanır, kendi @grant'ine ihtiyaç duymaz.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
 // @grant        unsafeWindow
@@ -42,7 +42,7 @@ const W = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow :
 // Çekirdek iki kez yüklenirse (iki sekme scripti, hatalı kurulum) ikincisi çekilir.
 if (W.GT && W.GT.__core) return;
 
-const VERSION   = '1.1.3';
+const VERSION   = '1.1.4';
 const API_LEVEL = 1;
 const IN_FRAME  = window.self !== window.top;
 
@@ -117,10 +117,22 @@ function h(tag, props = {}, ...kids) {
     return node;
 }
 
+/* Enjekte edilen <style> etiketlerini hatırla: bazı SPA geçişlerinde
+   head yeniden çizilirken (ya da başka bir script "kullanılmayan style"
+   temizliği yaparken) etiket sessizce kaybolabiliyor — kalp atışı bunu
+   fark edip geri koyuyor, kullanıcı sayfayı yenilemek zorunda kalmıyor. */
+const styleRegistry = new Map();
 const css = (id, text) => {
+    styleRegistry.set(id, text);
     if (document.getElementById(id)) return;
     (document.head || document.documentElement).append(h('style', { id, html: text }));
 };
+function ensureStyles() {
+    for (const [id, text] of styleRegistry) {
+        if (!document.getElementById(id)) (document.head || document.documentElement).append(h('style', { id, html: text }));
+    }
+}
+setInterval(ensureStyles, 2000);
 
 const parseMoney = (s) => s ? (parseFloat(String(s).replace(/[A-Z₺$€£%]/gi, '').replace(/,/g, '').trim()) || 0) : 0;
 const fmtTRY = (n) => `TRY ${Number(n || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2 })}`;
@@ -513,44 +525,55 @@ css('gt-core-style', `
 }
 .gt-btn,.gt-chip,.gt-icon-btn,.gt-pop__x{touch-action:manipulation}
 
+/* !important: bu düğmeler yabancı bir sayfaya enjekte ediliyor. Sitenin
+   kendi genel button/.btn kuralı bazen BİZDEN SONRA yüklenip aynı
+   özellik için son sırada kazanıyor (aynı seçici ağırlığında kaynak
+   sırası belirleyici) — sonuç: "bazen yeşil düğme, sayfa yenilenince
+   düzeliyor" gibi rastgele görünen bir çakışma. all:unset ile önce sıfırla,
+   sonra kendi değerlerimizi !important ile geri ver — yükleme sırasından
+   bağımsız, her zaman kazanırız. */
 .gt-btn{
-  all:unset; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center; gap:5px;
-  padding:4px 12px; font-family:var(--gt-font); font-size:13px; line-height:20px; font-weight:500;
-  color:var(--gt-accent); background:var(--gt-surface); border:.5px solid var(--gt-accent);
-  border-radius:var(--gt-r); cursor:pointer; white-space:nowrap;
+  all:unset !important; box-sizing:border-box !important; display:inline-flex !important;
+  align-items:center !important; justify-content:center !important; gap:5px !important;
+  padding:4px 12px !important; font-family:var(--gt-font) !important; font-size:13px !important;
+  line-height:20px !important; font-weight:500 !important;
+  color:var(--gt-accent) !important; background:var(--gt-surface) !important; border:.5px solid var(--gt-accent) !important;
+  border-radius:var(--gt-r) !important; cursor:pointer !important; white-space:nowrap !important;
   transition:background .15s,color .15s,transform .1s;
 }
-.gt-btn:hover{background:var(--gt-accent); color:#fff}
+.gt-btn:hover{background:var(--gt-accent) !important; color:#fff !important}
 .gt-btn:active{transform:scale(.97)}
 .gt-btn:focus-visible{outline:2px solid var(--gt-accent); outline-offset:2px}
-.gt-btn.is-active{background:var(--gt-accent); color:#fff}
+.gt-btn.is-active{background:var(--gt-accent) !important; color:#fff !important}
 .gt-btn.is-busy{opacity:.55; pointer-events:none}
 .gt-btn[disabled]{opacity:.45; cursor:not-allowed}
-.gt-btn--sm{padding:1px 8px; font-size:11px; line-height:18px}
-.gt-btn--warn{color:var(--gt-warn); border-color:var(--gt-warn)}
-.gt-btn--warn:hover,.gt-btn--warn.is-active{background:var(--gt-warn); color:#fff}
-.gt-btn--danger{color:var(--gt-danger); border-color:var(--gt-danger)}
-.gt-btn--danger:hover,.gt-btn--danger.is-active{background:var(--gt-danger); color:#fff}
-.gt-btn--quiet{color:var(--gt-ink-2); background:var(--gt-surface-2); border-color:#c6c6c8}
-.gt-btn--quiet:hover{background:#e5e5ea; color:var(--gt-ink)}
+.gt-btn--sm{padding:1px 8px !important; font-size:11px !important; line-height:18px !important}
+.gt-btn--warn{color:var(--gt-warn) !important; border-color:var(--gt-warn) !important}
+.gt-btn--warn:hover,.gt-btn--warn.is-active{background:var(--gt-warn) !important; color:#fff !important}
+.gt-btn--danger{color:var(--gt-danger) !important; border-color:var(--gt-danger) !important}
+.gt-btn--danger:hover,.gt-btn--danger.is-active{background:var(--gt-danger) !important; color:#fff !important}
+.gt-btn--quiet{color:var(--gt-ink-2) !important; background:var(--gt-surface-2) !important; border-color:#c6c6c8 !important}
+.gt-btn--quiet:hover{background:#e5e5ea !important; color:var(--gt-ink) !important}
 
 .gt-group{
-  display:inline-flex; align-items:center; gap:6px; margin-left:8px; padding:4px; vertical-align:middle;
-  background:rgba(255,255,255,.6); border:.5px solid rgba(60,60,67,.12); border-radius:var(--gt-r-lg);
-  box-shadow:0 1px 3px rgba(0,0,0,.04);
+  all:unset !important; display:inline-flex !important; align-items:center !important; gap:6px !important;
+  margin-left:8px !important; padding:4px !important; vertical-align:middle !important; box-sizing:border-box !important;
+  background:rgba(255,255,255,.6) !important; border:.5px solid rgba(60,60,67,.12) !important;
+  border-radius:var(--gt-r-lg) !important; box-shadow:0 1px 3px rgba(0,0,0,.04) !important;
 }
 
 .gt-chip{
-  display:inline-flex; align-items:center; gap:5px; padding:2px 9px; vertical-align:middle;
-  font-family:var(--gt-font); font-size:10.5px; font-weight:600; white-space:nowrap;
-  border-radius:20px; border:.5px solid; user-select:none;
+  all:unset !important; box-sizing:border-box !important; display:inline-flex !important; align-items:center !important;
+  gap:5px !important; padding:2px 9px !important; vertical-align:middle !important;
+  font-family:var(--gt-font) !important; font-size:10.5px !important; font-weight:600 !important; white-space:nowrap !important;
+  border-radius:20px !important; border:.5px solid !important; cursor:default !important; user-select:none !important;
 }
-.gt-chip--accent {background:var(--gt-accent-soft);   border-color:rgba(0,122,255,.35);  color:var(--gt-accent)}
-.gt-chip--danger {background:rgba(255,59,48,.08);     border-color:rgba(255,59,48,.35);  color:var(--gt-danger)}
-.gt-chip--success{background:rgba(52,199,89,.08);     border-color:rgba(52,199,89,.35);  color:var(--gt-success)}
-.gt-chip--warn   {background:rgba(255,149,0,.10);     border-color:rgba(255,149,0,.35);  color:var(--gt-warn)}
-.gt-chip--vip    {background:rgba(175,82,222,.08);    border-color:rgba(175,82,222,.35); color:var(--gt-vip)}
-.gt-chip--muted  {background:rgba(142,142,147,.08);   border-color:rgba(142,142,147,.3); color:var(--gt-muted)}
+.gt-chip--accent {background:var(--gt-accent-soft) !important;   border-color:rgba(0,122,255,.35) !important;  color:var(--gt-accent) !important}
+.gt-chip--danger {background:rgba(255,59,48,.08) !important;     border-color:rgba(255,59,48,.35) !important;  color:var(--gt-danger) !important}
+.gt-chip--success{background:rgba(52,199,89,.08) !important;     border-color:rgba(52,199,89,.35) !important;  color:var(--gt-success) !important}
+.gt-chip--warn   {background:rgba(255,149,0,.10) !important;     border-color:rgba(255,149,0,.35) !important;  color:var(--gt-warn) !important}
+.gt-chip--vip    {background:rgba(175,82,222,.08) !important;    border-color:rgba(175,82,222,.35) !important; color:var(--gt-vip) !important}
+.gt-chip--muted  {background:rgba(142,142,147,.08) !important;   border-color:rgba(142,142,147,.3) !important; color:var(--gt-muted) !important}
 
 .gt-icon-btn{
   all:unset; display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px;
