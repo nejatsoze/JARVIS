@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.8
+// @version      1.0.9
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -46,6 +46,49 @@ const BALANCE_NOTES = {
 };
 
 const SKIP_BONUS = ['Freespin Zuma', 'Zumabet Hosgeldin Freesin'];
+
+/* Bakiye düzeltme: Real Money kalemine tıkla → popup'ta bakiyeyi sıfırlayan
+   tutarı ve notu yaz → Adjust. Hem kısayollar hem Bakiye kartı kullanır. */
+const BALANCE_BUTTONS = [
+    { label: 'OLD', key: 'alt+o', note: BALANCE_NOTES.OLD },
+    { label: 'IP',  key: 'alt+q', note: BALANCE_NOTES.IP },
+    { label: 'PT',  key: 'alt+w', note: BALANCE_NOTES.PT },
+    { label: 'ÜST', key: null,    note: BALANCE_NOTES.UST },
+];
+
+function balanceFire(el, value) {
+    if (!el) return;
+    el.value = value;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function balanceApply(note) {
+    const balance = $('div[style*="margin-bottom: 5px"]');
+    if (!balance) return warn('[Bakiye] Bakiye alanı bulunamadı.');
+    balanceFire($('input[name="balance-adjust-amount"]'), '-' + balance.innerText.replace('TRY', '').replace(/,/g, '').trim());
+    balanceFire($('textarea[name="balance-adjust-comment"]'), note);
+    setTimeout(() => {
+        const btn = $('button.btn-success');
+        if (btn && /Adjust/.test(btn.textContent)) btn.click();
+    }, 400);
+}
+
+function balanceAdjust(note) {
+    if ($('input[name="balance-adjust-amount"]')) return balanceApply(note);
+
+    const pencil = $$('td').find(td => txt(td) === 'Real Money' && !td.closest('#gt-dash'))
+        ?.nextElementSibling?.nextElementSibling
+        ?.querySelector('i.fa-pencil-square-o');
+    if (!pencil) return oops('[Bakiye] "Real Money" satırındaki kalem yok.');
+
+    pencil.click();
+    let tries = 0;
+    const timer = setInterval(() => {
+        if ($('input[name="balance-adjust-amount"]')) { clearInterval(timer); balanceApply(note); }
+        else if (++tries >= 20) { clearInterval(timer); warn('[Bakiye] Popup zamanında açılmadı.'); }
+    }, 150);
+}
 
 /** Yeni panelin yerini aldığı, sayfadan kaldırılan alanlar. */
 const HIDE_LABELS = new Set([
@@ -350,9 +393,9 @@ css('gt-player-style', `
 #gt-dash *{box-sizing:border-box; font-family:var(--gt-font); letter-spacing:normal; text-transform:none;
   text-shadow:none; -webkit-font-smoothing:antialiased}
 #gt-dash .fa{font-family:FontAwesome; font-style:normal}
-#gt-dash .card{background:#fff; border:.5px solid rgba(0,0,0,.08); border-radius:16px;
+#gt-dash .gtc{background:#fff; border:.5px solid rgba(0,0,0,.08); border-radius:16px;
   box-shadow:0 1px 2px rgba(0,0,0,.04), 0 6px 20px rgba(0,0,0,.05); min-width:0}
-#gt-dash .card.pad{padding:16px 18px 12px}
+#gt-dash .gtc.gtc-pad{padding:16px 18px 12px}
 #gt-ozet{flex:0 0 auto; max-width:420px; position:relative; overflow:hidden; --fade:#fff;
   transition:background-color .2s, border-color .2s}
 #gt-acc{flex:0 0 auto}
@@ -361,25 +404,25 @@ css('gt-player-style', `
   width:560px; max-width:calc(100vw - 32px); max-height:78vh; overflow:auto; margin:0; padding:8px;
   background:rgba(255,255,255,.72); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
   border-radius:18px; box-shadow:0 18px 48px rgba(0,0,0,.18)}
-#gt-dash.floating .card{width:100%; max-width:none}
+#gt-dash.floating .gtc{width:100%; max-width:none}
 #gt-dash.floating #gt-logs{min-width:0}
 
-#gt-dash .head{display:flex; align-items:flex-start; justify-content:space-between; gap:8px; margin-bottom:12px}
-#gt-dash .title{font-size:15px; font-weight:600; letter-spacing:-.2px; color:var(--gt-ink)}
-#gt-dash .sub{color:var(--gt-muted); font-size:11px; margin-top:1px; display:flex; flex-wrap:wrap; gap:0 10px}
-#gt-dash .refresh{all:unset; width:28px; height:28px; flex:none; border-radius:50%; color:var(--gt-muted);
+#gt-dash .gtc-head{display:flex; align-items:flex-start; justify-content:space-between; gap:8px; margin-bottom:12px}
+#gt-dash .gtc-title{font-size:15px; font-weight:600; letter-spacing:-.2px; color:var(--gt-ink)}
+#gt-dash .gtc-sub{color:var(--gt-muted); font-size:11px; margin-top:1px; display:flex; flex-wrap:wrap; gap:0 10px}
+#gt-dash .gtc-refresh{all:unset; width:28px; height:28px; flex:none; border-radius:50%; color:var(--gt-muted);
   cursor:pointer; display:inline-flex; align-items:center; justify-content:center}
-#gt-dash .refresh:hover{background:rgba(118,118,128,.12); color:var(--gt-ink)}
-#gt-dash .refresh.busy svg{animation:gt-spin .8s linear infinite}
+#gt-dash .gtc-refresh:hover{background:rgba(118,118,128,.12); color:var(--gt-ink)}
+#gt-dash .gtc-refresh.busy svg{animation:gt-spin .8s linear infinite}
 
-#gt-dash .seg{display:inline-flex; background:rgba(118,118,128,.12); border-radius:9px; padding:2px; white-space:nowrap}
-#gt-dash .seg button{all:unset; padding:4px 10px; border-radius:7px; font-size:11.5px; font-weight:500; cursor:pointer; color:var(--gt-ink)}
-#gt-dash .seg button[aria-selected="true"]{background:#fff; font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.12)}
-#gt-dash .toolbar{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between}
-#gt-dash .segwrap{overflow-x:auto; max-width:100%}
-#gt-dash .content{margin-top:10px}
-#gt-dash .msg{padding:10px 0 12px; color:var(--gt-muted)}
-#gt-dash .msg.err{color:var(--gt-danger)}
+#gt-dash .gtc-seg{display:inline-flex; background:rgba(118,118,128,.12); border-radius:9px; padding:2px; white-space:nowrap}
+#gt-dash .gtc-seg button{all:unset; padding:4px 10px; border-radius:7px; font-size:11.5px; font-weight:500; cursor:pointer; color:var(--gt-ink)}
+#gt-dash .gtc-seg button[aria-selected="true"]{background:#fff; font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.12)}
+#gt-dash .gtc-toolbar{display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between}
+#gt-dash .gtc-segwrap{overflow-x:auto; max-width:100%}
+#gt-dash .gtc-content{margin-top:10px}
+#gt-dash .gtc-msg{padding:10px 0 12px; color:var(--gt-muted)}
+#gt-dash .gtc-msg.err{color:var(--gt-danger)}
 
 #gt-dash table{width:100%; border-collapse:collapse; background:transparent}
 #gt-dash th, #gt-dash td{padding:7px 0; border:0; border-bottom:1px solid var(--gt-line); background:transparent; vertical-align:middle; text-align:left}
@@ -395,7 +438,27 @@ css('gt-player-style', `
 #gt-dash .line.total span:first-child{color:var(--gt-ink); font-weight:600}
 #gt-dash .line.total span:last-child{font-size:18px; font-weight:600}
 
-#gt-dash .toolbar:empty{display:none}
+#gt-dash .gtc-toolbar:empty{display:none}
+#gt-bal{flex:0 0 auto; width:300px}
+#gt-bal .gtc-head{align-items:center}
+#gt-bal .gtb-actions{display:inline-flex; gap:4px; flex:none}
+#gt-bal .gtb-hero{display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding:12px 14px; border-radius:12px; background:var(--gt-surface-2)}
+#gt-bal .gtb-cap{font-size:10.5px; font-weight:600; letter-spacing:.4px; text-transform:uppercase; color:var(--gt-muted)}
+#gt-bal .gtb-big{margin-top:3px; font-size:24px; font-weight:600; letter-spacing:-.5px; line-height:1.1;
+  font-variant-numeric:tabular-nums; color:var(--gt-ink)}
+#gt-bal .gtb-big.z{color:var(--gt-ink-2)}
+#gt-bal .gtb-big small{margin-left:5px; font-size:12px; font-weight:500; letter-spacing:0; color:var(--gt-muted)}
+#gt-bal .gtb-list{margin-top:6px}
+#gt-bal .gtb-row{display:grid; grid-template-columns:minmax(0,1fr) auto 40px; column-gap:10px; align-items:center;
+  height:34px; border-top:.5px solid rgba(60,60,67,.12); font-size:12.5px}
+#gt-bal .gtb-row:first-child{border-top-color:transparent}
+#gt-bal .gtb-lbl{color:var(--gt-ink-2)}
+#gt-bal .gtb-n{text-align:right; font-weight:500; font-variant-numeric:tabular-nums; color:var(--gt-ink)}
+#gt-bal .gtb-n.z{color:#c7c7cc; font-weight:400}
+#gt-bal .gtb-icons{display:inline-flex; align-items:center; justify-content:flex-end; gap:8px; line-height:1}
+#gt-bal .gtb-icons .fa{font-size:13px; color:var(--gt-muted) !important; cursor:pointer; transition:color .12s}
+#gt-bal .gtb-icons .fa:hover{color:var(--gt-accent) !important}
 #gt-acc{min-width:380px}
 #gt-acc .gta{font-variant-numeric:tabular-nums; margin:0 -8px}
 #gt-acc .gta-head, #gt-acc .gta-row{display:grid; grid-template-columns:78px repeat(3, minmax(86px, 1fr));
@@ -447,7 +510,7 @@ css('gt-player-style', `
 #gt-logs .gtl-pill.fail{background:rgba(255,59,48,.10); color:var(--gt-danger)}
 #gt-logs .gtl-row.failed .gtl-time{color:var(--gt-danger)}
 
-#gt-logs .content{min-width:0; overflow:hidden}
+#gt-logs .gtc-content{min-width:0; overflow:hidden}
 
 #gt-ozet .top{display:flex; align-items:center; gap:14px; padding:14px 90px 14px 16px; border-bottom:.5px solid rgba(0,0,0,.06)}
 #gt-ozet .photo,#gt-ozet .ph{width:52px; height:52px; border-radius:50%; flex-shrink:0; background:var(--gt-surface-2); border:.5px solid var(--gt-line)}
@@ -738,21 +801,30 @@ GT.define({
         }
 
         /* ── kart iskeletleri ── */
-        const card = (id, title) => h('section', { id, class: 'card pad' },
-            h('div', { class: 'head' },
-                h('div', {}, h('div', { class: 'title' }, title), h('div', { class: 'sub' })),
-                h('button', { class: 'refresh', type: 'button', title: 'Yenile', html: REFRESH_SVG })),
-            h('div', { class: 'toolbar' }),
-            h('div', { class: 'content' }));
+        const card = (id, title) => h('section', { id, class: 'gtc gtc-pad' },
+            h('div', { class: 'gtc-head' },
+                h('div', {}, h('div', { class: 'gtc-title' }, title), h('div', { class: 'gtc-sub' })),
+                h('button', { class: 'gtc-refresh', type: 'button', title: 'Yenile', html: REFRESH_SVG })),
+            h('div', { class: 'gtc-toolbar' }),
+            h('div', { class: 'gtc-content' }));
 
         const seg = (items, current, key) => items.map(([value, label]) =>
             `<button type="button" role="tab" aria-selected="${value === current}" data-${key}="${value}">${label}</button>`).join('');
 
-        const ozet = h('section', { id: 'gt-ozet', class: 'card' },
+        const ozet = h('section', { id: 'gt-ozet', class: 'gtc' },
             h('div', { style: { padding: '14px 16px', color: 'var(--gt-muted)', fontSize: '12px' } }, 'Kimlik yükleniyor…'));
         const accCard = card('gt-acc', 'Yatırım / çekim');
         const logCard = card('gt-logs', 'Giriş kayıtları');
-        const dash = h('div', { id: 'gt-dash' }, ozet, accCard, logCard);
+        const balCard = h('section', { id: 'gt-bal', class: 'gtc gtc-pad' },
+            h('div', { class: 'gtc-head' },
+                h('div', {}, h('div', { class: 'gtc-title' }, 'Bakiye'), h('div', { class: 'gtc-sub' }, h('span', {}, 'TRY'))),
+                h('div', { class: 'gtb-actions' }, BALANCE_BUTTONS.map(b => ui.button({
+                    label: b.label, small: true,
+                    title: b.key ? `${b.note.slice(0, 60)}… (${b.key.replace('alt+', 'Alt+').toUpperCase()})` : b.note,
+                    onClick: () => balanceAdjust(b.note),
+                })))),
+            h('div', { class: 'gtc-content' }, h('div', { class: 'gtc-msg' }, 'Bakiye okunuyor…')));
+        const dash = h('div', { id: 'gt-dash' }, ozet, balCard, accCard, logCard);
 
         /* ── Accounting ── */
         async function loadAcc() {
@@ -763,12 +835,12 @@ GT.define({
         }
 
         function renderAcc() {
-            accCard.querySelector('.refresh').classList.toggle('busy', acc.busy);
-            accCard.querySelector('.sub').innerHTML = `<span>TRY</span>${acc.at ? `<span>Güncellendi ${hhmm(acc.at)}</span>` : ''}`;
+            accCard.querySelector('.gtc-refresh').classList.toggle('busy', acc.busy);
+            accCard.querySelector('.gtc-sub').innerHTML = `<span>TRY</span>${acc.at ? `<span>Güncellendi ${hhmm(acc.at)}</span>` : ''}`;
 
-            const box = accCard.querySelector('.content');
-            if (acc.error) { box.innerHTML = `<div class="msg err">${esc(acc.error)}</div>`; return; }
-            if (!acc.data) { box.innerHTML = `<div class="msg">${acc.busy ? 'Yükleniyor…' : 'Veri yok.'}</div>`; return; }
+            const box = accCard.querySelector('.gtc-content');
+            if (acc.error) { box.innerHTML = `<div class="gtc-msg err">${esc(acc.error)}</div>`; return; }
+            if (!acc.data) { box.innerHTML = `<div class="gtc-msg">${acc.busy ? 'Yükleniyor…' : 'Veri yok.'}</div>`; return; }
 
             const cls = (n) => n > 0 ? 'pos' : n < 0 ? 'neg' : 'z';
             const num = (n, extra = '') => `<span class="gta-n ${n ? '' : 'z'} ${extra}">${money(n)}</span>`;
@@ -832,15 +904,15 @@ GT.define({
 
         function renderLogs() {
             if (!logCard.isConnected) return;
-            logCard.querySelector('.refresh').classList.toggle('busy', logs.busy);
-            logCard.querySelector('.toolbar').innerHTML = `
-              <div class="segwrap"><div class="seg" role="tablist">${seg([['3', '3 gün'], ['7', '7 gün'], ['30', '30 gün']], String(logs.days), 'days')}</div></div>
-              <div class="segwrap"><div class="seg" role="tablist">${seg([['LOGIN', 'Girişler'], ['ALL', 'Tümü']], logs.filter, 'filter')}</div></div>`;
+            logCard.querySelector('.gtc-refresh').classList.toggle('busy', logs.busy);
+            logCard.querySelector('.gtc-toolbar').innerHTML = `
+              <div class="gtc-segwrap"><div class="gtc-seg" role="tablist">${seg([['3', '3 gün'], ['7', '7 gün'], ['30', '30 gün']], String(logs.days), 'days')}</div></div>
+              <div class="gtc-segwrap"><div class="gtc-seg" role="tablist">${seg([['LOGIN', 'Girişler'], ['ALL', 'Tümü']], logs.filter, 'filter')}</div></div>`;
 
-            const sub = logCard.querySelector('.sub');
-            const box = logCard.querySelector('.content');
-            if (logs.error) { sub.innerHTML = ''; box.innerHTML = `<div class="msg err">${esc(logs.error)}</div>`; return; }
-            if (!logs.rows) { sub.innerHTML = ''; box.innerHTML = `<div class="msg">${logs.busy ? 'Yükleniyor…' : 'Veri yok.'}</div>`; return; }
+            const sub = logCard.querySelector('.gtc-sub');
+            const box = logCard.querySelector('.gtc-content');
+            if (logs.error) { sub.innerHTML = ''; box.innerHTML = `<div class="gtc-msg err">${esc(logs.error)}</div>`; return; }
+            if (!logs.rows) { sub.innerHTML = ''; box.innerHTML = `<div class="gtc-msg">${logs.busy ? 'Yükleniyor…' : 'Veri yok.'}</div>`; return; }
 
             const typed = logs.rows.some(r => r.type);
             const rows = (logs.filter === 'LOGIN' && typed) ? logs.rows.filter(r => r.type.startsWith('LOGIN')) : logs.rows;
@@ -851,7 +923,7 @@ GT.define({
             sub.innerHTML = `<span>${rows.length} kayıt · ${colors.size} farklı IP · saatler UTC</span>`
                 + (logs.at ? `<span>Güncellendi ${hhmm(logs.at)}</span>` : '');
 
-            if (!rows.length) { box.innerHTML = '<div class="msg">Bu aralıkta kayıt yok.</div>'; return; }
+            if (!rows.length) { box.innerHTML = '<div class="gtc-msg">Bu aralıkta kayıt yok.</div>'; return; }
 
             const fmtTime = (d) => d.toLocaleTimeString('tr-TR', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', hour12: false });
             const dayKey = (d) => d.toISOString().slice(0, 10);
@@ -1099,24 +1171,22 @@ GT.define({
             return box;
         }
 
+        dash.addEventListener('click', (e) => {
+            for (let el = e.target; el && el !== dash; el = el.parentElement) {
+                const ref = twin.get(el);
+                if (!ref) continue;
+                e.preventDefault(); e.stopPropagation();
+                const orig = ref.td.isConnected && ref.td.querySelectorAll('*')[ref.i];
+                if (orig) orig.click();
+                else warn('[Player] Kopyanın aslı sayfada yok (yeniden çiziliyor olabilir), tekrar dene.');
+                return;
+            }
+        });
+
         let lastParts = [];
         function refreshContacts() {
             const slot = ozet.querySelector('[data-contacts]');
             if (!slot) return;
-            if (!slot.dataset.wired) {
-                slot.dataset.wired = '1';
-                slot.addEventListener('click', (e) => {
-                    for (let el = e.target; el && el !== slot; el = el.parentElement) {
-                        const ref = twin.get(el);
-                        if (!ref) continue;
-                        e.preventDefault(); e.stopPropagation();
-                        const orig = ref.td.isConnected && ref.td.querySelectorAll('*')[ref.i];
-                        if (orig) orig.click();
-                        else { lastParts = []; refreshContacts(); warn('[Player] İletişim öğesi yenilendi, tekrar tıkla.'); }
-                        return;
-                    }
-                });
-            }
 
             const rows = findContacts();
             const parts = rows.flatMap(r => r.parts);
@@ -1141,15 +1211,82 @@ GT.define({
             }
         }
 
+        /* ── bakiye ──
+           Değerler sayfadaki Balances satırlarından canlı okunur; kalem ve
+           diğer ikonlar kopyalanır, tıklama aslına iletilir. Asıl satırlar
+           ancak kart dolduktan sonra gizlenir. */
+        const BAL_ROWS = ['Real Money', 'WD Bonus', 'Total WD', 'Playable Bonus', 'Pending Bonus', 'Loyalty Points'];
+        const amount = (t) => {
+            const n = Number(String(t).replace(/[^\d.-]/g, ''));
+            return Number.isFinite(n) ? n : null;
+        };
+
+        function findBalances() {
+            const out = [];
+            for (const label of BAL_ROWS) {
+                const lab = $$('td.text-xs-left').find(td => outside(td) && txt(td) === label);
+                const val = lab?.nextElementSibling;
+                if (!val) continue;
+                const edit = val.nextElementSibling?.matches('td.gap-80, td.gap-30') ? val.nextElementSibling : null;
+                out.push({ label, lab, val, edit });
+            }
+            return out;
+        }
+
+        let lastBal = [];
+        function refreshBalance() {
+            const box = balCard.querySelector('.gtc-content');
+            const rows = findBalances();
+            if (!rows.length) return;
+            const parts = rows.flatMap(r => [r.lab, r.val, r.edit].filter(Boolean));
+            const sameNodes = parts.length === lastBal.length && parts.every((el, i) => el === lastBal[i]);
+            const sig = parts.map(el => el.innerHTML).join('|');
+            if (sameNodes && box.dataset.sig === sig) return;
+            lastBal = parts;
+            box.dataset.sig = sig;
+
+            const icons = (r) => {
+                const wrap = h('span', { class: 'gtb-icons' });
+                if (r.edit) wrap.append(...copyOf(r.edit).childNodes);
+                return wrap;
+            };
+            const fmt = (r) => {
+                const n = amount(txt(r.val));
+                if (n === null) return { text: txt(r.val) || '—', zero: false };
+                return { text: r.label === 'Loyalty Points' ? n.toLocaleString('tr-TR') : money(n), zero: n === 0 };
+            };
+
+            box.textContent = '';
+            const [main, ...rest] = rows[0].label === 'Real Money' ? rows : [null, ...rows];
+            if (main) {
+                const v = fmt(main);
+                box.append(h('div', { class: 'gtb-hero' },
+                    h('div', {},
+                        h('div', { class: 'gtb-cap' }, 'Real Money'),
+                        h('div', { class: 'gtb-big' + (v.zero ? ' z' : '') }, v.text, h('small', {}, 'TRY'))),
+                    icons(main)));
+            }
+            box.append(h('div', { class: 'gtb-list' }, rest.map(r => {
+                const v = fmt(r);
+                return h('div', { class: 'gtb-row' },
+                    h('span', { class: 'gtb-lbl' }, r.label),
+                    h('span', { class: 'gtb-n' + (v.zero ? ' z' : '') }, v.text),
+                    icons(r));
+            })));
+
+            for (const el of parts) el.classList.add('gt-hidden-field');
+            $('div.underlined-header.balance-title')?.closest('th')?.classList.add('gt-hidden-field');
+        }
+
         /* ── olaylar ── */
         accCard.addEventListener('click', (e) => {
-            if (e.target.closest('button')?.classList.contains('refresh')) loadAcc();
+            if (e.target.closest('button')?.classList.contains('gtc-refresh')) loadAcc();
         });
 
         logCard.addEventListener('click', (e) => {
             const btn = e.target.closest('button');
             if (!btn) return;
-            if (btn.classList.contains('refresh')) return void loadLogs();
+            if (btn.classList.contains('gtc-refresh')) return void loadLogs();
             if (btn.dataset.days) { logs.days = Number(btn.dataset.days); setPref('logDays', btn.dataset.days); loadLogs(); }
             if (btn.dataset.filter) { logs.filter = btn.dataset.filter; setPref('logFilter', logs.filter); renderLogs(); }
         });
@@ -1199,6 +1336,7 @@ GT.define({
         }
 
         ctx.tick(refreshContacts, { lazy: true });
+        ctx.tick(refreshBalance, { lazy: true });
 
         loadAcc();
         loadLogs();
@@ -1223,56 +1361,17 @@ GT.define({
     match: at.playerDetail,
     source: 'player',
     setup(ctx) {
-        const fire = (el, value) => {
-            if (!el) return;
-            el.value = value;
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-        };
+        for (const b of BALANCE_BUTTONS) if (b.key) ctx.hotkey(b.key, () => balanceAdjust(b.note));
 
-        function apply(note) {
-            const balance = $('div[style*="margin-bottom: 5px"]');
-            if (!balance) return warn('[Bakiye] Bakiye alanı bulunamadı.');
-            fire($('input[name="balance-adjust-amount"]'), '-' + balance.innerText.replace('TRY', '').replace(/,/g, '').trim());
-            fire($('textarea[name="balance-adjust-comment"]'), note);
-            setTimeout(() => {
-                const btn = $('button.btn-success');
-                if (btn && /Adjust/.test(btn.textContent)) btn.click();
-            }, 400);
-        }
-
-        function open(note) {
-            if ($('input[name="balance-adjust-amount"]')) return apply(note);
-
-            const pencil = $$('td').find(td => txt(td) === 'Real Money')
-                ?.nextElementSibling?.nextElementSibling
-                ?.querySelector('i.fa-pencil-square-o');
-            if (!pencil) return oops('[Bakiye] "Real Money" satırındaki kalem yok.');
-
-            pencil.click();
-            let tries = 0;
-            const timer = setInterval(() => {
-                if ($('input[name="balance-adjust-amount"]')) { clearInterval(timer); apply(note); }
-                else if (++tries >= 20) { clearInterval(timer); warn('[Bakiye] Popup zamanında açılmadı.'); }
-            }, 150);
-        }
-
-        const BUTTONS = [
-            { label: 'OLD', key: 'alt+o', note: BALANCE_NOTES.OLD },
-            { label: 'IP',  key: 'alt+q', note: BALANCE_NOTES.IP },
-            { label: 'PT',  key: 'alt+w', note: BALANCE_NOTES.PT },
-            { label: 'ÜST', key: null,    note: BALANCE_NOTES.UST },
-        ];
-        for (const b of BUTTONS) if (b.key) ctx.hotkey(b.key, () => open(b.note));
-
+        // Bakiye kartı yoksa (panel kurulamadıysa) butonlar eski başlıkta kalsın.
         ctx.mount('div.underlined-header.balance-title', 'gt-balance', (header) => {
             header.style.display = 'flex';
             header.style.alignItems = 'center';
             return h('span', { style: { display: 'inline-flex', gap: '4px', marginLeft: '12px', verticalAlign: 'middle' } },
-                BUTTONS.map(b => ui.button({
+                BALANCE_BUTTONS.map(b => ui.button({
                     label: b.label, small: true,
                     title: b.key ? b.key.replace('alt+', 'Alt+').toUpperCase() : 'Üst bakiye düzeltmesi',
-                    onClick: () => open(b.note),
+                    onClick: () => balanceAdjust(b.note),
                 })));
         });
     },

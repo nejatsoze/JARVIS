@@ -135,8 +135,10 @@ branch'i bozma.
 - Panel sayfanın kendi `<table>`'ı içine yerleşiyor; sitenin Bootstrap
   `table/td/.row/.badge/small` kuralları bizim öğelere sızar. Bu yüzden
   kartların içinde `<table>` KULLANILMAZ (grid div), sınıflar öneklenir
-  (`gta-` Accounting, `gtl-` giriş kayıtları), `#gt-dash *` font/harf
-  aralığı sıfırlaması korunur.
+  (`gtc-` kart iskeleti, `gta-` Accounting, `gtl-` giriş kayıtları,
+  `gtb-` bakiye), `#gt-dash *` font/harf aralığı sıfırlaması korunur.
+  Sitede `.content` gri arka plan veriyor, `.card` / `.row` / `.badge`
+  Bootstrap'ta var — öneksiz genel sınıf adı KULLANMA.
 - Sayfadaki Angular hücrelerine dokunulmaz: kopyala + CSS ile gizle.
   Kopyadaki tıklamalar `twin` eşlemesiyle ("hücre + sıra") aslına iletilir.
 
