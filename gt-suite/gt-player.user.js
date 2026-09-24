@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.13
+// @version      1.0.14
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -387,6 +387,11 @@ function normalizeName(s) {
    ════════════════════════════════════════════════════════════ */
 css('gt-player-style', `
 .gt-hidden-field{display:none !important}
+/* Sıra numarası kutusu: site stilleri genişliği rakama göre daraltmasın */
+.gt-num{display:inline-flex !important; align-items:center; justify-content:center; flex:none !important;
+  box-sizing:border-box !important; width:28px !important; min-width:28px !important; height:28px !important;
+  padding:0 !important; margin:0 !important; line-height:1 !important; font-variant-numeric:tabular-nums}
+.gt-num--sm{width:24px !important; min-width:24px !important; height:24px !important}
 
 #gt-dash{display:flex; flex-wrap:wrap; gap:14px; align-items:flex-start; margin:14px 0 0; text-align:left;
   font-family:var(--gt-font); font-size:12px; line-height:1.4; color:var(--gt-ink)}
@@ -474,8 +479,8 @@ css('gt-player-style', `
 #gt-acc .gta-lbl{color:var(--gt-ink-2); font-weight:500}
 #gt-acc .gta-n.z{color:#c7c7cc}
 #gt-acc .gta-n.net{font-weight:600}
-#gt-acc .gta-n.net.pos{color:#248a3d}
-#gt-acc .gta-n.net.neg{color:#d70015}
+#gt-acc .gta-n.net.pos{color:#d70015}
+#gt-acc .gta-n.net.neg{color:#248a3d}
 #gt-acc .gta-row.ltd{margin-top:6px; height:38px; background:var(--gt-surface-2); border-top-color:transparent; font-weight:600}
 #gt-acc .gta-row.ltd .gta-lbl{color:var(--gt-ink); font-weight:600}
 
@@ -827,11 +832,11 @@ GT.define({
 
         const ozet = h('section', { id: 'gt-ozet', class: 'gtc' },
             h('div', { style: { padding: '14px 16px', color: 'var(--gt-muted)', fontSize: '12px' } }, 'Kimlik yükleniyor…'));
-        const accCard = card('gt-acc', 'Yatırım / çekim');
-        const logCard = card('gt-logs', 'Giriş kayıtları');
+        const accCard = card('gt-acc', 'Mali Tablo');
+        const logCard = card('gt-logs', 'Giriş Kayıtları');
         const balCard = h('section', { id: 'gt-bal', class: 'gtc gtc-pad' },
             h('div', { class: 'gtc-head' },
-                h('div', {}, h('div', { class: 'gtc-title' }, 'Bakiye'), h('div', { class: 'gtc-sub' }, h('span', {}, 'TRY'))),
+                h('div', {}, h('div', { class: 'gtc-title' }, 'Cüzdan'), h('div', { class: 'gtc-sub' }, h('span', {}, 'TRY'))),
                 h('div', { class: 'gtb-actions' }, BALANCE_BUTTONS.map(b => ui.button({
                     label: b.label, small: true,
                     title: b.key ? `${b.note.slice(0, 60)}… (${b.key.replace('alt+', 'Alt+').toUpperCase()})` : b.note,
@@ -934,7 +939,7 @@ GT.define({
             const colors = new Map();
             for (const r of rows) if (r.ip && !colors.has(r.ip)) colors.set(r.ip, IP_COLORS[colors.size % IP_COLORS.length]);
 
-            sub.innerHTML = `<span>${rows.length} kayıt · ${colors.size} farklı IP · saatler UTC</span>`
+            sub.innerHTML = `<span>${rows.length} kayıt · ${colors.size} farklı IP</span>`
                 + (logs.at ? `<span>Güncellendi ${hhmm(logs.at)}</span>` : '');
 
             if (!rows.length) { box.innerHTML = '<div class="gtc-msg">Bu aralıkta kayıt yok.</div>'; return; }
@@ -1278,7 +1283,7 @@ GT.define({
                 const v = fmt(main);
                 box.append(h('div', { class: 'gtb-hero' },
                     h('div', {},
-                        h('div', { class: 'gtb-cap' }, 'Real Money'),
+                        h('div', { class: 'gtb-cap' }, 'Bakiye'),
                         h('div', { class: 'gtb-big' + (v.zero ? ' z' : '') }, v.text, h('small', {}, 'TRY'))),
                     icons(main)));
             }
@@ -1457,7 +1462,7 @@ GT.define({
                    background:linear-gradient(135deg,#f5f5f7,#fff);border:1px solid rgba(0,0,0,.06);
                    border-radius:12px;display:flex;justify-content:space-between;align-items:center;cursor:pointer">
                 <div style="display:flex;align-items:center;gap:12px;pointer-events:none">
-                  <span style="background:${tone};color:#fff;width:28px;height:28px;border-radius:8px;
+                  <span class="gt-num" style="background:${tone};color:#fff;width:28px;height:28px;border-radius:8px;
                         display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600">${i + 1}</span>
                   <div><div style="font-weight:600">${esc(r.id)}</div>
                        <div style="color:var(--gt-muted);font-size:12px;margin-top:2px">${esc(r.first)} ${esc(r.last)}</div>
@@ -1561,7 +1566,7 @@ GT.define({
                 ${list.length ? list.map((b, i) => `
                   <div style="padding:10px 14px;margin:6px 0;background:linear-gradient(135deg,#f5f5f7,#fff);
                        border:1px solid rgba(0,0,0,.06);border-radius:12px;display:flex;align-items:center;gap:12px">
-                    <span style="background:var(--gt-accent);color:#fff;width:24px;height:24px;border-radius:8px;
+                    <span class="gt-num gt-num--sm" style="background:var(--gt-accent);color:#fff;width:24px;height:24px;border-radius:8px;
                           display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600">${i + 1}</span>
                     <div><div style="font-weight:600;font-size:13px">${esc(b.planName || '—')}</div>
                          <div style="color:var(--gt-muted);font-size:11px;margin-top:2px">${esc(b.triggerDate || '—')} · ${esc(b.status || '—')}</div></div>
