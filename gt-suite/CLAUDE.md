@@ -59,7 +59,15 @@ tek tablo, sekmesiz) ve giriş kayıtları görsel düzeni (sabit kolon
 genişliği, kırpılabilir rozetler) VAR, ama `adoptContacts` YOK — email/
 telefon eski yerinde (sayfada) kalıyor, kimlik kartına taşınmıyor.
 
-**Sıradaki adım:** Kullanıcı bu sürümü test edip sonucu bildirecek:
+**SONUÇ (2026-09-24):** 1.0.4-safe ile sorun GERİ GELDİ → `adoptContacts`
+suçlu DEĞİL, hipotez elendi. Kullanıcıya göre bilinen son sorunsuz ikili:
+**gt-player 1.0.3 + gt-withdrawals 1.0.4** (birlikte çalışırken her şey
+yolundaydı; bir sonraki güncellemede çöktü). Bu iki dosyanın kaynağı henüz
+repo'da yok — gelince mevcut sürümlerle diff alınmalı. Yeni şüpheli:
+`sweepOldPanels()` içinde Angular'a ait `td` hücrelerini her boşta turunda
+`cell.remove()` ile SİLEN döngü (gizlemek yerine siliyor, aynı sınıf risk).
+
+Eski plan (tarihsel):
 - **Düzeldiyse** → adoptContacts kesin suçlu. Özelliği GERİ getirirken
   düğümü TAŞIMAK yerine KLONLAMAK (`cloneNode(true)`) ve orijinali sadece
   CSS ile (`display:none`) gizlemek gerekir — Angular'ın kendi düğümüne
