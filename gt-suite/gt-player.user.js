@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.9
+// @version      1.0.10
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -682,6 +682,10 @@ GT.define({
             for (const th of $$('th.player-login-logs-headers')) hide(th);
             // Grafik/özet widget'ları ve Revenue/LTD filtreleri
             for (const td of $$('td.churn-factor')) hide(td);
+            // Tek sekmeli "TRY" para birimi sekmesi, Revenue grafiği ve eski
+            // giriş kayıtlarının "More... / Failed Logins" bağlantıları
+            const cellOf = (el) => { const td = el?.closest('td'); return td && !td.querySelector('#gt-dash') ? td : null; };
+            for (const el of $$('div.dashboard-tab-group, player-revenue, a.failedLogins')) hide(cellOf(el));
             for (const tag of ['login-device', 'player-financial', 'player-game-play-summary']) {
                 for (const el of $$(tag)) hide(el.closest('td'));
             }
