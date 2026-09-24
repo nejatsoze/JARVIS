@@ -67,6 +67,16 @@ repo'da yok — gelince mevcut sürümlerle diff alınmalı. Yeni şüpheli:
 `sweepOldPanels()` içinde Angular'a ait `td` hücrelerini her boşta turunda
 `cell.remove()` ile SİLEN döngü (gizlemek yerine siliyor, aynı sınıf risk).
 
+**player 1.0.3 ↔ 1.0.4-safe diff'i (gt-player-1.0.3.user.js repo'da):**
+fark küçük ve neredeyse tamamen görsel — giriş kayıtları CSS'i, Accounting
+sekmelerinin kaldırılıp tek tablo yapılması, periyot sırası, kimlik kartı
+markup'ı, `USERID`'nin HIDE_LABELS'a eklenmesi (sadece class ile gizleme).
+1.0.3 ayrıca tamamen gizlenen SATIRLARI da gizliyordu; 1.0.4 bunu kaldırdı
+(daha az müdahale). `cell.remove()` döngüsü ve panel yerleşimi (infoBlock/
+place) İKİSİNDE DE AYNI. Navigasyon/yenileme tetikleyebilecek yeni bir kod
+yok → **asıl şüpheli player değil, gt-withdrawals 1.0.4→1.0.5 (ya da core)**.
+gt-withdrawals 1.0.4 kaynağı kayıp.
+
 **Teşhis araçları (core 1.1.3):** `GT.flight()` sayfa yenilemeleri arasında
 kalıcı kara kutuyu (yükleme türü, rota, modül kurulumu, hata, çıkış)
 tablo olarak basar; `GT.off('id' | 'kaynak' | 'önek*')` dosya düzenlemeden
