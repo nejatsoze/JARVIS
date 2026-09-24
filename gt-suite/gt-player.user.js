@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.12
+// @version      1.0.13
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -566,7 +566,8 @@ css('gt-player-style', `
   background:var(--gt-accent-soft); color:var(--gt-accent); font-family:var(--gt-font);
   font-size:10.5px; font-weight:600; white-space:nowrap; cursor:pointer; transition:background .12s}
 #gt-reveal:hover{background:rgba(0,113,227,.16)}
-#gt-reveal svg{flex:none}
+#gt-reveal svg{flex:none; width:13px; height:13px; margin:0; padding:0}
+#gt-reveal span{all:unset; font:inherit; color:inherit; line-height:1; white-space:nowrap}
 .gt-hidden-row{display:flex; justify-content:space-between; gap:12px; font-size:12px; padding:4px 0; border-bottom:.5px solid rgba(0,0,0,.04)}
 .gt-hidden-row .k{color:var(--gt-muted); font-weight:600; flex-shrink:0}
 .gt-hidden-row .v{text-align:right; word-break:break-all; display:flex; align-items:center; gap:5px}
