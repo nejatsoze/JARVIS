@@ -276,8 +276,21 @@
         if (konum) {
             try {
                 const { x, y } = JSON.parse(konum);
-                host.style.cssText = `position:fixed;z-index:2147483000;left:${x}px;top:${y}px;`;
-            } catch (e) { /* bozuk kayıt: varsayılan konumda kal */ }
+                const genislik = 78; // kapsül + kenar payı tahmini
+                const yukseklik = 130;
+                if (Number.isFinite(x) && Number.isFinite(y)) {
+                    // Kaydedilen konum farklı bir ekran/pencere boyutundan kalmış
+                    // olabilir; görünür alanın dışına taşıyorsa yok say — aksi
+                    // halde widget ekran dışında "kayboluyor".
+                    const gecerliX = Math.min(Math.max(x, 0), window.innerWidth - genislik);
+                    const gecerliY = Math.min(Math.max(y, 0), window.innerHeight - yukseklik);
+                    host.style.cssText = `position:fixed;z-index:2147483000;left:${gecerliX}px;top:${gecerliY}px;`;
+                } else {
+                    localStorage.removeItem(KAYIT_KONUM);
+                }
+            } catch (e) {
+                localStorage.removeItem(KAYIT_KONUM); // bozuk kayıt: temizle, varsayılan konumda kal
+            }
         }
 
         const kok = host.attachShadow({ mode: 'open' });
@@ -436,8 +449,9 @@
         });
         tutamak.addEventListener('pointermove', (e) => {
             if (!baslangic) return;
-            const x = Math.max(4, baslangic.x + (e.clientX - baslangic.fareX));
-            const y = Math.max(4, baslangic.y + (e.clientY - baslangic.fareY));
+            const kutu = host.getBoundingClientRect();
+            const x = Math.min(Math.max(4, baslangic.x + (e.clientX - baslangic.fareX)), window.innerWidth - kutu.width - 4);
+            const y = Math.min(Math.max(4, baslangic.y + (e.clientY - baslangic.fareY)), window.innerHeight - kutu.height - 4);
             host.style.left = x + 'px';
             host.style.top = y + 'px';
             host.style.right = 'auto';
