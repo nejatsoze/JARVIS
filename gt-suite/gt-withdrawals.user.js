@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Withdrawals — çekim masası
 // @namespace    palentis.gt
-// @version      1.0.5
+// @version      1.0.6
 // @description  Çekim sayfalarının tek sahibi: keep-alive, satır tıklama, zaman aşımı otomatik reddi (OTORED), tek tıkla şablonlu red, ONAY butonu ve red şablonu kısayolları. GT Core üzerine kurulur. Dört ayrı scriptin (Keep-Alive, Full Row Click, OTORED, Auto Process) birleşiğidir — o dördünü kapat.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
@@ -218,12 +218,20 @@ GT.define({
 });
 
 /* ════════════════════════════════════════════════════════════
-   3 · HIZLI RED — en üstteki bekleyen talebe şablon butonları
+   3 · HIZLI RED — oyuncu detayındaki çekim popup'ında
+   (…/detail/(popup:player-withdrawals)) en üstteki bekleyen talebe
+   şablon butonları. Ana Pending Withdrawals listesinde ÇIKMAZ.
    ════════════════════════════════════════════════════════════ */
+/** Üst pencerenin adresi — popup içeriği iframe'de olsa da popup rotası okunur. */
+function topHref() {
+    try { return window.top.location.href; } catch { return location.href; }
+}
+const inWithdrawalPopup = () => topHref().includes('popup:player-withdrawals');
+
 GT.define({
     id: 'wd-quick-reject',
-    scope: 'both',   // klasik liste iframe içinde render ediliyor
-    match: at.pending,
+    scope: 'both',   // popup içeriği iframe içinde render olabiliyor
+    match: inWithdrawalPopup,
     source: 'withdrawals',
     setup(ctx) {
         const LABELS = ['IP', 'PT', 'KYC', 'HVL1', 'FORM'];
