@@ -77,3 +77,23 @@ Tarayıcı gerektirmeden, asgari bir DOM taklidi üzerinde analiz çekirdeğini 
 ```bash
 node test/analysis.test.js
 ```
+
+---
+
+# Slack Alarm — 3 Kademeli Toggle
+
+Slack sidebar'ında seçilen kanal/kişiler okunmamış kaldığı sürece tekrarlayan
+sesli alarm çalan userscript (`slack-alarm.user.js`).
+
+**Kurulum:** Tampermonkey / Violentmonkey'e `slack-alarm.user.js` dosyasını ekleyin.
+Sağ altta 3 kademeli bir kol belirir: **0** (kapalı), **I** (kritik kanallar),
+**II** (kritik + operasyon kanalları). `Alt+Shift+A` ile kademeler arasında dolaşılır.
+
+Alarmın çalması için sayfada en az bir kez tıklama/tuş etkileşimi gerekir —
+tarayıcıların otomatik ses politikası (`AudioContext` autoplay) buna zorunlu
+kılar; widget bunu "🔇 Ses kilitli — sayfaya tıklayın" diye gösterir.
+
+Slack arayüz güncellemesiyle sidebar seçicileri eşleşmezse widget "Sidebar
+bulunamadı" uyarısı gösterir ve konsola hangi seçicinin eşleşmediğini yazar —
+bu durumda script içindeki `AD_SELECTOR` / `SATIR_SELECTOR` / `SIDEBAR_SELECTOR`
+listelerinin güncel Slack DOM'una göre güncellenmesi gerekir.
