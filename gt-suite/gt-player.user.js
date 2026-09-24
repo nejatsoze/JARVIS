@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.4-safe
+// @version      1.0.5
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -691,7 +691,7 @@ GT.define({
             dash.classList.add('floating');
             if (dash.parentElement !== document.body) document.body.append(dash);
             document.getElementById('gt-dash-row')?.remove();
-            warn('[Player] Bilgi bloğu bulunamadı — panel sağ alta sabitlendi.');
+            warn('[Player] Bilgi bloğu bulunamadı — panel geçici olarak sağ alta sabitlendi, aramaya devam ediliyor.');
         }
 
         /** Paneli tablo sütunlarını bozmadan bilgi bloğunun altına koyar. */
@@ -1024,13 +1024,22 @@ GT.define({
         ctx.own(dash);
         let placed = false;
 
+        // Sağ alta sabitleme GEÇİCİ: sayfa yavaş yüklenip bilgi bloğu 4 sn'den
+        // geç gelirse panel eskiden köşede kalıcı olarak kalıyordu. Artık
+        // saniyede bir yeniden aranır, bulununca yerine taşınır.
         const since = Date.now();
+        let lastTry = 0;
         ctx.tick(() => {
-            if (!placed || !dash.isConnected) {
+            const floating = dash.classList.contains('floating');
+            if (!placed || !dash.isConnected || (floating && Date.now() - lastTry > 1000)) {
+                lastTry = Date.now();
                 const info = infoBlock();
-                if (info) { place(dash, info); placed = true; }
-                else if (Date.now() - since > 4000) { floatPanel(); placed = true; }
-                else return;
+                if (info) {
+                    if (floating) { dash.classList.remove('floating'); log('[Player] Bilgi bloğu bulundu, panel yerine taşındı.'); }
+                    place(dash, info); placed = true;
+                }
+                else if (!placed && Date.now() - since > 4000) { floatPanel(); placed = true; }
+                else if (!placed) return;
             }
             refreshBadges();
         });
