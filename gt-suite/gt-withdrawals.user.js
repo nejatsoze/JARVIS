@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         GT Withdrawals — çekim masası
 // @namespace    palentis.gt
-// @version      1.0.6
-// @description  Çekim sayfalarının tek sahibi: keep-alive, satır tıklama, zaman aşımı otomatik reddi (OTORED), tek tıkla şablonlu red, ONAY butonu ve red şablonu kısayolları. GT Core üzerine kurulur. Dört ayrı scriptin (Keep-Alive, Full Row Click, OTORED, Auto Process) birleşiğidir — o dördünü kapat.
+// @version      1.0.7
+// @description  Çekim sayfalarının tek sahibi: keep-alive, satır tıklama, zaman aşımı otomatik reddi (OTORED), tek tıkla şablonlu red, ONAY butonu, red şablonu kısayolları; oyuncu çekim popup'ında sade liste + işlem detayı ipucu, yatırım geçmişi popup'ında sütun/metin temizliği ve sağlayıcı adları. GT Core üzerine kurulur. Dört ayrı scriptin (Keep-Alive, Full Row Click, OTORED, Auto Process) birleşiğidir — o dördünü kapat.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
 // @run-at       document-idle
@@ -518,6 +518,285 @@ GT.define({
         };
 
         log('Keep-Alive başladı.');
+    },
+});
+
+/* ════════════════════════════════════════════════════════════
+   8 · ÖDEME POPUP'LARI — ortak yardımcılar
+   Sütun gizleme satır satır değil CSS ile: tabloya data-gt-hide="c3 c7"
+   yazılır, belgeye bir kez eklenen kurallar o sütunları (sonradan gelen
+   satırlar dahil) gizler. Kendi belgesi olan iframe'e de uygulanabilsin
+   diye stil GT.css ile değil, hedef belgeye doğrudan eklenir.
+   ════════════════════════════════════════════════════════════ */
+const POPUP_STYLE_ID = 'gt-pay-popup-style';
+const MAX_COLS = 40;
+
+function ensurePopupStyle(doc) {
+    if (doc.getElementById(POPUP_STYLE_ID)) return;
+    const cols = Array.from({ length: MAX_COLS }, (_, i) =>
+        `table[data-gt-hide~="c${i + 1}"] > :is(thead, tbody, tfoot) > tr > :nth-child(${i + 1})`).join(',\n');
+    const style = doc.createElement('style');
+    style.id = POPUP_STYLE_ID;
+    style.textContent = `${cols}{display:none !important}
+.gt-strong{font-weight:700}
+#gt-wd-tip{position:fixed; z-index:999999; display:none; max-width:320px; padding:10px 12px; pointer-events:none;
+  background:rgba(255,255,255,.98); border:.5px solid rgba(0,0,0,.12); border-radius:10px;
+  box-shadow:0 6px 22px rgba(0,0,0,.14); color:#1d1d1f; font-size:12px; line-height:1.5;
+  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',Roboto,sans-serif}
+#gt-wd-tip .m{font-weight:600}
+#gt-wd-tip .k{color:#86868b}
+#gt-wd-tip .r{margin-top:4px}`;
+    (doc.head || doc.documentElement).append(style);
+}
+
+/** Verilen başlık hücrelerinin sütunlarını tabloda gizler. */
+function hideColumns(table, headerCells) {
+    if (!table) return;
+    const want = new Set((table.dataset.gtHide || '').split(' ').filter(Boolean));
+    for (const cell of headerCells) if (cell) want.add('c' + (cell.cellIndex + 1));
+    const next = [...want].join(' ');
+    if (table.dataset.gtHide !== next) table.dataset.gtHide = next;
+}
+
+/** Kökteki metin düğümlerini dönüştürür; sadece gerçekten değişenlere yazar. */
+function rewriteText(root, test, fn) {
+    if (!root) return;
+    const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT,
+        { acceptNode: (n) => test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP });
+    const hits = [];
+    while (walker.nextNode()) hits.push(walker.currentNode);
+    for (const node of hits) {
+        const next = fn(node.nodeValue);
+        if (next !== node.nodeValue) node.nodeValue = next;
+    }
+}
+
+/* ════════════════════════════════════════════════════════════
+   9 · ÇEKİM POPUP'I (popup:player-withdrawals) — sade liste
+   · requestMethod, subMethod, updatedManuallyText, misc, info,
+     referenceNumber sütunları gizlenir
+   · " UTC" ve "TRY " metinleri atılır
+   · "iSettle V2 Havale 16 (MGP)" kalın yazılır
+   · Process bağlantısının üzerine gelince işlem detayı (durum mesajı,
+     tutar, tran ID) ipucu olarak gösterilir; her bağlantı bir kez çekilir
+   Liste #iframe-player-withdrawals içinde: modül normalde iframe'in
+   İÇİNDE çalışır. Tampermonkey iframe'e girmediyse üst pencere iframe
+   belgesini dışarıdan işler (yedek).
+   ════════════════════════════════════════════════════════════ */
+const WD_HIDE_COLS = ['requestMethod', 'subMethod', 'updatedManuallyText', 'misc', 'info', 'referenceNumber'];
+const WD_BOLD = 'iSettle V2 Havale 16 (MGP)';
+const detailCache = new Map();
+
+function statusColor(status) {
+    const s = String(status || '').toUpperCase();
+    if (/ERROR|FAIL|REJECT/.test(s)) return '#FF3B30';
+    if (/SUCCESS|OK|APPROVED|COMPLETE/.test(s)) return '#34C759';
+    if (/PENDING|PROCESS/.test(s)) return '#FF9500';
+    return '#1d1d1f';
+}
+
+/** "KOD: insan mesajı | ... | status=X&amount=Y&transactionId=Z" */
+function parseDetail(raw) {
+    const parts = raw.split('|').map(p => p.trim()).filter(Boolean);
+    const first = parts[0] || '';
+    const last = parts[parts.length - 1] || '';
+    const data = {};
+    if (/status=/i.test(last)) {
+        for (const pair of last.split('&')) {
+            const i = pair.indexOf('=');
+            if (i > 0) data[pair.slice(0, i).trim()] = pair.slice(i + 1).trim();
+        }
+    }
+    return { message: first.replace(/^\S+:\s*/, '').trim() || first, data, raw };
+}
+
+function detailHtml(entry) {
+    if (entry.state === 'loading') return 'Yükleniyor…';
+    if (entry.state !== 'ready') return GT.esc(entry.raw || 'Detay alınamadı');
+    const { message, data, raw } = entry.parsed;
+    if (!message && !Object.keys(data).length) return GT.esc(raw);
+    return [
+        message && `<div class="m" style="color:${statusColor(data.status)}">${GT.esc(message)}</div>`,
+        data.amount && `<div class="r"><span class="k">Tutar:</span> ${GT.esc(data.amount)}</div>`,
+        data.transactionId && `<div><span class="k">Tran ID:</span> ${GT.esc(data.transactionId)}</div>`,
+    ].filter(Boolean).join('');
+}
+
+function fetchDetail(url) {
+    if (detailCache.has(url)) return detailCache.get(url).promise;
+    const entry = { state: 'loading' };
+    entry.promise = (async () => {
+        try {
+            const res = await fetch(url, { credentials: 'same-origin' });
+            const html = await res.text();
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            const has = (t) => /status=\w+/i.test(t) && /message=/i.test(t);
+            let raw = [...doc.querySelectorAll('td')].map(td => td.textContent.trim()).find(has)
+                || [...doc.querySelectorAll('body *')].filter(el => !el.children.length).map(el => el.textContent.trim()).find(has);
+            if (!raw) raw = html.match(/[^<]*status=[^<]*message=[^<\n]*/i)?.[0].replace(/&amp;/g, '&').trim();
+            if (raw) Object.assign(entry, { state: 'ready', parsed: parseDetail(raw) });
+            else Object.assign(entry, { state: 'error', raw: `Red sebebi mevcut değil (Code: ${res.status})` });
+        } catch (e) {
+            Object.assign(entry, { state: 'error', raw: 'Yüklenemedi: ' + e.message });
+        }
+        return entry;
+    })();
+    detailCache.set(url, entry);
+    return entry.promise;
+}
+
+GT.define({
+    id: 'wd-popup-list',
+    scope: 'both',
+    match: inWithdrawalPopup,
+    source: 'withdrawals',
+    setup(ctx) {
+        const hovered = new WeakSet();
+
+        function bindHover(doc) {
+            if (hovered.has(doc)) return;
+            hovered.add(doc);
+            const view = doc.defaultView || window;
+            let active = null;
+            const tip = () => {
+                let el = doc.getElementById('gt-wd-tip');
+                if (!el) { el = doc.createElement('div'); el.id = 'gt-wd-tip'; doc.body.append(el); ctx.own(el); }
+                return el;
+            };
+            const linkOf = (e) => e.target.closest?.('a[href*="ProcessWithdrawal.action"]');
+
+            ctx.on(doc, 'mouseover', (e) => {
+                const link = linkOf(e);
+                if (!link) return;
+                const url = new URL(link.getAttribute('href'), view.location.href).href;
+                active = url;
+                const el = tip();
+                el.innerHTML = detailHtml(detailCache.get(url) || { state: 'loading' });
+                el.style.display = 'block';
+                fetchDetail(url).then((entry) => {
+                    if (active === url && el.style.display !== 'none') el.innerHTML = detailHtml(entry);
+                });
+            }, { capture: true });
+
+            ctx.on(doc, 'mousemove', (e) => {
+                const el = doc.getElementById('gt-wd-tip');
+                if (!el || el.style.display === 'none') return;
+                const w = el.offsetWidth || 320, hgt = el.offsetHeight || 120;
+                let x = e.clientX + 16, y = e.clientY + 16;
+                if (x + w > view.innerWidth) x = e.clientX - w - 16;
+                if (y + hgt > view.innerHeight) y = e.clientY - hgt - 16;
+                el.style.left = Math.max(4, x) + 'px';
+                el.style.top = Math.max(4, y) + 'px';
+            }, { capture: true, passive: true });
+
+            ctx.on(doc, 'mouseout', (e) => {
+                const link = linkOf(e);
+                if (!link || link.contains(e.relatedTarget)) return;
+                active = null;
+                const el = doc.getElementById('gt-wd-tip');
+                if (el) el.style.display = 'none';
+            }, { capture: true });
+        }
+
+        function tidy(doc) {
+            if (!doc?.body) return;
+            ensurePopupStyle(doc);
+
+            for (const part of WD_HIDE_COLS) {
+                const head = doc.querySelector(`div[id*="${part}"]`)?.closest('td, th');
+                if (head) hideColumns(head.closest('table'), [head]);
+            }
+
+            for (const table of doc.querySelectorAll('table')) {
+                if (!table.querySelector('a[href*="ProcessWithdrawal.action"]')) continue;
+                rewriteText(table, (t) => t.includes(' UTC') || t.includes('TRY '),
+                    (t) => t.replace(/ UTC/g, '').replace(/TRY /g, ''));
+                boldMethod(table);
+            }
+            bindHover(doc);
+        }
+
+        function boldMethod(root) {
+            const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+                acceptNode: (n) => n.nodeValue.includes(WD_BOLD) && !n.parentNode?.classList?.contains('gt-strong')
+                    ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP,
+            });
+            const hits = [];
+            while (walker.nextNode()) hits.push(walker.currentNode);
+            for (const node of hits) {
+                const doc = node.ownerDocument;
+                const frag = doc.createDocumentFragment();
+                node.nodeValue.split(WD_BOLD).forEach((part, i, all) => {
+                    frag.append(part);
+                    if (i < all.length - 1) {
+                        const b = doc.createElement('span');
+                        b.className = 'gt-strong';
+                        b.textContent = WD_BOLD;
+                        frag.append(b);
+                    }
+                });
+                node.replaceWith(frag);
+            }
+        }
+
+        if (GT.IN_FRAME) {
+            // Normal yol: iframe'in içindeyiz, kendi belgemizi çekirdeğin veriyoluyla izleriz.
+            ctx.tick(() => tidy(document), { lazy: true });
+            tidy(document);
+            return;
+        }
+
+        // Yedek: iframe'de çekirdek yoksa (script enjekte edilmediyse) dışarıdan işle.
+        // Üst pencerenin veriyolu iframe içindeki değişiklikleri görmez; bu yüzden aralıkla.
+        const outside = () => {
+            const frame = document.getElementById('iframe-player-withdrawals');
+            let doc = null, hasCore = false;
+            try { doc = frame?.contentDocument; hasCore = !!frame?.contentWindow?.GT?.__core; } catch { /* erişilemez */ }
+            if (doc && !hasCore) tidy(doc);
+        };
+        ctx.interval(outside, 800);
+        ctx.tick(outside, { lazy: true });
+    },
+});
+
+/* ════════════════════════════════════════════════════════════
+   10 · YATIRIM GEÇMİŞİ POPUP'I (popup:deposit-history)
+   · Fee, Updated Manually, Sub Method, Info, Provider Message gizlenir
+   · UTC / TRY metinleri atılır
+   · Sağlayıcı adları ekibin kullandığı adlara çevrilir
+   ════════════════════════════════════════════════════════════ */
+const DEP_HIDE_HEADERS = new Set(['Fee', 'Updated Manually', 'Sub Method', 'Info', 'Provider Message']);
+const PROVIDER_NAMES = new Map(Object.entries({
+    'iSettle V2 Crypto 8 (KRPT)': 'Kriptopay | Telegram',
+    'iSettle V2 Havale 14 (SRP)': 'Havale 7 | Slack',
+    'iSettle V2 Havale 16 (MGP)': 'Havale 1 | Megapay Telegram',
+    'iSettle V2 Havale 32 (RXP)': 'Havale 8 | Slack',
+    'iSettle V2 Havale 55 (HMN PAYS)': 'Havale | Hemenpay Telegram',
+    'iSettle V2 Payurus (PTRK)': 'Payurus | Telegram',
+}));
+const squash = (s) => s.replace(/\s+/g, ' ').trim();
+
+GT.define({
+    id: 'wd-deposit-history',
+    scope: 'both',
+    match: () => topHref().includes('popup:deposit-history'),
+    source: 'withdrawals',
+    setup(ctx) {
+        function tidy() {
+            const table = $('#depositsBody table');
+            if (!table) return;
+            ensurePopupStyle(document);
+
+            const heads = [...(table.querySelector('thead tr')?.cells || [])]
+                .filter(th => DEP_HIDE_HEADERS.has(squash(th.querySelector('a')?.textContent || '')));
+            hideColumns(table, heads);
+
+            rewriteText(table, (t) => t.includes('UTC') || t.includes('TRY'),
+                (t) => t.replace(/\s*UTC/g, '').replace(/TRY\s*/g, ''));
+            rewriteText(table, (t) => PROVIDER_NAMES.has(squash(t)), (t) => PROVIDER_NAMES.get(squash(t)));
+        }
+        ctx.tick(tidy, { lazy: true });
+        tidy();
     },
 });
 

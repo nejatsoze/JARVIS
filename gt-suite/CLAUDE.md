@@ -113,7 +113,10 @@ branch'i bozma.
   match SSO login yönlendirme zincirinin ortasında script'i hiç
   enjekte etmeyebiliyor.
 - Klasik withdrawal listesi ve bazı popup'lar (`/j/PendingWithdrawals.
-  action`, `player-withdrawals` popup) **iframe** içinde render oluyor.
+  action`, `player-withdrawals` popup → `#iframe-player-withdrawals`)
+  **iframe** içinde render oluyor. Popup modülleri (`wd-quick-reject`,
+  `wd-popup-list`) üst pencere adresine (`topHref()` içinde
+  `popup:player-withdrawals`) bakar, iframe'in İÇİNDE çalışır.
   `@noframes` bu modülleri kırar — gt-withdrawals'ın ilgili 5 modülü
   `scope: 'both'` ile hem üst pencerede hem iframe'de çalışıyor.
 - `sessionKey` rotasyonlu: her `ics/*` isteğinde TAZE okunmalı, asla
