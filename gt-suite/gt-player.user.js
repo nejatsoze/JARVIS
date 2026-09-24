@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.14
+// @version      1.0.15
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -107,6 +107,18 @@ const PERIODS = [
 
 /** Gizlenen alanlar: etiket → {text, pencil}. Kartlar buradan okur. */
 const hidden = new Map();
+
+/* Aynı etiket sayfada birden fazla yerde olabiliyor (ör. tablo + flex
+   düzeni); boş/N/A olan kopya, daha önce okunmuş gerçek değeri ezmesin. */
+const EMPTY_VALUE = /^(n\/a|-|—|)$/i;
+function remember(label, info) {
+    const prev = hidden.get(label);
+    if (prev && !EMPTY_VALUE.test(prev.text) && EMPTY_VALUE.test(info.text)) {
+        if (!prev.pencil?.isConnected && info.pencil) prev.pencil = info.pencil;
+        return;
+    }
+    hidden.set(label, info);
+}
 
 function field(label) {
     const hit = hidden.get(label);
@@ -388,6 +400,13 @@ function normalizeName(s) {
 css('gt-player-style', `
 .gt-hidden-field{display:none !important}
 /* Sıra numarası kutusu: site stilleri genişliği rakama göre daraltmasın */
+/* Eşit kart yüksekliği (--gt-card-h = kimlik kartının yüksekliği) */
+#gt-bal, #gt-acc, #gt-logs{height:var(--gt-card-h, auto); display:flex; flex-direction:column}
+#gt-bal > .gtc-head, #gt-acc > .gtc-head, #gt-logs > .gtc-head, #gt-logs > .gtc-toolbar{flex:none}
+#gt-bal > .gtc-content, #gt-acc > .gtc-content{flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden}
+#gt-acc > .gtc-content{margin-left:-8px; margin-right:-8px; padding:0 8px}
+#gt-logs > .gtc-content{flex:1 1 auto; min-height:0; display:flex; flex-direction:column}
+#gt-dash.floating .gtc{height:auto}
 .gt-num{display:inline-flex !important; align-items:center; justify-content:center; flex:none !important;
   box-sizing:border-box !important; width:28px !important; min-width:28px !important; height:28px !important;
   padding:0 !important; margin:0 !important; line-height:1 !important; font-variant-numeric:tabular-nums}
@@ -479,14 +498,14 @@ css('gt-player-style', `
 #gt-acc .gta-lbl{color:var(--gt-ink-2); font-weight:500}
 #gt-acc .gta-n.z{color:#c7c7cc}
 #gt-acc .gta-n.net{font-weight:600}
-#gt-acc .gta-n.net.pos{color:#d70015}
-#gt-acc .gta-n.net.neg{color:#248a3d}
+#gt-acc .gta-n.net.pos{color:#248a3d}
+#gt-acc .gta-n.net.neg{color:#d70015}
 #gt-acc .gta-row.ltd{margin-top:6px; height:38px; background:var(--gt-surface-2); border-top-color:transparent; font-weight:600}
 #gt-acc .gta-row.ltd .gta-lbl{color:var(--gt-ink); font-weight:600}
 
 /* Giriş kayıtları — tablo değil grid liste: sitenin global table/td
    stilleri buraya sızamaz, sütunlar her satırda aynı hizada kalır. */
-#gt-logs .gtl-scroll{max-height:380px; overflow-y:auto; overflow-x:hidden; margin:0 -16px; padding:0 16px}
+#gt-logs .gtl-scroll{flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; margin:0 -16px; padding:0 16px}
 #gt-logs .gtl-day{position:sticky; top:0; z-index:1; padding:10px 0 6px; background:rgba(255,255,255,.92);
   backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
   font-size:11px; font-weight:600; letter-spacing:.2px; color:var(--gt-muted)}
@@ -636,7 +655,7 @@ GT.define({
 
                 const value = cell.nextElementSibling;
                 const edit = value?.nextElementSibling;
-                hidden.set(label, { text: value ? txt(value) : '', pencil: edit?.querySelector('i.fa-pencil-square-o') || null });
+                remember(label, { text: value ? txt(value) : '', pencil: edit?.querySelector('i.fa-pencil-square-o') || null });
 
                 hide(cell); hide(value);
                 if (edit?.querySelector('i.fa-pencil-square-o')) hide(edit);
@@ -663,7 +682,7 @@ GT.define({
                 const label = txt(item.children[0]);
                 if (!HIDE_LABELS.has(label)) continue;
                 const value = item.children[1];
-                hidden.set(label, { text: value ? txt(value) : '', pencil: value?.querySelector('i.fa-pencil-square-o') || null });
+                remember(label, { text: value ? txt(value) : '', pencil: value?.querySelector('i.fa-pencil-square-o') || null });
                 hide(item);
             }
         }
@@ -844,6 +863,12 @@ GT.define({
                 })))),
             h('div', { class: 'gtc-content' }, h('div', { class: 'gtc-msg' }, 'Bakiye okunuyor…')));
         const dash = h('div', { id: 'gt-dash' }, ozet, balCard, accCard, logCard);
+
+        // Kartların yüksekliği kimlik kartına eşitlenir; fazlası kart içinde kayar.
+        const syncHeight = () => { if (ozet.offsetHeight) dash.style.setProperty('--gt-card-h', ozet.offsetHeight + 'px'); };
+        const heightWatch = new ResizeObserver(syncHeight);
+        heightWatch.observe(ozet);
+        ctx.own(heightWatch);
 
         /* ── Accounting ── */
         async function loadAcc() {
