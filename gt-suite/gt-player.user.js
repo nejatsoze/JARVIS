@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.11
+// @version      1.0.12
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -541,7 +541,7 @@ css('gt-player-style', `
   border-radius:5px; background:var(--gt-accent-soft); border:.5px solid rgba(0,113,227,.25); color:var(--gt-accent); cursor:pointer}
 #gt-ozet .copy:hover{background:rgba(0,113,227,.16)}
 #gt-ozet .copy svg{width:10px; height:10px}
-#gt-ozet .endsession{all:unset; display:inline-flex; align-items:center; height:24px; padding:0 11px; border-radius:12px;
+#gt-ozet .endsession{all:unset; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center; height:24px; padding:0 11px; border-radius:12px;
   border:.5px solid rgba(255,59,48,.35); background:rgba(255,59,48,.08); color:var(--gt-danger);
   font-size:10.5px; font-weight:600; cursor:pointer; white-space:nowrap; flex-shrink:0}
 #gt-ozet .endsession:hover{background:rgba(255,59,48,.16)}
@@ -560,11 +560,13 @@ css('gt-player-style', `
 #gt-ozet .kyc{position:absolute; top:10px; right:10px; padding:6px 16px; border-radius:20px; font-size:13px;
   font-weight:700; letter-spacing:.3px; color:#fff; box-shadow:0 2px 6px rgba(0,0,0,.15)}
 
-#gt-reveal{position:fixed; right:16px; bottom:16px; z-index:99999; display:flex; align-items:center; gap:5px;
-  height:28px; padding:0 12px; border-radius:14px; border:.5px solid rgba(0,113,227,.28);
-  background:rgba(235,245,254,.95); color:var(--gt-accent); font-size:11px; font-weight:600; cursor:pointer;
-  box-shadow:0 1px 6px rgba(0,0,0,.12); font-family:var(--gt-font)}
-#gt-reveal:hover{background:rgba(217,232,252,.98)}
+#gt-ozet .gto-actions{display:flex; flex-direction:column; align-items:stretch; gap:6px; flex-shrink:0}
+#gt-reveal{all:unset; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center; gap:5px;
+  height:24px; padding:0 11px; border-radius:12px; border:.5px solid rgba(0,113,227,.28);
+  background:var(--gt-accent-soft); color:var(--gt-accent); font-family:var(--gt-font);
+  font-size:10.5px; font-weight:600; white-space:nowrap; cursor:pointer; transition:background .12s}
+#gt-reveal:hover{background:rgba(0,113,227,.16)}
+#gt-reveal svg{flex:none}
 .gt-hidden-row{display:flex; justify-content:space-between; gap:12px; font-size:12px; padding:4px 0; border-bottom:.5px solid rgba(0,0,0,.04)}
 .gt-hidden-row .k{color:var(--gt-muted); font-weight:600; flex-shrink:0}
 .gt-hidden-row .v{text-align:right; word-break:break-all; display:flex; align-items:center; gap:5px}
@@ -716,8 +718,9 @@ GT.define({
 
         ctx.tick(() => { sweepLabelled(); sweepFlex(); sweepOldPanels(); }, { lazy: true });
 
-        /* Gizlenen bilgileri gösteren küçük buton */
-        ctx.mount(() => document.body, 'gt-reveal', () =>
+        /* Gizlenen bilgileri gösteren küçük buton — kimlik kartında,
+           "Oturumu sonlandır"ın altında. Kart yeniden çizilirse geri konur. */
+        ctx.mount('#gt-ozet .gto-actions', 'gt-reveal', () =>
             h('button', {
                 type: 'button', title: 'Gizlenen alanları göster',
                 html: ICON.eye + '<span>Bilgileri göster</span>',
@@ -738,7 +741,7 @@ GT.define({
                         info?.pencil?.click();
                     });
                 },
-            }), 'body');
+            }));
     },
 });
 
@@ -999,7 +1002,9 @@ GT.define({
                     <button type="button" class="copy" data-copy title="Kopyala">${ICON.copy}</button></div>
                   <div class="idcol" data-contacts></div>
                 </div>
-                <button type="button" class="endsession" data-end>Oturumu sonlandır</button>
+                <div class="gto-actions">
+                  <button type="button" class="endsession" data-end>Oturumu sonlandır</button>
+                </div>
               </div>
               <div class="section">Son 24 saatte oynanan oyunlar</div>
               <div class="gameswrap" data-open="0">
