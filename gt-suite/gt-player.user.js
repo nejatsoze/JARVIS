@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.5
+// @version      1.0.6
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -394,41 +394,38 @@ css('gt-player-style', `
 #gt-dash .line.total span:first-child{color:var(--gt-ink); font-weight:600}
 #gt-dash .line.total span:last-child{font-size:18px; font-weight:600}
 
-#gt-logs .scroll{max-height:360px; overflow-y:auto; overflow-x:hidden}
-#gt-logs table{table-layout:fixed}
-#gt-logs col.c-when{width:88px}
-#gt-logs col.c-dev{width:124px}
-#gt-logs col.c-br{width:124px}
-#gt-logs thead th{position:sticky; top:0; background:#fff; z-index:1; padding:0 0 6px;
-  font-size:10px; font-weight:600; letter-spacing:.3px; text-transform:uppercase; color:var(--gt-muted)}
-#gt-logs tbody tr{transition:background .12s}
-#gt-logs tbody tr:hover{background:rgba(0,0,0,.025)}
-#gt-logs td{padding:8px 0; vertical-align:top}
-#gt-logs td.when{white-space:nowrap; line-height:1.25}
-#gt-logs td.when .d{font-weight:600; font-size:12px}
-#gt-logs td.when .t{color:var(--gt-muted); font-size:11px; font-variant-numeric:tabular-nums}
-#gt-logs .ip{display:flex; align-items:center; gap:6px; min-width:0;
-  font-weight:500; font-size:12px; font-variant-numeric:tabular-nums}
+#gt-dash .toolbar:empty{display:none}
+#gt-acc tr.ltd td{border-top:1px solid var(--gt-line); padding-top:9px; font-weight:600; color:var(--gt-ink)}
+#gt-acc td.net{font-weight:600}
+
+/* Giriş kayıtları — tablo değil grid liste: sitenin global table/td
+   stilleri buraya sızamaz, sütunlar her satırda aynı hizada kalır. */
+#gt-logs .scroll{max-height:380px; overflow-y:auto; overflow-x:hidden; margin:0 -16px; padding:0 16px}
+#gt-logs .day{position:sticky; top:0; z-index:1; padding:10px 0 6px; background:rgba(255,255,255,.92);
+  backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+  font-size:11px; font-weight:600; letter-spacing:.2px; color:var(--gt-muted)}
+#gt-logs .day:first-child{padding-top:2px}
+#gt-logs .row{display:grid; grid-template-columns:52px minmax(0,1fr) 112px 128px; column-gap:12px; align-items:center;
+  padding:9px 0; border-bottom:.5px solid rgba(60,60,67,.14)}
+#gt-logs .row:last-child{border-bottom:0}
+#gt-logs .row > div{min-width:0}
+#gt-logs .time{font-size:12px; font-weight:500; font-variant-numeric:tabular-nums; color:var(--gt-ink)}
+#gt-logs .ip{display:flex; align-items:center; gap:6px; min-width:0; font-size:12.5px; font-weight:500;
+  font-variant-numeric:tabular-nums; color:var(--gt-ink)}
 #gt-logs .ip .addr{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-#gt-logs .ipdot{width:7px; height:7px; border-radius:50%; flex:none}
-#gt-logs .loc{color:var(--gt-muted); font-size:11px; line-height:1.3; margin-top:2px; padding-left:13px;
+#gt-logs .ipdot{width:6px; height:6px; border-radius:50%; flex:none}
+#gt-logs .loc{margin-top:2px; padding-left:12px; font-size:11px; color:var(--gt-muted);
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-#gt-logs .loc .isp{display:block; opacity:.8; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-#gt-logs .badge{display:inline-flex; align-items:center; gap:5px; max-width:100%; padding:2px 8px;
-  border-radius:999px; font-size:11px; font-weight:500; white-space:nowrap; overflow:hidden;
-  background:rgba(0,0,0,.05); color:var(--gt-ink)}
-#gt-logs .badge > span{overflow:hidden; text-overflow:ellipsis}
-#gt-logs .badge .fa{flex:none; font-size:12px; line-height:1}
-#gt-logs .badge.ios,#gt-logs .badge.mac{background:rgba(29,29,31,.08)}
-#gt-logs .badge.android{background:rgba(52,199,89,.14); color:#1b7a36}
-#gt-logs .badge.win{background:rgba(0,113,227,.10); color:#0058b0}
-#gt-logs .badge.linux{background:rgba(255,159,10,.15); color:#935400}
-#gt-logs .kind{display:block; color:var(--gt-muted); font-size:10.5px; margin-top:3px; padding-left:2px}
-#gt-logs .pill{display:inline-block; flex:none; font-size:10px; font-weight:600; padding:1px 6px; border-radius:999px}
-#gt-logs .pill.in{background:rgba(52,199,89,.14); color:#1b7a36}
-#gt-logs .pill.out{background:rgba(0,0,0,.05); color:var(--gt-muted)}
-#gt-logs .pill.fail{background:rgba(215,0,21,.10); color:var(--gt-danger)}
-#gt-logs tr.failed td.when .d{color:var(--gt-danger)}
+#gt-logs .loc .isp{opacity:.75}
+#gt-logs .meta{display:flex; align-items:flex-start; gap:7px; font-size:12px; color:var(--gt-ink); white-space:nowrap}
+#gt-logs .meta .fa{flex:none; width:14px; margin-top:1px; text-align:center; font-size:13px; color:var(--gt-muted)}
+#gt-logs .meta > div{min-width:0; overflow:hidden; text-overflow:ellipsis}
+#gt-logs .meta small{display:block; margin-top:2px; font-size:11px; color:var(--gt-muted)}
+#gt-logs .pill{flex:none; font-size:10px; font-weight:600; padding:1px 6px; border-radius:6px}
+#gt-logs .pill.in{background:rgba(52,199,89,.12); color:#248a3d}
+#gt-logs .pill.out{background:rgba(118,118,128,.12); color:var(--gt-muted)}
+#gt-logs .pill.fail{background:rgba(255,59,48,.10); color:var(--gt-danger)}
+#gt-logs .row.failed .time{color:var(--gt-danger)}
 
 #gt-ozet .top{display:flex; align-items:center; gap:14px; padding:14px 90px 14px 16px; border-bottom:.5px solid rgba(0,0,0,.06)}
 #gt-ozet .photo,#gt-ozet .ph{width:52px; height:52px; border-radius:50%; flex-shrink:0; background:var(--gt-surface-2); border:.5px solid var(--gt-line)}
@@ -447,7 +444,11 @@ css('gt-player-style', `
 #gt-ozet .idlabel{color:var(--gt-muted); font-weight:600; min-width:58px; flex:none}
 #gt-ozet .idrow .val{font-weight:500; color:var(--gt-ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 #gt-ozet .idrow .icons{display:inline-flex; align-items:center; gap:4px; flex:none; line-height:1}
-#gt-ozet .idrow .icons .fa,#gt-ozet .idrow .icons .glyphicon{font-family:FontAwesome; font-style:normal; line-height:1}
+#gt-ozet .idrow .icons .fa{font-family:FontAwesome; font-style:normal; line-height:1}
+#gt-ozet .idrow .icons .glyphicon{font-family:'Glyphicons Halflings'; font-style:normal; line-height:1}
+#gt-ozet .idrow .icons .glyphicon:empty{display:none}
+#gt-ozet .idrow .icons .fa-check-circle{color:#34c759 !important}
+#gt-ozet .idrow .icons .fa-phone{color:var(--gt-muted)}
 #gt-ozet .copy{all:unset; display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px;
   border-radius:5px; background:var(--gt-accent-soft); border:.5px solid rgba(0,113,227,.25); color:var(--gt-accent); cursor:pointer}
 #gt-ozet .copy:hover{background:rgba(0,113,227,.16)}
@@ -797,7 +798,7 @@ GT.define({
                 const g = geoOf(r.ip);
                 if (g && !g.failed) {
                     const place = [g.city, g.region && g.region !== g.city ? g.region : '', g.cc].filter(Boolean).join(', ');
-                    return `${esc(place || r.country)}${g.isp ? `<span class="isp">${esc(g.isp)}</span>` : ''}`;
+                    return `${esc(place || r.country)}${g.isp ? `<span class="isp"> · ${esc(g.isp)}</span>` : ''}`;
                 }
                 if (!g && geoPending.has(r.ip)) return 'Konum aranıyor…';
             }
@@ -822,34 +823,44 @@ GT.define({
             const colors = new Map();
             for (const r of rows) if (r.ip && !colors.has(r.ip)) colors.set(r.ip, IP_COLORS[colors.size % IP_COLORS.length]);
 
-            sub.innerHTML = `<span>${rows.length} kayıt, ${colors.size} farklı IP</span>`
+            sub.innerHTML = `<span>${rows.length} kayıt · ${colors.size} farklı IP · saatler UTC</span>`
                 + (logs.at ? `<span>Güncellendi ${hhmm(logs.at)}</span>` : '');
 
             if (!rows.length) { box.innerHTML = '<div class="msg">Bu aralıkta kayıt yok.</div>'; return; }
 
-            const fmtDay = (d) => d.toLocaleDateString('tr-TR', { timeZone: 'UTC', day: 'numeric', month: 'short' });
-            const fmtTime = (d) => d.toLocaleTimeString('tr-TR', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+            const fmtTime = (d) => d.toLocaleTimeString('tr-TR', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', hour12: false });
+            const dayKey = (d) => d.toISOString().slice(0, 10);
+            const today = dayKey(new Date());
+            const yesterday = dayKey(new Date(Date.now() - 864e5));
+            const dayLabel = (d) => {
+                const k = dayKey(d);
+                const base = d.toLocaleDateString('tr-TR', { timeZone: 'UTC', day: 'numeric', month: 'long', weekday: 'long' });
+                return k === today ? `Bugün · ${base}` : k === yesterday ? `Dün · ${base}` : base;
+            };
 
-            box.innerHTML = `<div class="scroll"><table>
-              <colgroup><col class="c-when"><col><col class="c-dev"><col class="c-br"></colgroup>
-              <thead><tr><th>Zaman (UTC)</th><th>IP ve konum</th><th>Cihaz</th><th>Tarayıcı</th></tr></thead>
-              <tbody>${rows.map(r => {
-                  const d = new Date(r.time);
-                  const os = osInfo(r.os, r.mobile);
-                  const br = browserInfo(r.browser);
-                  const kind = /ipad|tablet/i.test(r.device + ' ' + r.os) ? 'Tablet' : r.mobile ? 'Mobil' : 'Masaüstü';
-                  const typePill = (logs.filter === 'ALL' && r.type)
-                      ? `<span class="pill ${r.type.startsWith('LOGIN') ? 'in' : 'out'}">${r.type.startsWith('LOGIN') ? 'Giriş' : 'Çıkış'}</span>` : '';
-                  const failPill = r.failed ? '<span class="pill fail">Başarısız</span>' : '';
-                  return `<tr class="${r.failed ? 'failed' : ''}">
-                    <td class="when"><div class="d">${r.time ? fmtDay(d) : '—'}</div><div class="t">${r.time ? fmtTime(d) : ''}</div></td>
-                    <td><div class="ip"><span class="ipdot" style="background:${colors.get(r.ip) || 'transparent'}"></span>
-                          <span class="addr">${esc(r.ip) || '—'}</span>${typePill}${failPill}</div>
-                        <div class="loc">${locationCell(r)}</div></td>
-                    <td><span class="badge ${os.cls}"><i class="fa ${os.icon}"></i><span>${esc(os.label)}</span></span><span class="kind">${kind}</span></td>
-                    <td><span class="badge"><i class="fa ${br.icon}"></i><span>${esc(br.label)}</span></span></td>
-                  </tr>`;
-              }).join('')}</tbody></table></div>`;
+            let lastDay = null;
+            const html = [];
+            for (const r of rows) {
+                const d = r.time ? new Date(r.time) : null;
+                const k = d ? dayKey(d) : '—';
+                if (k !== lastDay) { lastDay = k; html.push(`<div class="day">${d ? dayLabel(d) : 'Tarihsiz'}</div>`); }
+
+                const os = osInfo(r.os, r.mobile);
+                const br = browserInfo(r.browser);
+                const kind = /ipad|tablet/i.test(r.device + ' ' + r.os) ? 'Tablet' : r.mobile ? 'Mobil' : 'Masaüstü';
+                const typePill = (logs.filter === 'ALL' && r.type)
+                    ? `<span class="pill ${r.type.startsWith('LOGIN') ? 'in' : 'out'}">${r.type.startsWith('LOGIN') ? 'Giriş' : 'Çıkış'}</span>` : '';
+                const failPill = r.failed ? '<span class="pill fail">Başarısız</span>' : '';
+                html.push(`<div class="row${r.failed ? ' failed' : ''}">
+                    <div class="time" title="${d ? esc(d.toISOString().replace('T', ' ').slice(0, 19)) + ' UTC' : ''}">${d ? fmtTime(d) : '—'}</div>
+                    <div><div class="ip"><span class="ipdot" style="background:${colors.get(r.ip) || 'transparent'}"></span>
+                        <span class="addr">${esc(r.ip) || '—'}</span>${typePill}${failPill}</div>
+                      <div class="loc">${locationCell(r)}</div></div>
+                    <div class="meta" title="${esc(r.os || '')}"><i class="fa ${os.icon}"></i><div>${esc(os.label)}<small>${kind}</small></div></div>
+                    <div class="meta" title="${esc(r.browser || '')}"><i class="fa ${br.icon}"></i><div>${esc(br.label)}</div></div>
+                  </div>`);
+            }
+            box.innerHTML = `<div class="scroll">${html.join('')}</div>`;
         }
 
         /* ── kimlik kartı ── */
@@ -879,6 +890,7 @@ GT.define({
                   ${userId ? `<div class="idrow"><span class="idlabel">USERID</span><span class="val">${esc(userId.text)}</span></div>` : ''}
                   <div class="idrow"><span class="idlabel">PartyID</span><span class="val">${esc(pid)}</span>
                     <button type="button" class="copy" data-copy title="Kopyala">${ICON.copy}</button></div>
+                  <div class="idcol" data-contacts></div>
                 </div>
                 <button type="button" class="endsession" data-end>Oturumu sonlandır</button>
               </div>
@@ -992,6 +1004,67 @@ GT.define({
             }
         }
 
+        /* ── iletişim (e-posta / telefon) ──
+           Sayfadaki hücreler Angular'ın; onlara dokunmuyoruz. İçeriklerinin
+           KOPYASI kimlik kartına konur, asılları sadece CSS ile gizlenir.
+           Asıl değişirse (Angular yeniden çizerse) kopya da yenilenir. */
+        const outside = (el) => el && !el.closest('#gt-dash');
+
+        function findContacts() {
+            const phoneLabel = $$('td.gap-30').find(td => outside(td) && td.querySelector('i.fa-phone'));
+            const phoneVal = phoneLabel?.nextElementSibling || null;
+
+            const emailLabel = $$('td.text-xs-left, td.gap-30').find(td => outside(td)
+                && (/^e-?mail$/i.test(txt(td)) || td.querySelector('i.fa-envelope, i.fa-envelope-o')));
+            let emailVal = emailLabel?.nextElementSibling || null;
+            if (!emailVal || !/\*/.test(txt(emailVal))) {
+                // Etiket yoksa: maskeli (***) değer + hemen sağında ikon hücresi
+                emailVal = $$('td.data.strong').find(td => outside(td) && td !== phoneVal
+                    && /\*{3,}/.test(txt(td)) && td.nextElementSibling?.matches('td.gap-30')) || null;
+            }
+            const emailIcons = emailVal?.nextElementSibling?.matches('td.gap-30') ? emailVal.nextElementSibling : null;
+            return { emailLabel: emailVal && emailLabel?.nextElementSibling === emailVal ? emailLabel : null,
+                     emailVal, emailIcons, phoneLabel, phoneVal };
+        }
+
+        /** Hücrenin içeriğini temiz bir kopyaya çevirir; tooltip metnini title'a taşır. */
+        function copyOf(td) {
+            const box = document.createElement('span');
+            for (const n of td.childNodes) box.append(n.cloneNode(true));
+            for (const el of box.querySelectorAll('*')) {
+                const msgId = el.getAttribute('aria-describedby');
+                const tip = msgId && document.getElementById(msgId)?.textContent?.trim();
+                if (tip) el.setAttribute('title', tip);
+                for (const a of ['id', 'aria-describedby', 'cdk-describedby-host']) el.removeAttribute(a);
+            }
+            return box;
+        }
+
+        function refreshContacts() {
+            const slot = ozet.querySelector('[data-contacts]');
+            if (!slot) return;
+            const c = findContacts();
+            const parts = [c.emailLabel, c.emailVal, c.emailIcons, c.phoneLabel, c.phoneVal].filter(Boolean);
+            for (const el of parts) el.classList.add('gt-hidden-field');
+
+            const sig = parts.map(el => el.innerHTML).join('|');
+            if (slot.dataset.sig === sig) return;
+            slot.dataset.sig = sig;
+            slot.textContent = '';
+
+            const row = (label, valTd, iconTds) => {
+                if (!valTd) return;
+                const icons = h('span', { class: 'icons' });
+                for (const td of iconTds) if (td) icons.append(...copyOf(td).childNodes);
+                slot.append(h('div', { class: 'idrow' },
+                    h('span', { class: 'idlabel' }, label),
+                    h('span', { class: 'val', title: txt(valTd) }, txt(valTd)),
+                    icons));
+            };
+            row('E-posta', c.emailVal, [c.emailIcons]);
+            row('Telefon', c.phoneVal, [c.phoneLabel]);
+        }
+
         /* ── olaylar ── */
         accCard.addEventListener('click', (e) => {
             if (e.target.closest('button')?.classList.contains('refresh')) loadAcc();
@@ -1048,6 +1121,8 @@ GT.define({
             ozet.innerHTML = '<div style="padding:14px 16px;color:var(--gt-muted);font-size:12px">Oturum token bulunamadı, sayfayı yenile.</div>';
             return;
         }
+
+        ctx.tick(refreshContacts, { lazy: true });
 
         loadAcc();
         loadLogs();
