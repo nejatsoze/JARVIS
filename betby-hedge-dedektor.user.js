@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Betby — Çift Taraf (Hedge) Dedektörü
 // @namespace    betby-hedge-dedektor
-// @version      1.1.0
+// @version      1.2.0
 // @description  Betby backoffice bahis geçmişini arka planda tarar; aynı maçın aynı marketinde farklı hesaplardan zıt taraf (alt/üst, handikap, farklı sonuç) oynanan bahisleri IP, zaman yakınlığı ve ödeme dengesiyle puanlayıp listeler.
 // @author       —
 // @match        https://backoffice.sptenv.com/*
@@ -16,7 +16,7 @@
   // ============================================================
   // 0. SABİTLER / AYARLAR
   // ============================================================
-  const VERSION = '1.1.0';
+  const VERSION = '1.2.0';
   const PREFIX = '[HEDGE]';
   const STORAGE_KEY = 'bbHedge.settings.v1';
   const LEARN_KEY = 'bbHedge.learned.v1';
@@ -38,7 +38,7 @@
     lookbackHours: 12,      // ilk açılışta geriye dönük taranacak süre
     retentionHours: 36,     // bellekte tutulacak bahis yaşı
     pageSize: 200,
-    maxPages: 30,           // tek taramada en fazla sayfa
+    maxPages: 150,          // tek taramada en fazla sayfa
     includeCombos: false,   // kombine bahislerin ayaklarını da say
     onlyTotals: false,      // yalnızca alt/üst
     onlySameIp: false,
@@ -154,6 +154,20 @@
     };
     return walk(json, 0) || [];
   }
+
+  function findTotal(json) {
+    const walk = (o, d) => {
+      if (!o || typeof o !== 'object' || Array.isArray(o) || d > 6) return NaN;
+      if (Array.isArray(o.items)) { const t = num(pick(o, 'total', 'totalCount', 'total_count', 'count')); return isFinite(t) ? t : NaN; }
+      for (const v of Object.values(o)) { const t = walk(v, d + 1); if (isFinite(t)) return t; }
+      return NaN;
+    };
+    const t = walk(json, 0);
+    if (isFinite(t)) return t;
+    const top = json && num(pick(json, 'total', 'totalCount', 'total_count', 'count'));
+    return isFinite(top) ? top : NaN;
+  }
+  const pageOf = (json) => ({ items: findItems(json), total: findTotal(json) });
 
   // ============================================================
   // 2. ÇEKİRDEK: normalize + imza + analiz (DOM'suz, test edilebilir)
@@ -386,6 +400,8 @@
     primed: false,
     lastPoll: 0,
     lastError: null,
+    progress: null,
+    lastScan: null,
     hookAuth: null,
     hookApi: null,
     leader: false,
@@ -400,7 +416,6 @@
       if (!b) continue;
       if (!state.bets.has(b.id)) added++;
       state.bets.set(b.id, b);
-      if (isFinite(b.ts) && b.ts > state.watermark) state.watermark = b.ts;
     }
     if (added) log(`${source}: +${added} bahis (toplam ${state.bets.size})`);
     return { added, total: (items || []).length };
@@ -477,7 +492,7 @@
       if (/unauth|token|expired/i.test(msg)) throw new AuthError(msg);
       throw new Error('GraphQL: ' + msg);
     }
-    return findItems(j);
+    return pageOf(j);
   }
 
   async function fetchRest(sinceMs, offset, session) {
@@ -485,7 +500,7 @@
       'r_bet_date[range_from]': new Date(sinceMs).toISOString(), accepted_bets: 'Yes', test_players: 'exclude',
       limit: String(S.pageSize), offset: String(offset), order_by: 'bet_timestamp', order_by_asc_desc: 'DESC',
     });
-    return findItems(await httpJson(session.api + REST_PATH + '?' + p, { method: 'GET' }, session));
+    return pageOf(await httpJson(session.api + REST_PATH + '?' + p, { method: 'GET' }, session));
   }
 
   async function fetchPage(sinceMs, offset, session) {
@@ -494,25 +509,25 @@
     let lastErr = null;
     for (const url of urls) {
       try {
-        const items = await fetchGql(url, sinceMs, offset, session);
+        const page = await fetchGql(url, sinceMs, offset, session);
         if (learned.gqlUrl !== url || learned.mode !== 'gql') { learned.gqlUrl = url; learned.mode = 'gql'; saveLearned(); log('GraphQL ucu:', url); }
-        return items;
+        return page;
       } catch (e) {
         if (e instanceof AuthError) throw e;
         lastErr = e;
       }
     }
     try {
-      const items = await fetchRest(sinceMs, offset, session);
+      const page = await fetchRest(sinceMs, offset, session);
       learned.mode = 'rest'; saveLearned(); log('REST ucuna geçildi:', REST_PATH);
-      return items;
+      return page;
     } catch (e) {
       if (e instanceof AuthError) throw e;
       throw lastErr || e;
     }
   }
 
-  async function poll() {
+  async function poll(full) {
     if (state.polling) return;
     const session = readSession();
     if (!session) { setError('Oturum bulunamadı — backoffice\'e giriş yapın.'); return; }
@@ -522,16 +537,30 @@
     state.polling = true;
     render();
     try {
-      const since = state.watermark ? state.watermark - 5 * 60e3 : Date.now() - S.lookbackHours * 3600e3;
-      let offset = 0;
-      for (let page = 0; page < S.maxPages; page++) {
-        const items = await fetchPage(since, offset, session);
+      // Tam tarama: geriye dönük tüm pencere. Artımlı: yalnızca son taramadan beri (5 dk örtüşmeyle).
+      const incremental = !full && state.primed && state.watermark;
+      const since = incremental ? state.watermark - 5 * 60e3 : Date.now() - S.lookbackHours * 3600e3;
+      let offset = 0, pages = 0, fetched = 0, total = NaN, newest = 0;
+      state.progress = { pages: 0, fetched: 0, total: NaN };
+      while (pages < S.maxPages) {
+        const { items, total: t } = await fetchPage(since, offset, session);
+        if (isFinite(t)) total = t;
         const r = ingestItems(items, 'tarama');
-        if (items.length < S.pageSize) break;
-        if (state.primed && r.added === 0) break; // DESC sıralı: yeni bahis kalmadı
-        offset += items.length;
-        await sleep(250);
+        for (const raw of items) { const ts = parseTs(pick(raw, 'betTimestamp', 'bet_timestamp')); if (ts > newest) newest = ts; }
+        pages++; fetched += items.length; offset += items.length;
+        state.progress = { pages, fetched, total };
+        render();
+        if (!items.length) break;                                   // boş sayfa: bitti
+        if (isFinite(total) && offset >= total) break;              // toplam kadar çekildi
+        if (!isFinite(total) && items.length < S.pageSize && items.length < 150) break; // toplam bilinmiyorsa kısa sayfa = son
+        if (incremental && r.added === 0) break;                    // DESC sıralı: yeni bahis kalmadı
+        await sleep(200);
       }
+      if (pages >= S.maxPages && isFinite(total) && offset < total) {
+        toast(`Uyarı: ${S.maxPages} sayfa sınırına ulaşıldı (${fetched}/${total}). Ayarlardan sayfa sınırını artırın ya da geriye dönük süreyi kısaltın.`, 8000);
+      }
+      if (newest > state.watermark) state.watermark = newest;
+      state.lastScan = { at: Date.now(), pages, fetched, total, full: !incremental };
       prune();
       state.lastPoll = Date.now();
       state.lastError = null;
@@ -539,13 +568,16 @@
       if (!state.primed) {
         state.primed = true;
         const n = filterGroups(state.result.groups).length;
-        toast(`İlk tarama bitti: ${state.bets.size} bahis, ${n} şüpheli maç/market.`);
+        toast(`İlk tarama bitti: ${fetched} bahis (${pages} sayfa), ${n} şüpheli maç/market.`);
+      } else if (!incremental) {
+        toast(`Tam tarama bitti: ${fetched} bahis (${pages} sayfa).`);
       }
     } catch (e) {
       setError(e instanceof AuthError ? 'Yetki reddedildi (' + e.message + ') — sayfayı yenileyin.' : 'Tarama hatası: ' + e.message);
       warn(e);
     } finally {
       state.polling = false;
+      state.progress = null;
       render();
     }
   }
@@ -708,11 +740,11 @@
   // 7. ARAYÜZ
   // ============================================================
   const CSS = `
-#bbh-btn{position:fixed;right:18px;bottom:18px;z-index:2147483000;background:#c62828;color:#fff;border:0;border-radius:22px;
+#bbh-btn{position:fixed;left:18px;bottom:18px;z-index:2147483000;background:#c62828;color:#fff;border:0;border-radius:22px;
   padding:9px 14px;font:600 13px/1 system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer}
 #bbh-btn .n{background:#fff;color:#c62828;border-radius:10px;padding:2px 6px;margin-left:6px}
 #bbh{--bg:#fff;--fg:#1d2330;--mut:#667085;--line:#e4e7ec;--card:#f8f9fb;--acc:#1570ef;--hi:#d92d20;--mid:#dc6803;--lo:#667085;
-  position:fixed;right:18px;bottom:64px;z-index:2147483001;width:760px;height:620px;min-width:420px;min-height:300px;
+  position:fixed;left:18px;bottom:64px;z-index:2147483001;width:760px;height:620px;min-width:420px;min-height:300px;
   max-width:calc(100vw - 24px);max-height:calc(100vh - 80px);resize:both;overflow:hidden;display:flex;flex-direction:column;
   background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.25);
   font:13px/1.4 system-ui,-apple-system,Segoe UI,sans-serif}
@@ -938,7 +970,8 @@
     const s = readSession();
     const expLeft = s && isFinite(s.exp) ? s.exp - Date.now() : NaN;
     const dot = state.lastError ? 'bad' : state.polling ? 'busy' : state.running && state.leader ? 'on' : '';
-    const statusTxt = !state.running ? 'Durduruldu' : state.polling ? 'Taranıyor…' : state.leader ? 'Çalışıyor' : 'Başka sekme tarıyor';
+    const pg = state.progress;
+    const statusTxt = state.polling ? `Taranıyor… sayfa ${pg ? pg.pages : 0}${pg && isFinite(pg.total) ? ` · ${pg.fetched.toLocaleString('tr-TR')}/${pg.total.toLocaleString('tr-TR')}` : ''}` : !state.running ? 'Durduruldu' : state.leader ? 'Çalışıyor' : 'Başka sekme tarıyor';
 
     const listScroll = ui.panel.querySelector('.list') ? ui.panel.querySelector('.list').scrollTop : 0;
     const focused = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.role === 'q';
@@ -946,11 +979,13 @@
     ui.panel.innerHTML = `
       <header><b>🛡️ Çift Taraf Dedektörü</b><span class="meta">v${VERSION}</span><span class="sp"></span>
         ${state.running ? '<button data-act="stop">⏸ Durdur</button>' : '<button class="pri" data-act="start">▶ Başlat</button>'}
-        <button data-act="scan" ${state.polling ? 'disabled' : ''}>⟳ Şimdi tara</button>
+        <button data-act="scan" ${state.polling ? 'disabled' : ''} title="Son taramadan bu yana gelen bahisler">⟳ Şimdi tara</button>
+        <button data-act="full" ${state.polling ? 'disabled' : ''} title="Geriye dönük tüm pencereyi (${S.lookbackHours} sa) baştan tara">⇊ Tümünü tara</button>
         <button data-act="settings">⚙</button><button data-act="close">✕</button></header>
       <div class="status"><span><span class="dot ${dot}"></span>${statusTxt}</span>
         <span>Son tarama: ${state.lastPoll ? fmtDur(Date.now() - state.lastPoll) + ' önce' : '—'}</span>
         <span>Bellekte ${state.bets.size.toLocaleString('tr-TR')} bahis</span>
+        ${state.lastScan ? `<span>Çekilen: ${state.lastScan.fetched} satır / ${state.lastScan.pages} sayfa${state.lastScan.full ? ' (tam)' : ''}</span>` : ''}
         <span>Token: ${isFinite(expLeft) ? (expLeft > 0 ? fmtDur(expLeft) + ' kaldı' : '<span class="err">süresi doldu</span>') : '—'}</span>
         <span>Uç: ${esc(learned.mode || '?')}</span>
         ${state.lastError ? `<span class="err">${esc(state.lastError)}</span>` : ''}</div>
@@ -990,6 +1025,7 @@
       case 'start': S.autoStart = true; saveSettings(); start(true); break;
       case 'stop': S.autoStart = false; saveSettings(); stop(); break;
       case 'scan': tryLead(true); poll(); break;
+      case 'full': tryLead(true); poll(true); break;
       case 'settings': showSettings = !showSettings; render(); break;
       case 'close': toggle(false); break;
       case 'reset': state.bets.clear(); state.watermark = 0; state.primed = false; reanalyze(); toast('Veri sıfırlandı; sonraki taramada geriye dönük yüklenecek.'); break;
@@ -1077,6 +1113,7 @@
     start: () => start(true),
     stop,
     scan: () => { tryLead(true); return poll(); },
+    fullScan: () => { tryLead(true); return poll(true); },
     bets: () => [...state.bets.values()],
     groups: () => filterGroups(state.result.groups, S, query),
     allGroups: () => state.result.groups,
@@ -1090,9 +1127,9 @@
     clear: () => { state.bets.clear(); state.watermark = 0; state.primed = false; reanalyze(); },
     toggle,
     debug: () => ({ learned, session: (() => { const s = readSession(); return s && { api: s.api, exp: new Date(s.exp).toISOString(), refreshUrl: s.refreshUrl }; })(),
-      running: state.running, leader: state.leader, watermark: new Date(state.watermark || 0).toISOString(), lastError: state.lastError }),
+      running: state.running, leader: state.leader, lastScan: state.lastScan, watermark: new Date(state.watermark || 0).toISOString(), lastError: state.lastError }),
     openGt,
-    core: { gtUrl, num, parseTs, normalizeBet, signature, legsOf, relationOf, scorePair, analyze, filterGroups, findItems, buildFilters, DEFAULTS },
+    core: { gtUrl, findTotal, num, parseTs, normalizeBet, signature, legsOf, relationOf, scorePair, analyze, filterGroups, findItems, buildFilters, DEFAULTS },
   };
   if (IS_LIVE) log(`v${VERSION} yüklendi. Panel: Alt+H · Konsol: BBHedge`);
 })();

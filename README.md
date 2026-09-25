@@ -93,9 +93,10 @@ bahisleri (ör. bir hesaptan *Total over 2.5*, diğerinden *under 2.5*) puanlaya
 
 - Oturum token'ı `localStorage['spt-state'] → persistable.users[…].token`'dan okunur
   (sayfanın kendi isteklerindeki `Authorization` başlığı yedek kaynaktır).
-- `getBetHistoryList` GraphQL sorgusu `rBetDate.rangeFrom` = son görülen bahis − 5 dk ile
-  `bet_timestamp DESC` sıralı, sayfa sayfa çekilir; yeni bahis kalmayınca durur. İlk açılışta
-  `lookbackHours` kadar geriye gider. GraphQL ucu, sayfa Apply'a basıldığında kendiliğinden öğrenilir;
+- İlk açılışta (ve **⇊ Tümünü tara** ile) son `lookbackHours` saatlik pencerenin **tüm sayfaları**
+  çekilir; cevaptaki `total`'e ulaşılana ya da boş sayfa gelene kadar devam eder (sunucunun sayfa başı
+  sınırı ne olursa olsun). Sonraki taramalar artımlıdır: son taramada görülen en yeni bahis − 5 dk'dan
+  itibaren, yeni bahis kalmayınca durur. Sayfanın kendi yüklediği bahisler bu işareti etkilemez. GraphQL ucu, sayfa Apply'a basıldığında kendiliğinden öğrenilir;
   olmazsa `/api/v1/BetSlipsAdmin/betslips/clickhouse` REST ucuna düşer.
 - Birden fazla sekme açıksa yalnızca biri tarar (localStorage kilidi).
 - Sayfanın kendi bahis geçmişi cevapları da pasif olarak analize eklenir.
@@ -128,7 +129,8 @@ Varsayılan liste eşiği 50, alarm eşiği 75 (ses + başlık yanıp söner + i
 ```js
 BBHedge.groups()        // eşik üstü maç/market eşleşmeleri
 BBHedge.pairs()         // hesap çiftleri (maç sayısı, aynı IP, toplam stake)
-BBHedge.scan()          // hemen tara
+BBHedge.scan()          // hemen tara (artımlı)
+BBHedge.fullScan()      // geriye dönük tüm pencereyi baştan tara
 BBHedge.start() / stop()
 BBHedge.set('minScore', 40)
 BBHedge.ingest(json)    // getBetHistoryList cevabını elle besle
