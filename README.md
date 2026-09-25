@@ -93,7 +93,8 @@ bahisleri (ör. bir hesaptan *Total over 2.5*, diğerinden *under 2.5*) puanlaya
 
 - Oturum token'ı `localStorage['spt-state'] → persistable.users[…].token`'dan okunur
   (sayfanın kendi isteklerindeki `Authorization` başlığı yedek kaynaktır).
-- İlk açılışta (ve **⇊ Tümünü tara** ile) son `lookbackHours` saatlik pencerenin **tüm sayfaları**
+- Panelde seçilen **zaman penceresi** (varsayılan *Ay başından*; 12 sa / 24 sa / 3–7–14–30 gün /
+  geçen ay başından) hem taranır hem bellekte tutulur. İlk açılışta (ve **⇊ Tümünü tara** ile) pencerenin **tüm sayfaları**
   çekilir; cevaptaki `total`'e ulaşılana ya da boş sayfa gelene kadar devam eder (sunucunun sayfa başı
   sınırı ne olursa olsun). Sonraki taramalar artımlıdır: son taramada görülen en yeni bahis − 5 dk'dan
   itibaren, yeni bahis kalmayınca durur. Sayfanın kendi yüklediği bahisler bu işareti etkilemez. GraphQL ucu, sayfa Apply'a basıldığında kendiliğinden öğrenilir;

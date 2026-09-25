@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Betby — Çift Taraf (Hedge) Dedektörü
 // @namespace    betby-hedge-dedektor
-// @version      1.2.0
+// @version      1.3.0
 // @description  Betby backoffice bahis geçmişini arka planda tarar; aynı maçın aynı marketinde farklı hesaplardan zıt taraf (alt/üst, handikap, farklı sonuç) oynanan bahisleri IP, zaman yakınlığı ve ödeme dengesiyle puanlayıp listeler.
 // @author       —
 // @match        https://backoffice.sptenv.com/*
@@ -16,7 +16,7 @@
   // ============================================================
   // 0. SABİTLER / AYARLAR
   // ============================================================
-  const VERSION = '1.2.0';
+  const VERSION = '1.3.0';
   const PREFIX = '[HEDGE]';
   const STORAGE_KEY = 'bbHedge.settings.v1';
   const LEARN_KEY = 'bbHedge.learned.v1';
@@ -35,8 +35,7 @@
   const DEFAULTS = Object.freeze({
     autoStart: true,
     intervalSec: 30,        // tarama aralığı
-    lookbackHours: 12,      // ilk açılışta geriye dönük taranacak süre
-    retentionHours: 36,     // bellekte tutulacak bahis yaşı
+    window: 'month',        // taranan/tutulan pencere: bkz. WINDOWS
     pageSize: 200,
     maxPages: 150,          // tek taramada en fazla sayfa
     includeCombos: false,   // kombine bahislerin ayaklarını da say
@@ -65,6 +64,21 @@
     total
   }
 }`;
+
+  const WINDOWS = [
+    ['12h', 'Son 12 saat'], ['24h', 'Son 24 saat'], ['3d', 'Son 3 gün'], ['7d', 'Son 7 gün'],
+    ['14d', 'Son 14 gün'], ['month', 'Ay başından'], ['30d', 'Son 30 gün'], ['prevmonth', 'Geçen ay başından'],
+  ];
+  // Pencere başlangıcı (UTC; backoffice tarih filtresi de UTC).
+  function windowStart(w, now = Date.now()) {
+    const d = new Date(now);
+    if (w === 'month') return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+    if (w === 'prevmonth') return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1);
+    const m = /^(\d+)([hd])$/.exec(w || '');
+    if (!m) return now - 12 * 3600e3;
+    return now - +m[1] * (m[2] === 'd' ? 864e5 : 3600e3);
+  }
+  const windowLabel = (w) => (WINDOWS.find((x) => x[0] === w) || [w, w])[1];
 
   const log = (...a) => console.log(PREFIX, ...a);
   const warn = (...a) => console.warn(PREFIX, ...a);
@@ -422,7 +436,7 @@
   }
 
   function prune() {
-    const cutoff = Date.now() - S.retentionHours * 3600e3;
+    const cutoff = windowStart(S.window);
     for (const [id, b] of state.bets) if (isFinite(b.ts) && b.ts < cutoff) state.bets.delete(id);
     if (state.bets.size > MAX_BETS) {
       const sorted = [...state.bets.values()].sort((a, b) => a.ts - b.ts);
@@ -539,7 +553,7 @@
     try {
       // Tam tarama: geriye dönük tüm pencere. Artımlı: yalnızca son taramadan beri (5 dk örtüşmeyle).
       const incremental = !full && state.primed && state.watermark;
-      const since = incremental ? state.watermark - 5 * 60e3 : Date.now() - S.lookbackHours * 3600e3;
+      const since = incremental ? state.watermark - 5 * 60e3 : windowStart(S.window);
       let offset = 0, pages = 0, fetched = 0, total = NaN, newest = 0;
       state.progress = { pages: 0, fetched: 0, total: NaN };
       while (pages < S.maxPages) {
@@ -560,7 +574,7 @@
         toast(`Uyarı: ${S.maxPages} sayfa sınırına ulaşıldı (${fetched}/${total}). Ayarlardan sayfa sınırını artırın ya da geriye dönük süreyi kısaltın.`, 8000);
       }
       if (newest > state.watermark) state.watermark = newest;
-      state.lastScan = { at: Date.now(), pages, fetched, total, full: !incremental };
+      state.lastScan = { at: Date.now(), pages, fetched, total, full: !incremental, since: new Date(since).toISOString() };
       prune();
       state.lastPoll = Date.now();
       state.lastError = null;
@@ -941,8 +955,7 @@
     const n = (k, label, min, max, step = 1) => `<label>${label}<input type="number" data-set="${k}" min="${min}" max="${max}" step="${step}" value="${S[k]}"></label>`;
     const c = (k, label) => `<label>${label}<input type="checkbox" data-set="${k}" ${S[k] ? 'checked' : ''}></label>`;
     return `<div class="set">
-      ${n('intervalSec', 'Tarama aralığı (sn)', 10, 600)}${n('lookbackHours', 'İlk tarama (saat)', 1, 168)}
-      ${n('retentionHours', 'Bellekte tut (saat)', 1, 336)}${n('pageSize', 'Sayfa boyu', 50, 1000, 50)}
+      ${n('intervalSec', 'Tarama aralığı (sn)', 10, 600)}${n('pageSize', 'Sayfa boyu', 50, 1000, 50)}
       ${n('maxPages', 'Tarama başı en çok sayfa', 1, 200)}${n('maxLineGap', 'Alt/üst çizgi toleransı', 0, 5, 0.5)}
       ${n('minScore', 'Liste eşiği (skor)', 0, 100)}${n('notifyScore', 'Alarm eşiği (skor)', 0, 100)}
       ${c('sound', 'Sesli uyarı')}${c('desktop', 'Masaüstü bildirimi')}${c('autoStart', 'Açılışta otomatik başlat')}
@@ -980,7 +993,7 @@
       <header><b>🛡️ Çift Taraf Dedektörü</b><span class="meta">v${VERSION}</span><span class="sp"></span>
         ${state.running ? '<button data-act="stop">⏸ Durdur</button>' : '<button class="pri" data-act="start">▶ Başlat</button>'}
         <button data-act="scan" ${state.polling ? 'disabled' : ''} title="Son taramadan bu yana gelen bahisler">⟳ Şimdi tara</button>
-        <button data-act="full" ${state.polling ? 'disabled' : ''} title="Geriye dönük tüm pencereyi (${S.lookbackHours} sa) baştan tara">⇊ Tümünü tara</button>
+        <button data-act="full" ${state.polling ? 'disabled' : ''} title="Seçili pencerenin tamamını (${esc(windowLabel(S.window))}) baştan tara">⇊ Tümünü tara</button>
         <button data-act="settings">⚙</button><button data-act="close">✕</button></header>
       <div class="status"><span><span class="dot ${dot}"></span>${statusTxt}</span>
         <span>Son tarama: ${state.lastPoll ? fmtDur(Date.now() - state.lastPoll) + ' önce' : '—'}</span>
@@ -993,6 +1006,7 @@
       <div class="bar">
         <div class="tabs"><button data-tab="groups" class="${S.tab === 'groups' ? 'on' : ''}">Maçlar (${groups.length})</button>
           <button data-tab="pairs" class="${S.tab === 'pairs' ? 'on' : ''}">Hesap çiftleri</button></div>
+        <select data-set="window" title="Taranan zaman penceresi">${WINDOWS.map(([v, l]) => `<option value="${v}" ${S.window === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
         <input type="text" data-role="q" placeholder="Maç, oyuncu, ext ID, IP ara…" value="${esc(query)}">
         <label><input type="checkbox" data-set="onlyTotals" ${S.onlyTotals ? 'checked' : ''}>Sadece alt/üst</label>
         <label><input type="checkbox" data-set="onlySameIp" ${S.onlySameIp ? 'checked' : ''}>Aynı IP</label>
@@ -1049,6 +1063,11 @@
     if (k === 'desktop' && v && typeof Notification !== 'undefined' && Notification.permission === 'default') Notification.requestPermission();
     if (k === 'theme') applyTheme();
     if (k === 'intervalSec' && state.running) tick();
+    if (k === 'window') {
+      prune(); reanalyze();
+      if (state.running || state.primed) { tryLead(true); poll(true); }
+      return;
+    }
     if (['includeCombos', 'onlyTotals', 'maxLineGap'].includes(k)) reanalyze(); else render();
   }
 
@@ -1127,9 +1146,9 @@
     clear: () => { state.bets.clear(); state.watermark = 0; state.primed = false; reanalyze(); },
     toggle,
     debug: () => ({ learned, session: (() => { const s = readSession(); return s && { api: s.api, exp: new Date(s.exp).toISOString(), refreshUrl: s.refreshUrl }; })(),
-      running: state.running, leader: state.leader, lastScan: state.lastScan, watermark: new Date(state.watermark || 0).toISOString(), lastError: state.lastError }),
+      running: state.running, leader: state.leader, window: S.window, windowStart: new Date(windowStart(S.window)).toISOString(), lastScan: state.lastScan, watermark: new Date(state.watermark || 0).toISOString(), lastError: state.lastError }),
     openGt,
-    core: { gtUrl, findTotal, num, parseTs, normalizeBet, signature, legsOf, relationOf, scorePair, analyze, filterGroups, findItems, buildFilters, DEFAULTS },
+    core: { windowStart, gtUrl, findTotal, num, parseTs, normalizeBet, signature, legsOf, relationOf, scorePair, analyze, filterGroups, findItems, buildFilters, DEFAULTS },
   };
   if (IS_LIVE) log(`v${VERSION} yüklendi. Panel: Alt+H · Konsol: BBHedge`);
 })();

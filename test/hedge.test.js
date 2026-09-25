@@ -119,6 +119,15 @@ check('rBetDate ISO', f.rBetDate.rangeFrom === '2026-09-01T00:00:00.000Z');
 check('offset/limit', f.offset === 400 && f.limit === C.DEFAULTS.pageSize);
 check('yalnız kabul edilen, test oyuncuları hariç', f.acceptedBets[0] === 'Yes' && f.testPlayers === 'exclude');
 
+console.log('\n== zaman penceresi ==');
+const T = Date.UTC(2026, 8, 25, 10, 30);
+check('ay başı', C.windowStart('month', T) === Date.UTC(2026, 8, 1));
+check('geçen ay başı', C.windowStart('prevmonth', T) === Date.UTC(2026, 7, 1));
+check('ocakta geçen ay = aralık', C.windowStart('prevmonth', Date.UTC(2027, 0, 5)) === Date.UTC(2026, 11, 1));
+check('7 gün', C.windowStart('7d', T) === T - 7 * 864e5);
+check('12 saat', C.windowStart('12h', T) === T - 12 * 3600e3);
+check('varsayılan pencere ay başı', C.DEFAULTS.window === 'month');
+
 console.log('\n== sayfalama toplamı ==');
 check('GraphQL total', C.findTotal({ data: { data: { items: [], total: 520 } } }) === 520);
 check('REST total_count', C.findTotal({ total_count: '1234', data: [] }) === 1234);
