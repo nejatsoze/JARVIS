@@ -119,9 +119,8 @@ Farklı oyunculardan farklı taraf → eşleşme. Doğru skor, golcü, aralık v
 | Aynı hesap çifti N maçta karşılaştı | +15 × (N−1) |
 | Kombine ayağı | × 0,6 |
 
-Her oyuncunun yanındaki **GT ↗** düğmesi, oyuncunun GT core profilini
-(`core-secundus.gmntc.com/core/app/core/players/{extPlayerId}/detail`) açar. İlk tıklama `gtcore`
-adlı yeni bir sekme açar, sonraki tıklamalar aynı sekmeyi kullanır. Ctrl/orta tık yeni sekmede açar.
+Her oyuncunun yanındaki kopyala düğmesi (GT Player'daki PartyID düğmesiyle aynı) oyuncunun
+party id'sini (`extPlayerId`) panoya kopyalar; kopyalanınca kısa süre yeşil tik gösterir.
 
 Varsayılan liste eşiği 50, alarm eşiği 75 (ses + başlık yanıp söner + isteğe bağlı masaüstü bildirimi).
 
@@ -137,7 +136,6 @@ BBHedge.set('minScore', 40)
 BBHedge.ingest(json)    // getBetHistoryList cevabını elle besle
 BBHedge.csv()           // CSV indir
 BBHedge.debug()         // öğrenilen uç, token süresi, son hata
-BBHedge.openGt('13667023') // GT core profilini aç
 ```
 
 Testler: `node test/hedge.test.js`

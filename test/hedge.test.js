@@ -133,10 +133,6 @@ check('GraphQL total', C.findTotal({ data: { data: { items: [], total: 520 } } }
 check('REST total_count', C.findTotal({ total_count: '1234', data: [] }) === 1234);
 check('toplam yoksa NaN', Number.isNaN(C.findTotal({ data: { data: { items: [] } } })));
 
-console.log('\n== GT bağlantısı ==');
-check('GT profil adresi', C.gtUrl('13667023') === 'https://core-secundus.gmntc.com/core/app/core/players/13667023/detail');
-check('sayısal olmayan id → null', C.gtUrl('abc') === null && C.gtUrl('') === null);
-
 console.log('\n== CSV ==');
 const rows = API.csvRows();
 check('CSV başlık + 1 satır', rows.length === 2, rows.length);
