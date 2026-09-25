@@ -119,6 +119,14 @@ branch'i bozma.
   `popup:player-withdrawals`) bakar, iframe'in İÇİNDE çalışır.
   `@noframes` bu modülleri kırar — gt-withdrawals'ın ilgili 5 modülü
   `scope: 'both'` ile hem üst pencerede hem iframe'de çalışıyor.
+- iframe'in ilk `about:blank` belgesinden gerçek sayfaya geçişte tarayıcı
+  aynı `window`'u yeniden kullanır. Tampermonkey bazen o boş belgeye
+  enjekte ediyor: JS yaşar, `<style>`'lar boş belgeyle gider → stilsiz
+  butonlar (Withdrawals popup'ındaki IP/PT/KYC, düz metin ONAY). Bu yüzden
+  `css()` stilleri bir kayıtta tutar ve her zaman `W.document`'a (aktif
+  belge) yazar; `ctx.mount` ve DOM'u başka belgeye ekleyen modüller
+  `GT.ensureStyles(node.ownerDocument)` çağırır. Stil sorunu görürsen önce
+  "stil etiketi bu belgede var mı" diye bak, `!important` ile boğuşma.
 - `sessionKey` rotasyonlu: her `ics/*` isteğinde TAZE okunmalı, asla
   cache'lenmemeli — bayat anahtar sessiz 401 döner. `GT.api.ics()` bunu
   otomatik yapar.
