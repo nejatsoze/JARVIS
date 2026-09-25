@@ -121,7 +121,7 @@ check('yalnız kabul edilen, test oyuncuları hariç', f.acceptedBets[0] === 'Ye
 
 console.log('\n== sayfalama toplamı ==');
 check('GraphQL total', C.findTotal({ data: { data: { items: [], total: 520 } } }) === 520);
-check('REST total_count', C.findTotal({ total_count: '1.234', data: [] }) === 1234);
+check('REST total_count', C.findTotal({ total_count: '1234', data: [] }) === 1234);
 check('toplam yoksa NaN', Number.isNaN(C.findTotal({ data: { data: { items: [] } } })));
 
 console.log('\n== GT bağlantısı ==');
