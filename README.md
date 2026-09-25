@@ -77,3 +77,59 @@ Tarayıcı gerektirmeden, asgari bir DOM taklidi üzerinde analiz çekirdeğini 
 ```bash
 node test/analysis.test.js
 ```
+
+---
+
+# Betby — Çift Taraf (Hedge) Dedektörü
+
+`betby-hedge-dedektor.user.js` — Betby backoffice'te (`backoffice.sptenv.com`) arka planda
+bahis geçmişini tarar ve **aynı maçın aynı marketinde farklı hesaplardan zıt taraf** oynanan
+bahisleri (ör. bir hesaptan *Total over 2.5*, diğerinden *under 2.5*) puanlayarak listeler.
+
+**Kurulum:** Tampermonkey / Violentmonkey'e ekleyin, backoffice'e giriş yapın. Sağ altta
+**🛡️ Çift Taraf** düğmesi belirir (`Alt+H`). Tarama otomatik başlar; sekmeyi açık bırakmak yeterlidir.
+
+## Nasıl çalışır?
+
+- Oturum token'ı `localStorage['spt-state'] → persistable.users[…].token`'dan okunur
+  (sayfanın kendi isteklerindeki `Authorization` başlığı yedek kaynaktır).
+- `getBetHistoryList` GraphQL sorgusu `rBetDate.rangeFrom` = son görülen bahis − 5 dk ile
+  `bet_timestamp DESC` sıralı, sayfa sayfa çekilir; yeni bahis kalmayınca durur. İlk açılışta
+  `lookbackHours` kadar geriye gider. GraphQL ucu, sayfa Apply'a basıldığında kendiliğinden öğrenilir;
+  olmazsa `/api/v1/BetSlipsAdmin/betslips/clickhouse` REST ucuna düşer.
+- Birden fazla sekme açıksa yalnızca biri tarar (localStorage kilidi).
+- Sayfanın kendi bahis geçmişi cevapları da pasif olarak analize eklenir.
+
+## Eşleştirme ve skor
+
+Anahtar: `eventId | marketId | market adı` (+ alt/üst için `total`, handikap için mutlak çizgi).
+Farklı oyunculardan farklı taraf → eşleşme. Doğru skor, golcü, aralık vb. çok sonuçlu marketler hariç.
+
+| Sinyal | Puan |
+|---|---|
+| Alt/üst aynı çizgi / ters handikap | 40 |
+| Alt/üst "orta" (over 2.5 ↔ under 3.5) | 25 |
+| Alt/üst boşluklu (over 3.5 ↔ under 2.5) | 12 |
+| Diğer 2–3 yollu marketlerde farklı sonuç | 20 |
+| Aynı IP / aynı /24 ağ | +45 / +15 |
+| Bahisler arası ≤1 dk / ≤5 dk / ≤30 dk | +25 / +15 / +6 |
+| Olası ödemeler dengeli (≥%85 / ≥%65) | +15 / +7 |
+| Aynı hesap çifti N maçta karşılaştı | +15 × (N−1) |
+| Kombine ayağı | × 0,6 |
+
+Varsayılan liste eşiği 50, alarm eşiği 75 (ses + başlık yanıp söner + isteğe bağlı masaüstü bildirimi).
+
+## Konsol API'si
+
+```js
+BBHedge.groups()        // eşik üstü maç/market eşleşmeleri
+BBHedge.pairs()         // hesap çiftleri (maç sayısı, aynı IP, toplam stake)
+BBHedge.scan()          // hemen tara
+BBHedge.start() / stop()
+BBHedge.set('minScore', 40)
+BBHedge.ingest(json)    // getBetHistoryList cevabını elle besle
+BBHedge.csv()           // CSV indir
+BBHedge.debug()         // öğrenilen uç, token süresi, son hata
+```
+
+Testler: `node test/hedge.test.js`
