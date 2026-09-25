@@ -119,6 +119,10 @@ check('rBetDate ISO', f.rBetDate.rangeFrom === '2026-09-01T00:00:00.000Z');
 check('offset/limit', f.offset === 400 && f.limit === C.DEFAULTS.pageSize);
 check('yalnız kabul edilen, test oyuncuları hariç', f.acceptedBets[0] === 'Yes' && f.testPlayers === 'exclude');
 
+console.log('\n== GT bağlantısı ==');
+check('GT profil adresi', C.gtUrl('13667023') === 'https://core-secundus.gmntc.com/core/app/core/players/13667023/detail');
+check('sayısal olmayan id → null', C.gtUrl('abc') === null && C.gtUrl('') === null);
+
 console.log('\n== CSV ==');
 const rows = API.csvRows();
 check('CSV başlık + 1 satır', rows.length === 2, rows.length);

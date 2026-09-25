@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Betby — Çift Taraf (Hedge) Dedektörü
 // @namespace    betby-hedge-dedektor
-// @version      1.0.0
+// @version      1.1.0
 // @description  Betby backoffice bahis geçmişini arka planda tarar; aynı maçın aynı marketinde farklı hesaplardan zıt taraf (alt/üst, handikap, farklı sonuç) oynanan bahisleri IP, zaman yakınlığı ve ödeme dengesiyle puanlayıp listeler.
 // @author       —
 // @match        https://backoffice.sptenv.com/*
@@ -16,7 +16,7 @@
   // ============================================================
   // 0. SABİTLER / AYARLAR
   // ============================================================
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
   const PREFIX = '[HEDGE]';
   const STORAGE_KEY = 'bbHedge.settings.v1';
   const LEARN_KEY = 'bbHedge.learned.v1';
@@ -29,6 +29,8 @@
   ];
   const REST_PATH = '/api/v1/BetSlipsAdmin/betslips/clickhouse';
   const MAX_BETS = 60000;
+  const GT_HOST = 'https://core-secundus.gmntc.com';
+  const GT_WINDOW = 'gtcore';   // açılan GT sekmesinin adı; sonraki tıklamalar aynı sekmeyi kullanır
 
   const DEFAULTS = Object.freeze({
     autoStart: true,
@@ -750,6 +752,7 @@
 #bbh .bet{font-size:12px;display:flex;gap:6px;flex-wrap:wrap;padding:1px 0}
 #bbh .bet.key{font-weight:600}
 #bbh .bet .u{cursor:pointer;color:var(--acc)}
+#bbh a.gt{font-size:11px;font-weight:600;color:#fff;background:var(--acc);border-radius:4px;padding:0 5px;text-decoration:none;cursor:pointer}
 #bbh .pr{font-size:12px;margin-top:6px;color:var(--mut)}
 #bbh .acts{display:flex;gap:6px;margin-top:6px}
 #bbh .acts a,#bbh .acts button{font-size:12px;color:var(--acc);text-decoration:none;background:none;border:0;padding:0;cursor:pointer}
@@ -829,6 +832,25 @@
     return '/bet-history?filters=' + encodeURIComponent(JSON.stringify(f));
   }
 
+  // Betby'deki extPlayerId = GT core party id.
+  function gtUrl(id) {
+    const pid = str(id).trim();
+    return /^\d+$/.test(pid) ? `${GT_HOST}/core/app/core/players/${pid}/detail` : null;
+  }
+
+  let gtWin = null;
+  function openGt(id) {
+    const url = gtUrl(id);
+    if (!url) { toast('Bu oyuncunun GT party id\'si yok.'); return; }
+    try {
+      if (gtWin && !gtWin.closed) { gtWin.location.href = url; gtWin.focus(); return; }
+    } catch {}
+    gtWin = window.open(url, GT_WINDOW);
+    if (!gtWin) { toast('Açılır pencere engellendi — backoffice.sptenv.com için açılır pencerelere izin verin.'); return; }
+    try { gtWin.focus(); } catch {}
+  }
+  const gtBtn = (id) => (gtUrl(id) ? `<a class="gt" href="${esc(gtUrl(id))}" data-gt="${esc(id)}" title="GT core'da oyuncu profilini aç (party ${esc(id)})">GT ↗</a>` : '');
+
   const lvl = (s) => (s >= S.notifyScore ? 'hi' : s >= S.minScore ? 'mid' : '');
 
   function renderGroup(g) {
@@ -864,7 +886,7 @@
   function betRow(l, key) {
     const b = l.bet;
     const amt = isFinite(b.stakeCur) && b.currency ? fmtMoney(b.stakeCur, b.currency) : fmtMoney(b.stakeEur, 'EUR');
-    return `<div class="bet ${key ? 'key' : ''}"><span class="u" data-q="${esc(b.playerId || b.extPlayerId)}" title="Bu oyuncuyla filtrele">${esc(who(b))}</span>
+    return `<div class="bet ${key ? 'key' : ''}"><span class="u" data-q="${esc(b.playerId || b.extPlayerId)}" title="Bu oyuncuyla filtrele">${esc(who(b))}</span>${gtBtn(b.extPlayerId)}
       <span>${amt}</span><span>@${isFinite(l.sel.k) ? l.sel.k : b.odd}</span><span class="meta">${fmtTs(b.ts, false)}</span>
       ${b.ip ? `<span class="meta">${esc(b.ip)}</span>` : ''}${l.combo ? '<span class="chip">kombine</span>' : ''}${b.brand ? `<span class="meta">${esc(b.brand)}</span>` : ''}</div>`;
   }
@@ -874,7 +896,7 @@
     const rows = pairs.filter((p) => p.best >= S.minScore && (!S.onlySameIp || p.sameIp) &&
       (!needle || JSON.stringify(p.players).toLowerCase().includes(needle))).slice(0, 300);
     if (!rows.length) return '<div class="empty">Eşik üstünde hesap çifti yok.</div>';
-    const pl = (x) => `<span class="u" data-q="${esc(x.playerId || x.extPlayerId)}">${esc(x.username || x.extPlayerId || x.playerId)}</span>` +
+    const pl = (x) => `<span class="u" data-q="${esc(x.playerId || x.extPlayerId)}">${esc(x.username || x.extPlayerId || x.playerId)}</span> ${gtBtn(x.extPlayerId)}` +
       `<div class="meta">ext ${esc(x.extPlayerId)} · ${esc(x.ip || 'IP yok')}</div>`;
     return `<table><thead><tr><th>Skor</th><th>Hesap A</th><th>Hesap B</th><th>Maç</th><th>Toplam stake</th><th></th></tr></thead><tbody>
       ${rows.map((p) => `<tr class="${lvl(p.best)}"><td><b>${p.best}</b></td><td>${pl(p.players[0])}</td><td>${pl(p.players[1])}</td>
@@ -956,6 +978,11 @@
     const act = t.closest('[data-act]');
     const tab = t.closest('[data-tab]');
     const u = t.closest('[data-q]');
+    const gt = t.closest('[data-gt]');
+    if (gt) {
+      if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return; // yeni sekme isteği: tarayıcıya bırak
+      e.preventDefault(); openGt(gt.dataset.gt); return;
+    }
     if (tab) { S.tab = tab.dataset.tab; saveSettings(); render(); return; }
     if (u && !act) { query = u.dataset.q; S.tab = 'groups'; render(); return; }
     if (!act) return;
@@ -1064,7 +1091,8 @@
     toggle,
     debug: () => ({ learned, session: (() => { const s = readSession(); return s && { api: s.api, exp: new Date(s.exp).toISOString(), refreshUrl: s.refreshUrl }; })(),
       running: state.running, leader: state.leader, watermark: new Date(state.watermark || 0).toISOString(), lastError: state.lastError }),
-    core: { num, parseTs, normalizeBet, signature, legsOf, relationOf, scorePair, analyze, filterGroups, findItems, buildFilters, DEFAULTS },
+    openGt,
+    core: { gtUrl, num, parseTs, normalizeBet, signature, legsOf, relationOf, scorePair, analyze, filterGroups, findItems, buildFilters, DEFAULTS },
   };
   if (IS_LIVE) log(`v${VERSION} yüklendi. Panel: Alt+H · Konsol: BBHedge`);
 })();
