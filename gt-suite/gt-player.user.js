@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.17
+// @version      1.0.18
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -587,6 +587,24 @@ css('gt-player-style', `
 .gt-hidden-row{display:flex; justify-content:space-between; gap:12px; font-size:12px; padding:4px 0; border-bottom:.5px solid rgba(0,0,0,.04)}
 .gt-hidden-row .k{color:var(--gt-muted); font-weight:600; flex-shrink:0}
 .gt-hidden-row .v{text-align:right; word-break:break-all; display:flex; align-items:center; gap:5px}
+
+/* Sitenin oyuncu sekme satırları (COMMENTS… / APPLY BONUS…): Angular Material
+   mat-tab. HTML'e dokunulmaz; sadece .pin-tabs ikonlu satırlar adacığa çevrilir,
+   uygulamadaki diğer sekmeler etkilenmez. !important: Material + site teması. */
+.mat-tab-labels:has(.pin-tabs){display:inline-flex !important; width:fit-content; background:#fff; border:1px solid #d9dde3;
+  border-radius:9px; box-shadow:0 1px 1.5px rgba(16,24,40,.06); overflow:hidden}
+.mat-tab-list:has(.pin-tabs) .mat-ink-bar{display:none !important}
+.mat-tab-labels:has(.pin-tabs) > .mat-tab-label{height:30px !important; min-width:0 !important; margin:0 !important; padding:0 !important;
+  opacity:1 !important; background:#fff !important; color:#344054 !important; border:0 !important; border-radius:0 !important;
+  font-family:var(--gt-font) !important; font-size:11.5px !important; font-weight:600 !important; letter-spacing:.2px;
+  transition:background-color .12s}
+.mat-tab-labels:has(.pin-tabs) > .mat-tab-label + .mat-tab-label{border-left:1px solid #eceef1 !important}
+.mat-tab-labels:has(.pin-tabs) > .mat-tab-label:hover{background:#f5f6f8 !important}
+.mat-tab-labels:has(.pin-tabs) > .mat-tab-label .pin-tabs{color:#98a2b3 !important; margin-right:6px}
+.mat-tab-labels:has(.pin-tabs) > .mat-tab-label-active,
+.mat-tab-labels:has(.pin-tabs) > .mat-tab-label-active:hover{background:#1b1f24 !important; color:#fff !important}
+.mat-tab-labels:has(.pin-tabs) > .mat-tab-label-active .pin-tabs{color:#fff !important}
+.mat-tab-labels:has(.pin-tabs) > .mat-tab-label-active + .mat-tab-label{border-left-color:transparent !important}
 
 #gt-lookup{display:inline-flex; align-items:center; gap:8px; margin-left:12px; vertical-align:middle; position:relative; top:2px}
 #gt-lookup .lastbonus{font-family:var(--gt-font); font-size:12px; font-weight:500; color:var(--gt-accent); white-space:nowrap}
