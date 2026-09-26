@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Core — paylaşılan çalışma zamanı
 // @namespace    http://tampermonkey.net/
-// @version      1.1.7
+// @version      1.1.8
 // @description  GamingTec script ailesinin ortak çekirdeği: tek veriyolu, rota-farkındalıklı modül yaşam döngüsü, sessionKey disiplinli API katmanı, tasarım token'ları + UI kiti (stiller her zaman aktif belgeye yazılır, kaybolursa kendini onarır), kısayol defteri, gameTranId veri katmanı ve Firefox için main-world ağ köprüsü. UI üretmez — tüm özellikler uydu scriptlerde yaşar. Çapraz origin izinleri (KYCAID, ipwho.is) burada toplanır; uydular GT.api.gm üzerinden kullanır, kendi @grant'ine ihtiyaç duymaz.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
@@ -42,7 +42,7 @@ const W = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow :
 // Çekirdek iki kez yüklenirse (iki sekme scripti, hatalı kurulum) ikincisi çekilir.
 if (W.GT && W.GT.__core) return;
 
-const VERSION   = '1.1.7';
+const VERSION   = '1.1.8';
 const API_LEVEL = 1;
 const IN_FRAME  = window.self !== window.top;
 
@@ -533,49 +533,49 @@ css('gt-core-style', `
 }
 .gt-btn,.gt-chip,.gt-icon-btn,.gt-pop__x{touch-action:manipulation}
 
-/* Butonlar ROLE göre renklenir, görünüşe göre değil:
-     varsayılan (araç) → nötr: filtre, sorgu, gezinme
-     --success → onay · --warn → parayı değiştirir · --danger → geri alınamaz
-     .is-active → seçili durum (tek dolu renk)
-   Aksiyon = 8px köşeli dikdörtgen; durum rozeti (.gt-chip) = hap. İkisi
-   karışmasın diye biçim de bilgi taşır. Çerçeveler 1px: .5px Windows'un 1x
-   ekranlarında kayboluyor. Renkli metinler AA kontrastlı koyu tonlarda. */
+/* Buton sistemi (Minimal + adacık):
+   · Beyaz buton, ince çizgi, hafif gölge. Renk küçük bir noktada (::before):
+     --danger kırmızı (geri alınamaz, metin de kırmızı) · --warn turuncu (parayı
+     değiştirir) · --success yeşil · --muted gri.
+   · Birincil aksiyon dolu: --primary yeşil (ONAY), --blue mavi.
+   · .gt-group: ilişkili butonlar tek adacıkta bitişik; .is-active koyu dolgu.
+   · Kısayol harfi butonda gösterilmez, sadece title'da. */
 .gt-btn{
-  --b-fg:var(--gt-ink-2); --b-bg:var(--gt-surface-2); --b-bd:rgba(60,60,67,.18);
-  --b-bg-h:#e5e5ea; --b-bd-h:rgba(60,60,67,.32); --b-on:#0071e3;
   all:unset; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center; gap:6px;
-  min-height:28px; padding:0 12px; font-family:var(--gt-font); font-size:12.5px; line-height:1; font-weight:600;
-  color:var(--b-fg); background:var(--b-bg); border:1px solid var(--b-bd);
-  border-radius:8px; cursor:pointer; white-space:nowrap; user-select:none; vertical-align:middle;
-  transition:background-color .12s, border-color .12s;
+  height:28px; padding:0 11px; font-family:var(--gt-font); font-size:12.5px; line-height:1; font-weight:600;
+  color:#1b1f24; background:#fff; border:1px solid #d9dde3; border-radius:8px;
+  box-shadow:0 1px 1.5px rgba(16,24,40,.06); cursor:pointer; white-space:nowrap; user-select:none;
+  vertical-align:middle; transition:background-color .12s, border-color .12s;
 }
-.gt-btn:hover{background:var(--b-bg-h); border-color:var(--b-bd-h)}
+.gt-btn:hover{background:#f5f6f8; border-color:#c9ced6}
 .gt-btn:active{transform:translateY(1px)}
-.gt-btn:focus-visible{outline:2px solid #0071e3; outline-offset:2px}
-.gt-btn.is-active{background:var(--b-on); border-color:var(--b-on); color:#fff}
+.gt-btn:focus-visible{outline:2px solid #2563eb; outline-offset:2px}
+.gt-btn.is-active,.gt-btn.is-active:hover{background:#1b1f24; border-color:#1b1f24; color:#fff}
 .gt-btn.is-busy{opacity:.55; pointer-events:none}
 .gt-btn[disabled]{opacity:.45; cursor:not-allowed}
-.gt-btn svg{width:12px; height:12px; flex:none}
-.gt-btn--sm{min-height:24px; padding:0 9px; gap:5px; font-size:11.5px; border-radius:7px}
-.gt-btn--success{--b-fg:#1e7b34; --b-bg:rgba(52,199,89,.10); --b-bd:rgba(30,123,52,.30);
-  --b-bg-h:rgba(52,199,89,.18); --b-bd-h:rgba(30,123,52,.50); --b-on:#1e7b34}
-.gt-btn--warn{--b-fg:#c93400; --b-bg:rgba(255,149,0,.10); --b-bd:rgba(201,52,0,.28);
-  --b-bg-h:rgba(255,149,0,.18); --b-bd-h:rgba(201,52,0,.48); --b-on:#c93400}
-.gt-btn--danger{--b-fg:#d70015; --b-bg:rgba(255,59,48,.08); --b-bd:rgba(215,0,21,.26);
-  --b-bg-h:rgba(255,59,48,.15); --b-bd-h:rgba(215,0,21,.46); --b-on:#d70015}
-.gt-btn--quiet{--b-bg:transparent}
+.gt-btn svg{width:13px; height:13px; flex:none}
+.gt-btn--sm{height:26px; padding:0 10px; font-size:12px}
+.gt-btn--danger,.gt-btn--warn,.gt-btn--success,.gt-btn--muted{padding-left:10px}
+.gt-btn--danger::before,.gt-btn--warn::before,.gt-btn--success::before,.gt-btn--muted::before{
+  content:''; width:7px; height:7px; border-radius:50%; flex:none}
+.gt-btn--danger{color:#b42318} .gt-btn--danger::before{background:#e5484d}
+.gt-btn--warn::before{background:#f59e0b}
+.gt-btn--success::before{background:#16a34a}
+.gt-btn--muted{color:#667085} .gt-btn--muted::before{background:#98a2b3}
+.gt-btn--primary,.gt-btn--primary:hover{background:#16a34a; border-color:#15803d; color:#fff; box-shadow:0 1px 2px rgba(22,163,74,.35)}
+.gt-btn--primary:hover{background:#15803d}
+.gt-btn--blue,.gt-btn--blue:hover{background:#2563eb; border-color:#1d4ed8; color:#fff; box-shadow:0 1px 2px rgba(37,99,235,.3)}
+.gt-btn--blue:hover{background:#1d4ed8}
+.gt-btn--quiet{box-shadow:none}
 
-/* Kısayol tuş kapağı: kısayollar kullanırken öğrenilsin diye butonun içinde.
-   Hepsi Alt ile çalışır; kapakta yalnızca harf, tam kombinasyon title'da. */
-.gt-kbd{all:unset; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center;
-  min-width:16px; height:16px; padding:0 4px; margin-right:-4px; border-radius:4px;
-  border:1px solid currentColor; font-family:var(--gt-font); font-size:9.5px; font-weight:700; line-height:1; opacity:.5}
-.gt-btn--sm .gt-kbd{min-width:14px; height:14px; padding:0 3px; margin-right:-3px; font-size:9px}
-.gt-btn.is-active .gt-kbd{opacity:.8}
-
-/* Buton kümesi: yanındaki butonlardan ince bir ayraçla ayrılır, kutu yok. */
-.gt-group{display:inline-flex; align-items:center; gap:4px; margin-left:8px; padding-left:8px;
-  border-left:1px solid rgba(60,60,67,.18); vertical-align:middle}
+/* Adacık: bitişik butonlar tek kontrol. Kenar boşluğunu kullanan yer verir. */
+.gt-group{display:inline-flex; align-items:stretch; vertical-align:middle; background:#fff; border:1px solid #d9dde3;
+  border-radius:9px; box-shadow:0 1px 1.5px rgba(16,24,40,.06); overflow:hidden}
+.gt-group > .gt-btn{border:0; border-radius:0; box-shadow:none; height:28px}
+.gt-group > .gt-btn + .gt-btn{border-left:1px solid #eceef1}
+.gt-group > .gt-btn.is-active + .gt-btn{border-left-color:transparent}
+.gt-group > .gt-btn:active{transform:none}
+.gt-group > .gt-btn:focus-visible{outline-offset:-2px}
 
 .gt-chip{
   display:inline-flex; align-items:center; gap:5px; padding:2px 9px; vertical-align:middle;
@@ -645,7 +645,7 @@ css('gt-core-style', `
 `);
 
 const ui = {
-    /** key: 'alt+x' → butonda [X] kapağı, title'a "(Alt+X)". icon: SVG metni. */
+    /** key: 'alt+x' → title'a "(Alt+X)" eklenir. icon: SVG metni. */
     button({ label, title, variant, small, onClick, id, key, icon }) {
         const combo = key ? key.split('+').map(p => p.length === 1 ? p.toUpperCase() : p[0].toUpperCase() + p.slice(1)).join('+') : null;
         return h('button', {
@@ -655,8 +655,7 @@ const ui = {
             onclick: (e) => { e.preventDefault(); e.stopPropagation(); onClick?.(e); },
         },
         icon ? h('span', { html: icon, style: { display: 'contents' } }) : null,
-        label,
-        combo ? h('kbd', { class: 'gt-kbd', 'aria-hidden': 'true' }, combo.split('+').pop()) : null);
+        label);
     },
 
     chip: (label, tone = 'muted', extra) => h('span', { class: `gt-chip gt-chip--${tone}` }, label, extra),

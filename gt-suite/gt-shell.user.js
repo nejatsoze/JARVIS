@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Shell — arayüz iskeleti
 // @namespace    palentis.gt
-// @version      1.0.2
+// @version      1.0.3
 // @description  Her sayfada geçerli arayüz katmanı: varsayılan sayfa yönlendirme, logo yerine hızlı gezinme butonları, kapalı başlayan sidebar, navbar saatleri (GMT+0/+3/+8), alt sekmelerin butonlaştırılması, COMMENTS uyarısı ve bildirim şeritlerinin toast'a dönüşümü. GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
@@ -98,17 +98,15 @@ GT.define({
         const LOGO = `img[src^="${B64}"], img[src*="new_logo.png"], .sidebar-logo.omega-logo-white`;
 
         css('gt-shell-nav', `
-        #gt-nav{all:initial; position:absolute; left:52px; top:50%; transform:translateY(-50%);
-          display:flex !important; flex-direction:row; flex-wrap:nowrap; align-items:center; gap:6px;
-          z-index:11; font-family:var(--gt-font)}
-        #gt-nav a{all:unset; display:inline-block; padding:5px 11px; box-sizing:border-box; cursor:pointer;
-          white-space:nowrap; font-family:var(--gt-font); font-size:12.5px; font-weight:600; color:var(--gt-accent);
-          background:#fff; border:.5px solid var(--gt-line); border-radius:var(--gt-r);
-          box-shadow:0 1px 2px rgba(0,0,0,.06); transition:background .15s, transform .1s}
-        #gt-nav a:hover{background:var(--gt-surface-2)}
-        #gt-nav a:active{transform:scale(.97)}`);
+        #gt-nav{position:absolute; left:52px; top:50%; transform:translateY(-50%); z-index:11; margin:0;
+          display:inline-flex !important}
+        /* Üst barın kendi a/div kuralları ID ile geçilir. */
+        #gt-nav > a{color:#1b1f24; text-decoration:none; font:600 12.5px/1 var(--gt-font); height:28px; padding:0 12px}
+        #gt-nav > a:hover{background:#f5f6f8}
+        #gt-nav > a.is-active{background:#1b1f24; color:#fff}`);
 
         const link = (label, path) => h('a', {
+            class: 'gt-btn', 'data-path': path,
             href: path, routerlink: path.replace('/core', ''), routerlinkactive: 'true',
             onclick: (e) => { e.preventDefault(); router.go(path); },
         }, label);
@@ -120,8 +118,15 @@ GT.define({
         // butonlar onunla birlikte kayboluyordu. Üst bar her zaman yerinde.
         ctx.mount(topBar, 'gt-nav', (bar) => {
             if (getComputedStyle(bar).position === 'static') bar.style.position = 'relative';
-            return h('div', {}, link('Oyuncu Ara', SEARCH), link('Çekimler', PENDING));
+            return h('div', { class: 'gt-group' }, link('Oyuncu Ara', SEARCH), link('Çekimler', PENDING));
         });
+
+        // Bulunulan sayfanın butonu koyu (seçili) görünür.
+        const markActive = () => {
+            for (const a of $$('#gt-nav a[data-path]')) a.classList.toggle('is-active', location.pathname.startsWith(a.dataset.path));
+        };
+        ctx.tick(markActive, { lazy: true });
+        ctx.onRoute(markActive);
     },
 });
 

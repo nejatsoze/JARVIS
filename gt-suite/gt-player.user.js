@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.16
+// @version      1.0.17
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -466,7 +466,7 @@ css('gt-player-style', `
 #gt-dash .gtc-toolbar:empty{display:none}
 #gt-bal{flex:0 0 auto; width:300px}
 #gt-bal .gtc-head{align-items:center}
-#gt-bal .gtb-actions{display:inline-flex; gap:4px; flex:none}
+#gt-bal .gtb-actions{flex:none}
 #gt-bal .gtb-hero{display:flex; align-items:center; justify-content:space-between; gap:12px;
   padding:12px 14px; border-radius:12px; background:var(--gt-surface-2)}
 #gt-bal .gtb-cap{font-size:10.5px; font-weight:600; letter-spacing:.4px; text-transform:uppercase; color:var(--gt-muted)}
@@ -727,7 +727,7 @@ GT.define({
            "Oturumu sonlandır"ın altında. Kart yeniden çizilirse geri konur. */
         ctx.mount('#gt-ozet .gto-actions', 'gt-reveal', () =>
             h('button', {
-                type: 'button', class: 'gt-btn gt-btn--sm', title: 'Gizlenen alanları göster',
+                type: 'button', class: 'gt-btn gt-btn--sm gt-btn--blue', title: 'Gizlenen alanları göster',
                 html: ICON.eye + '<span>Bilgileri göster</span>',
                 onclick: () => {
                     const rows = [...hidden.entries()];
@@ -836,7 +836,7 @@ GT.define({
         const balCard = h('section', { id: 'gt-bal', class: 'gtc gtc-pad' },
             h('div', { class: 'gtc-head' },
                 h('div', {}, h('div', { class: 'gtc-title' }, 'Cüzdan'), h('div', { class: 'gtc-sub' }, h('span', {}, 'TRY'))),
-                h('div', { class: 'gtb-actions' }, BALANCE_BUTTONS.map(b => ui.button({
+                h('div', { class: 'gtb-actions gt-group' }, BALANCE_BUTTONS.map(b => ui.button({
                     label: b.label, small: true, variant: 'warn', key: b.key,
                     title: b.key ? `${b.note.slice(0, 60)}…` : b.note,
                     onClick: () => balanceAdjust(b.note),
@@ -1393,7 +1393,7 @@ GT.define({
         ctx.mount('div.underlined-header.balance-title', 'gt-balance', (header) => {
             header.style.display = 'flex';
             header.style.alignItems = 'center';
-            return h('span', { style: { display: 'inline-flex', gap: '4px', marginLeft: '12px', verticalAlign: 'middle' } },
+            return h('span', { class: 'gt-group', style: { marginLeft: '12px' } },
                 BALANCE_BUTTONS.map(b => ui.button({
                     label: b.label, small: true, variant: 'warn', key: b.key,
                     title: b.key ? 'Bakiye düzeltmesi' : 'Üst bakiye düzeltmesi',
@@ -1593,9 +1593,10 @@ GT.define({
                 const label = h('span', { class: 'lastbonus' });
                 bonuses(pid).then(list => { label.innerHTML = `<b>Son bonus:</b> ${esc(list[0]?.planName || '—')}`; }).catch(() => {});
                 return h('span', {},
-                    lookupBtn(ICON.search, 'IP', 'Aynı IP\'deki hesaplar', 'alt+p', showDuplicates),
-                    lookupBtn(ICON.search, 'PT', 'Bonus + yatırım + çekim özeti', null, showSummary),
-                    lookupBtn(PERSON_ICON, 'NAME', 'Aynı ad soyadlı hesaplar', 'alt+n', showSameName),
+                    h('span', { class: 'gt-group' },
+                        lookupBtn(ICON.search, 'IP', 'Aynı IP\'deki hesaplar', 'alt+p', showDuplicates),
+                        lookupBtn(ICON.search, 'PT', 'Bonus + yatırım + çekim özeti', null, showSummary),
+                        lookupBtn(PERSON_ICON, 'NAME', 'Aynı ad soyadlı hesaplar', 'alt+n', showSameName)),
                     label);
             },
         );

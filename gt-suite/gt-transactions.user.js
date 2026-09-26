@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Transactions — işlem geçmişi
 // @namespace    palentis.gt
-// @version      1.1.1
+// @version      1.1.2
 // @description  Transaction History sayfası: 1. Aşama / 2. Aşama / CRE filtre otomasyonu (Alt+X / Alt+D / Alt+C), "Show Transactions From" yanına bir gün geri (<<) butonu, listenin başı/sonu arasında gidip gelen kaydırma butonu ve CRE'nin yanında Ratio Checker (sabit oran eşiği + GT Sports/Betby oran rozetleri). GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
@@ -212,7 +212,7 @@ function pickDay(day, monthYear, safety = 0) {
    STİL
    ════════════════════════════════════════════════════════════ */
 css('gt-transactions-style', `
-#gt-asama-buttons{display:inline-flex; gap:4px; margin-left:14px; vertical-align:middle}
+#gt-asama-buttons{margin-left:14px}
 #gt-prev-day-button{margin:0 6px; vertical-align:middle}
 
 #gt-scroll-toggle-btn{all:unset; box-sizing:border-box; position:fixed; left:50%; bottom:20px; z-index:999999;
@@ -246,7 +246,7 @@ GT.define({
         ctx.mount(() => {
             const loyalty = label('Show Loyalty');
             return loyalty ? (loyalty.closest('div[style*="inline-block"]') || loyalty.parentElement) : null;
-        }, 'gt-asama-buttons', () => h('span', {},
+        }, 'gt-asama-buttons', () => h('span', { class: 'gt-group' },
             ui.button({ label: '1. Aşama', small: true, key: 'alt+x', onClick: stage1 }),
             ui.button({ label: '2. Aşama', small: true, key: 'alt+d', onClick: stage2 }),
             ui.button({ label: 'CRE', small: true, key: 'alt+c', id: 'gt-cre-btn', onClick: stageCre })), 'after');
@@ -345,6 +345,7 @@ const RATIO_TONE = {
 };
 
 css('gt-ratio-checker-style', `
+#gt-ratio-group{margin-left:8px}
 .gt-ratio-badge.is-clickable{ cursor:pointer; pointer-events:auto; }
 .gt-ratio-badge.is-clickable:hover{ filter:brightness(.95); }
 .gt-ratio-card{ cursor:pointer; }
@@ -741,7 +742,7 @@ GT.define({
     },
 });
 
-log('GT Transactions v1.1.1 kayıtlı.');
+log('GT Transactions v1.1.2 kayıtlı.');
 
 });
 })();
