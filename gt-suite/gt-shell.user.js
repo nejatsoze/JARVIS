@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Shell — arayüz iskeleti
 // @namespace    palentis.gt
-// @version      1.0.4
+// @version      1.0.5
 // @description  Her sayfada geçerli arayüz katmanı: varsayılan sayfa yönlendirme, logo yerine hızlı gezinme butonları, kapalı başlayan sidebar, navbar saatleri (GMT+0/+3/+8), alt sekmelerin butonlaştırılması, COMMENTS uyarısı ve bildirim şeritlerinin toast'a dönüşümü. GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
@@ -197,6 +197,11 @@ GT.define({
         #gt-clocks .clk.night .city{color:#9aa0a8}
         #gt-clocks .clk.night .t{color:#fff}
         #gt-clocks .clk.night .s{color:#6b7280}
+        /* Hong Kong: gökdelen tepesindeki uyarı ışığı gibi yavaşça yanıp söner, gece de turuncu */
+        #gt-clocks .clk[data-tz="Asia/Hong_Kong"] .dn{background:#f59e0b !important; animation:gt-beacon 2.4s ease-in-out infinite}
+        @keyframes gt-beacon{0%,100%{opacity:.25; box-shadow:0 0 0 rgba(245,158,11,0)}
+          50%{opacity:1; box-shadow:0 0 6px 1px rgba(245,158,11,.85)}}
+        @media (prefers-reduced-motion:reduce){#gt-clocks .clk[data-tz="Asia/Hong_Kong"] .dn{animation:none}}
 
         /* Sağdaki hesap alanı: avatar, dil ve tarih gizli; kullanıcı adı yerine MARCUS.
            Tıklanınca sitenin hesap menüsü (şifre, tema) yine açılır. */
