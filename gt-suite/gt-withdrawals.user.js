@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Withdrawals — çekim masası
 // @namespace    palentis.gt
-// @version      1.0.12
+// @version      1.0.13
 // @description  Çekim sayfalarının tek sahibi: keep-alive, satır tıklama, zaman aşımı otomatik reddi (OTORED), tek tıkla şablonlu red, ONAY butonu, red şablonu kısayolları; oyuncu çekim popup'ında sade liste + işlem detayı ipucu, yatırım geçmişi popup'ında sütun/metin temizliği ve sağlayıcı adları. GT Core üzerine kurulur. Dört ayrı scriptin (Keep-Alive, Full Row Click, OTORED, Auto Process) birleşiğidir — o dördünü kapat.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
@@ -119,7 +119,8 @@ css('gt-wd-style', `
   box-shadow:0 1px 1.5px rgba(16,24,40,.06) !important; font-family:var(--gt-font) !important; font-size:12px !important;
   font-weight:600 !important; line-height:1 !important; text-transform:none !important; text-shadow:none !important;
   white-space:nowrap !important; cursor:pointer !important; transition:background-color .12s, border-color .12s}
-.gt-quick-reject > .gt-btn.gt-btn--danger:hover{background:#f5f6f8 !important; border-color:#c9ced6 !important}
+.gt-quick-reject > .gt-btn.gt-btn--danger:hover{background:#d70015 !important; border-color:#d70015 !important; color:#fff !important}
+.gt-quick-reject > .gt-btn.gt-btn--danger:hover::before{background:#fff !important}
 .gt-quick-reject > .gt-btn.gt-btn--danger::before{content:'' !important; display:block !important; width:7px !important;
   height:7px !important; border-radius:50% !important; background:#e5484d !important; flex:none !important}
 .gt-quick-reject[data-busy="1"]{pointer-events:none; opacity:.6}
