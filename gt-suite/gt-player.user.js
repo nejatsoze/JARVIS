@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.21
+// @version      1.0.22
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -101,8 +101,8 @@ const HIDE_LABELS = new Set([
 ]);
 
 const PERIODS = [
-    ['YESTERDAY', 'Dün'], ['TODAY', 'Bugün'], ['WTD', 'WTD'], ['MTD', 'MTD'],
-    ['LM', 'Geçen ay'], ['YTD', 'YTD'], ['LTD', 'LTD'],
+    ['YESTERDAY', 'Dün'], ['TODAY', 'Bugün'], ['WTD', 'Bu Hafta'], ['MTD', 'Bu Ay'],
+    ['LM', 'Geçen ay'], ['YTD', 'Bu Yıl'], ['LTD', 'Toplam'],
 ];
 
 /** Gizlenen alanlar: etiket → {text, pencil}. Kartlar buradan okur.
@@ -520,7 +520,9 @@ css('gt-player-style', `
 #gt-acc .gta-n.net{font-weight:600}
 #gt-acc .gta-n.net.pos{color:#248a3d}
 #gt-acc .gta-n.net.neg{color:#d70015}
-#gt-acc .gta-row.ltd{margin-top:6px; height:38px; background:var(--gt-surface-2); border-top-color:transparent; font-weight:600}
+/* Toplam (LTD, tüm zamanlar): ince ayraç + çok açık ton; kart kaysa da altta sabit. */
+#gt-acc .gta-row.ltd{position:sticky; bottom:0; margin-top:4px; height:38px; background:#fafafc; border-top:1px solid rgba(60,60,67,.18); border-radius:0 0 8px 8px; font-weight:600}
+#gt-acc .gta-row.ltd:hover{background:#f5f5f8; border-top-color:rgba(60,60,67,.18)}
 #gt-acc .gta-row.ltd .gta-lbl{color:var(--gt-ink); font-weight:600}
 
 /* Giriş kayıtları — tablo değil grid liste: sitenin global table/td
