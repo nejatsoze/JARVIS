@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Withdrawals — çekim masası
 // @namespace    palentis.gt
-// @version      1.0.11
+// @version      1.0.12
 // @description  Çekim sayfalarının tek sahibi: keep-alive, satır tıklama, zaman aşımı otomatik reddi (OTORED), tek tıkla şablonlu red, ONAY butonu, red şablonu kısayolları; oyuncu çekim popup'ında sade liste + işlem detayı ipucu, yatırım geçmişi popup'ında sütun/metin temizliği ve sağlayıcı adları. GT Core üzerine kurulur. Dört ayrı scriptin (Keep-Alive, Full Row Click, OTORED, Auto Process) birleşiğidir — o dördünü kapat.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
@@ -110,7 +110,18 @@ css('gt-wd-style', `
 #gt-otored{margin-left:8px}
 
 .gt-quick-reject{display:flex; flex-direction:column; align-items:stretch; gap:4px; margin-top:6px}
-.gt-quick-reject .gt-btn{justify-content:flex-start}
+/* Legacy popup sayfasının kendi buton kuralı (!important'lı yeşil) genel .gt-btn'i eziyor;
+   bu yüzden red butonlarının görünümü burada dar kapsamlı !important ile sabitlenir. */
+.gt-quick-reject > .gt-btn.gt-btn--danger{all:unset; box-sizing:border-box !important; display:inline-flex !important;
+  align-items:center !important; justify-content:flex-start !important; gap:6px !important; height:26px !important;
+  min-height:0 !important; margin:0 !important; padding:0 10px !important; background:#fff !important;
+  background-image:none !important; color:#b42318 !important; border:1px solid #d9dde3 !important; border-radius:8px !important;
+  box-shadow:0 1px 1.5px rgba(16,24,40,.06) !important; font-family:var(--gt-font) !important; font-size:12px !important;
+  font-weight:600 !important; line-height:1 !important; text-transform:none !important; text-shadow:none !important;
+  white-space:nowrap !important; cursor:pointer !important; transition:background-color .12s, border-color .12s}
+.gt-quick-reject > .gt-btn.gt-btn--danger:hover{background:#f5f6f8 !important; border-color:#c9ced6 !important}
+.gt-quick-reject > .gt-btn.gt-btn--danger::before{content:'' !important; display:block !important; width:7px !important;
+  height:7px !important; border-radius:50% !important; background:#e5484d !important; flex:none !important}
 .gt-quick-reject[data-busy="1"]{pointer-events:none; opacity:.6}
 
 /* ONAY hücredeki birincil aksiyon: tek dolu yeşil; red şablonları noktalı beyaz alternatifler. */

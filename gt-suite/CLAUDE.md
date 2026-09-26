@@ -127,6 +127,10 @@ branch'i bozma.
   belge) yazar; `ctx.mount` ve DOM'u başka belgeye ekleyen modüller
   `GT.ensureStyles(node.ownerDocument)` çağırır. Stil sorunu görürsen önce
   "stil etiketi bu belgede var mı" diye bak, `!important` ile boğuşma.
+- Legacy `/j/` sayfalarının kendi `button` kuralı `!important`'lı: `<button>`
+  tabanlı `.gt-btn` orada ezilir (bağlantı olan ONAY etkilenmez). Çözüm o
+  bileşene DAR kapsamlı `!important` (örn. `.gt-quick-reject > .gt-btn`) —
+  genel `.gt-btn`'e `!important` ekleme, yan etkisi var (1.1.4'te denendi).
 - Oturum: `wd-session-guard` her sayfada Worker saatiyle (gizli sekmede rAF
   hiç, setInterval dakikada bir çalışır — Worker kısılmaz) saniyede bir
   "Continue Session" diyaloğuna bakar ve 50–70 sn'de bir sahte `mousemove`
