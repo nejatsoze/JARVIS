@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Transactions — işlem geçmişi
 // @namespace    palentis.gt
-// @version      1.1.0
+// @version      1.1.1
 // @description  Transaction History sayfası: 1. Aşama / 2. Aşama / CRE filtre otomasyonu (Alt+X / Alt+D / Alt+C), "Show Transactions From" yanına bir gün geri (<<) butonu, listenin başı/sonu arasında gidip gelen kaydırma butonu ve CRE'nin yanında Ratio Checker (sabit oran eşiği + GT Sports/Betby oran rozetleri). GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
@@ -247,9 +247,9 @@ GT.define({
             const loyalty = label('Show Loyalty');
             return loyalty ? (loyalty.closest('div[style*="inline-block"]') || loyalty.parentElement) : null;
         }, 'gt-asama-buttons', () => h('span', {},
-            ui.button({ label: '1. Aşama', small: true, title: 'Alt+X', onClick: stage1 }),
-            ui.button({ label: '2. Aşama', small: true, title: 'Alt+D', onClick: stage2 }),
-            ui.button({ label: 'CRE', small: true, title: 'Alt+C', onClick: stageCre })), 'after');
+            ui.button({ label: '1. Aşama', small: true, key: 'alt+x', onClick: stage1 }),
+            ui.button({ label: '2. Aşama', small: true, key: 'alt+d', onClick: stage2 }),
+            ui.button({ label: 'CRE', small: true, key: 'alt+c', id: 'gt-cre-btn', onClick: stageCre })), 'after');
 
         ctx.mount(() => label('Show Transactions From'), 'gt-prev-day-button', () =>
             ui.button({ label: '<<', small: true, title: '1 gün geri git', onClick: (e) => prevDay(e.currentTarget) }), 'after');
@@ -338,14 +338,13 @@ const RATIO_OPTIONS = [1.30, 1.50];
 const RATIO_AUTO_SCAN = false;
 const RATIO_AUTO_SCAN_DELAY = 1800;
 const RATIO_COL = { type: 2, debit: 4, credit: 5, tranId: 8 };
-const RATIO_CRE_BTN_SELECTOR = 'button[title="Alt+C"]';
+const RATIO_CRE_BTN_SELECTOR = '#gt-cre-btn';
 const RATIO_TONE = {
     danger:  { bg: 'rgba(255,59,48,.07)', line: 'var(--gt-danger)' },
     success: { bg: 'rgba(52,199,89,.07)', line: 'var(--gt-success)' },
 };
 
 css('gt-ratio-checker-style', `
-#gt-ratio-group{ margin-left:6px; }
 .gt-ratio-badge.is-clickable{ cursor:pointer; pointer-events:auto; }
 .gt-ratio-badge.is-clickable:hover{ filter:brightness(.95); }
 .gt-ratio-card{ cursor:pointer; }
@@ -742,7 +741,7 @@ GT.define({
     },
 });
 
-log('GT Transactions v1.1.0 kayıtlı.');
+log('GT Transactions v1.1.1 kayıtlı.');
 
 });
 })();

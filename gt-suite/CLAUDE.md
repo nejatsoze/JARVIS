@@ -155,6 +155,16 @@ branch'i bozma.
   `gtb-` bakiye), `#gt-dash *` font/harf aralığı sıfırlaması korunur.
   Sitede `.content` gri arka plan veriyor, `.card` / `.row` / `.badge`
   Bootstrap'ta var — öneksiz genel sınıf adı KULLANMA.
+- Butonlar: her zaman `GT.ui.button` / `.gt-btn`, kendi buton CSS'i yazma.
+  Renk ROLÜ anlatır: varsayılan nötr (araç: filtre, sorgu, gezinme),
+  `success` onay, `warn` parayı değiştirir (bakiye, CHK), `danger` geri
+  alınamaz (red, oturum sonlandır), `.is-active` seçili durum. Hücrede tek
+  birincil aksiyon dolu olur (ONAY), alternatifler tonlu. Aksiyon = 8px
+  köşeli dikdörtgen, durum rozeti (`.gt-chip`) = hap — karıştırma.
+  Kısayolu olan butona `key: 'alt+x'` ver, içinde tuş kapağı çıkar. Butonu
+  title ile arama (title'a kısayol eklenir) — id ver (`#gt-cre-btn`).
+  Renkli metinler AA kontrastlı koyu tonlar (#1e7b34, #c93400, #d70015),
+  çerçeveler 1px (.5px Windows 1x ekranda kayboluyor).
 - Sayfadaki Angular hücrelerine dokunulmaz: kopyala + CSS ile gizle.
   Kopyadaki tıklamalar `twin` eşlemesiyle ("hücre + sıra") aslına iletilir.
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.15
+// @version      1.0.16
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -438,6 +438,7 @@ css('gt-player-style', `
   cursor:pointer; display:inline-flex; align-items:center; justify-content:center}
 #gt-dash .gtc-refresh:hover{background:rgba(118,118,128,.12); color:var(--gt-ink)}
 #gt-dash .gtc-refresh.busy svg{animation:gt-spin .8s linear infinite}
+#gt-dash button:focus-visible, #gt-lookup button:focus-visible{outline:2px solid #0071e3; outline-offset:2px}
 
 #gt-dash .gtc-seg{display:inline-flex; background:rgba(118,118,128,.12); border-radius:9px; padding:2px; white-space:nowrap}
 #gt-dash .gtc-seg button{all:unset; padding:4px 10px; border-radius:7px; font-size:11.5px; font-weight:500; cursor:pointer; color:var(--gt-ink)}
@@ -565,10 +566,7 @@ css('gt-player-style', `
   border-radius:5px; background:var(--gt-accent-soft); border:.5px solid rgba(0,113,227,.25); color:var(--gt-accent); cursor:pointer}
 #gt-ozet .copy:hover{background:rgba(0,113,227,.16)}
 #gt-ozet .copy svg{width:10px; height:10px}
-#gt-ozet .endsession{all:unset; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center; height:24px; padding:0 11px; border-radius:12px;
-  border:.5px solid rgba(255,59,48,.35); background:rgba(255,59,48,.08); color:var(--gt-danger);
-  font-size:10.5px; font-weight:600; cursor:pointer; white-space:nowrap; flex-shrink:0}
-#gt-ozet .endsession:hover{background:rgba(255,59,48,.16)}
+#gt-ozet .endsession{flex-shrink:0}
 #gt-ozet .section{font-size:10px; font-weight:600; letter-spacing:.4px; text-transform:uppercase; color:var(--gt-muted); margin-bottom:8px}
 #gt-ozet .games{display:flex; flex-wrap:wrap; gap:7px}
 #gt-ozet .game{padding:5px 12px; font-size:11.5px; font-weight:600; background:#fff;
@@ -585,12 +583,6 @@ css('gt-player-style', `
   font-weight:700; letter-spacing:.3px; color:#fff; box-shadow:0 2px 6px rgba(0,0,0,.15)}
 
 #gt-ozet .gto-actions{display:flex; flex-direction:column; align-items:stretch; gap:6px; flex-shrink:0}
-#gt-reveal{all:unset; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center; gap:5px;
-  height:24px; padding:0 11px; border-radius:12px; border:.5px solid rgba(0,113,227,.28);
-  background:var(--gt-accent-soft); color:var(--gt-accent); font-family:var(--gt-font);
-  font-size:10.5px; font-weight:600; white-space:nowrap; cursor:pointer; transition:background .12s}
-#gt-reveal:hover{background:rgba(0,113,227,.16)}
-#gt-reveal svg{flex:none; width:13px; height:13px; margin:0; padding:0}
 #gt-reveal span{all:unset; font:inherit; color:inherit; line-height:1; white-space:nowrap}
 .gt-hidden-row{display:flex; justify-content:space-between; gap:12px; font-size:12px; padding:4px 0; border-bottom:.5px solid rgba(0,0,0,.04)}
 .gt-hidden-row .k{color:var(--gt-muted); font-weight:600; flex-shrink:0}
@@ -599,18 +591,6 @@ css('gt-player-style', `
 #gt-lookup{display:inline-flex; align-items:center; gap:8px; margin-left:12px; vertical-align:middle; position:relative; top:2px}
 #gt-lookup .lastbonus{font-family:var(--gt-font); font-size:12px; font-weight:500; color:var(--gt-accent); white-space:nowrap}
 #gt-lookup .lastbonus b{font-weight:700}
-#gt-lookup .lk{all:unset; display:inline-flex; align-items:center; gap:5px; padding:4px 11px; box-sizing:border-box;
-  font-family:var(--gt-font); font-size:12px; font-weight:600; line-height:16px; white-space:nowrap;
-  border-radius:20px; border:.5px solid; cursor:pointer;
-  transition:background .15s, border-color .15s, transform .1s}
-#gt-lookup .lk svg{width:12px; height:12px; flex:none}
-#gt-lookup .lk:active{transform:scale(.97)}
-#gt-lookup .lk.ip{background:rgba(255,59,48,.08); border-color:rgba(255,59,48,.35); color:var(--gt-danger)}
-#gt-lookup .lk.ip:hover{background:rgba(255,59,48,.16); border-color:rgba(255,59,48,.5)}
-#gt-lookup .lk.pt{background:rgba(0,113,227,.08); border-color:rgba(0,113,227,.35); color:#0071e3}
-#gt-lookup .lk.pt:hover{background:rgba(0,113,227,.16); border-color:rgba(0,113,227,.5)}
-#gt-lookup .lk.nm{background:rgba(52,199,89,.08); border-color:rgba(52,199,89,.35); color:var(--gt-success)}
-#gt-lookup .lk.nm:hover{background:rgba(52,199,89,.16); border-color:rgba(52,199,89,.5)}
 
 #gt-comments{position:fixed; top:20px; right:20px; width:340px; max-width:calc(100vw - 20px); max-height:70vh;
   background:rgba(255,255,255,.88); backdrop-filter:blur(20px) saturate(180%); -webkit-backdrop-filter:blur(20px) saturate(180%);
@@ -747,7 +727,7 @@ GT.define({
            "Oturumu sonlandır"ın altında. Kart yeniden çizilirse geri konur. */
         ctx.mount('#gt-ozet .gto-actions', 'gt-reveal', () =>
             h('button', {
-                type: 'button', title: 'Gizlenen alanları göster',
+                type: 'button', class: 'gt-btn gt-btn--sm', title: 'Gizlenen alanları göster',
                 html: ICON.eye + '<span>Bilgileri göster</span>',
                 onclick: () => {
                     const rows = [...hidden.entries()];
@@ -857,8 +837,8 @@ GT.define({
             h('div', { class: 'gtc-head' },
                 h('div', {}, h('div', { class: 'gtc-title' }, 'Cüzdan'), h('div', { class: 'gtc-sub' }, h('span', {}, 'TRY'))),
                 h('div', { class: 'gtb-actions' }, BALANCE_BUTTONS.map(b => ui.button({
-                    label: b.label, small: true,
-                    title: b.key ? `${b.note.slice(0, 60)}… (${b.key.replace('alt+', 'Alt+').toUpperCase()})` : b.note,
+                    label: b.label, small: true, variant: 'warn', key: b.key,
+                    title: b.key ? `${b.note.slice(0, 60)}…` : b.note,
                     onClick: () => balanceAdjust(b.note),
                 })))),
             h('div', { class: 'gtc-content' }, h('div', { class: 'gtc-msg' }, 'Bakiye okunuyor…')));
@@ -1034,7 +1014,7 @@ GT.define({
                   <div class="idcol" data-contacts></div>
                 </div>
                 <div class="gto-actions">
-                  <button type="button" class="endsession" data-end>Oturumu sonlandır</button>
+                  <button type="button" class="gt-btn gt-btn--sm gt-btn--danger endsession" data-end>Oturumu sonlandır</button>
                 </div>
               </div>
               <div class="section">Son 24 saatte oynanan oyunlar</div>
@@ -1415,8 +1395,8 @@ GT.define({
             header.style.alignItems = 'center';
             return h('span', { style: { display: 'inline-flex', gap: '4px', marginLeft: '12px', verticalAlign: 'middle' } },
                 BALANCE_BUTTONS.map(b => ui.button({
-                    label: b.label, small: true,
-                    title: b.key ? b.key.replace('alt+', 'Alt+').toUpperCase() : 'Üst bakiye düzeltmesi',
+                    label: b.label, small: true, variant: 'warn', key: b.key,
+                    title: b.key ? 'Bakiye düzeltmesi' : 'Üst bakiye düzeltmesi',
                     onClick: () => balanceAdjust(b.note),
                 })));
         });
@@ -1602,10 +1582,8 @@ GT.define({
         ctx.hotkey('alt+p', showDuplicates);
         ctx.hotkey('alt+n', showSameName);
 
-        const lookupBtn = (cls, icon, label, title, run) => h('button', {
-            type: 'button', class: `lk ${cls}`, title, html: icon + `<span>${label}</span>`,
-            onclick: (e) => { e.preventDefault(); e.stopPropagation(); run(); },
-        });
+        const lookupBtn = (icon, label, title, key, run) =>
+            ui.button({ label, title, key, icon, small: true, onClick: run });
 
         ctx.mount(
             () => $$('mat-label').find(el => /Select Tag|Etiket Seç/.test(el.textContent))
@@ -1615,9 +1593,9 @@ GT.define({
                 const label = h('span', { class: 'lastbonus' });
                 bonuses(pid).then(list => { label.innerHTML = `<b>Son bonus:</b> ${esc(list[0]?.planName || '—')}`; }).catch(() => {});
                 return h('span', {},
-                    lookupBtn('ip', ICON.search, 'IP', 'Aynı IP\'deki hesaplar (Alt+P)', showDuplicates),
-                    lookupBtn('pt', ICON.search, 'PT', 'Bonus + yatırım + çekim özeti', showSummary),
-                    lookupBtn('nm', PERSON_ICON, 'NAME', 'Aynı ad soyadlı hesaplar (Alt+N)', showSameName),
+                    lookupBtn(ICON.search, 'IP', 'Aynı IP\'deki hesaplar', 'alt+p', showDuplicates),
+                    lookupBtn(ICON.search, 'PT', 'Bonus + yatırım + çekim özeti', null, showSummary),
+                    lookupBtn(PERSON_ICON, 'NAME', 'Aynı ad soyadlı hesaplar', 'alt+n', showSameName),
                     label);
             },
         );

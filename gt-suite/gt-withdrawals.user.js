@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Withdrawals — çekim masası
 // @namespace    palentis.gt
-// @version      1.0.9
+// @version      1.0.10
 // @description  Çekim sayfalarının tek sahibi: keep-alive, satır tıklama, zaman aşımı otomatik reddi (OTORED), tek tıkla şablonlu red, ONAY butonu, red şablonu kısayolları; oyuncu çekim popup'ında sade liste + işlem detayı ipucu, yatırım geçmişi popup'ında sütun/metin temizliği ve sağlayıcı adları. GT Core üzerine kurulur. Dört ayrı scriptin (Keep-Alive, Full Row Click, OTORED, Auto Process) birleşiğidir — o dördünü kapat.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
@@ -107,23 +107,21 @@ async function reject(paymentid, partyId, reasonText) {
 }
 
 css('gt-wd-style', `
-#gt-otored{display:inline-flex; align-items:center; gap:6px; margin-left:8px; padding:3px 10px;
-  font-family:var(--gt-font); font-size:11px; font-weight:600; border-radius:10px; cursor:pointer;
-  white-space:nowrap; border:.5px solid var(--gt-muted); background:#fff; color:var(--gt-muted);
-  transition:background .15s, color .15s, border-color .15s}
-#gt-otored[data-on="1"]{background:var(--gt-success); border-color:var(--gt-success); color:#fff}
-#gt-otored .gt-dot{background:currentColor; opacity:.8}
+#gt-otored{margin-left:8px}
+#gt-otored .gt-dot{background:currentColor}
 
 .gt-quick-reject{display:flex; flex-direction:column; align-items:stretch; gap:4px; margin-top:6px}
-.gt-quick-reject .gt-btn{padding:2px 8px; font-size:11px; line-height:18px}
 .gt-quick-reject[data-busy="1"]{pointer-events:none; opacity:.6}
 
+/* ONAY hücredeki birincil aksiyon: tek dolu buton; red şablonları tonlu alternatifler. */
 a.gt-onay{
-  display:block !important; width:fit-content; margin-bottom:4px; padding:2px 10px;
-  font-family:var(--gt-font); font-size:11px; line-height:18px; font-weight:600; text-align:center;
-  background:#fff; color:var(--gt-success); border:.5px solid var(--gt-success); border-radius:10px;
-  text-decoration:none; white-space:nowrap; cursor:pointer; transition:background .15s, color .15s}
-a.gt-onay:hover{background:var(--gt-success); color:#fff}
+  display:flex !important; align-items:center; justify-content:center; box-sizing:border-box;
+  min-height:24px; margin-bottom:4px; padding:0 12px; font-family:var(--gt-font); font-size:11.5px;
+  font-weight:700; line-height:1; background:#1e7b34; color:#fff !important; border:1px solid #1e7b34;
+  border-radius:7px; text-decoration:none !important; white-space:nowrap; cursor:pointer;
+  transition:background-color .12s}
+a.gt-onay:hover{background:#186a2c; border-color:#186a2c}
+a.gt-onay:focus-visible{outline:2px solid #0071e3; outline-offset:2px}
 
 #gt-keepalive{position:fixed; bottom:20px; right:20px; z-index:999999; display:flex; align-items:center;
   gap:8px; padding:10px 16px; background:#fff; border:.5px solid var(--gt-line); border-radius:var(--gt-r);
@@ -173,6 +171,7 @@ GT.define({
         function paint(btn) {
             const on = enabled();
             btn.dataset.on = on ? '1' : '0';
+            btn.className = on ? 'gt-btn gt-btn--sm gt-btn--success is-active' : 'gt-btn gt-btn--sm';
             btn.innerHTML = '';
             btn.append(h('span', { class: 'gt-dot' }), on ? 'OTORED açık' : 'OTORED kapalı');
             btn.title = on

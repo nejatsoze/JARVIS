@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Core — paylaşılan çalışma zamanı
 // @namespace    http://tampermonkey.net/
-// @version      1.1.6
+// @version      1.1.7
 // @description  GamingTec script ailesinin ortak çekirdeği: tek veriyolu, rota-farkındalıklı modül yaşam döngüsü, sessionKey disiplinli API katmanı, tasarım token'ları + UI kiti (stiller her zaman aktif belgeye yazılır, kaybolursa kendini onarır), kısayol defteri, gameTranId veri katmanı ve Firefox için main-world ağ köprüsü. UI üretmez — tüm özellikler uydu scriptlerde yaşar. Çapraz origin izinleri (KYCAID, ipwho.is) burada toplanır; uydular GT.api.gm üzerinden kullanır, kendi @grant'ine ihtiyaç duymaz.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
@@ -42,7 +42,7 @@ const W = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow :
 // Çekirdek iki kez yüklenirse (iki sekme scripti, hatalı kurulum) ikincisi çekilir.
 if (W.GT && W.GT.__core) return;
 
-const VERSION   = '1.1.6';
+const VERSION   = '1.1.7';
 const API_LEVEL = 1;
 const IN_FRAME  = window.self !== window.top;
 
@@ -533,32 +533,49 @@ css('gt-core-style', `
 }
 .gt-btn,.gt-chip,.gt-icon-btn,.gt-pop__x{touch-action:manipulation}
 
+/* Butonlar ROLE göre renklenir, görünüşe göre değil:
+     varsayılan (araç) → nötr: filtre, sorgu, gezinme
+     --success → onay · --warn → parayı değiştirir · --danger → geri alınamaz
+     .is-active → seçili durum (tek dolu renk)
+   Aksiyon = 8px köşeli dikdörtgen; durum rozeti (.gt-chip) = hap. İkisi
+   karışmasın diye biçim de bilgi taşır. Çerçeveler 1px: .5px Windows'un 1x
+   ekranlarında kayboluyor. Renkli metinler AA kontrastlı koyu tonlarda. */
 .gt-btn{
-  all:unset; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center; gap:5px;
-  padding:4px 12px; font-family:var(--gt-font); font-size:13px; line-height:20px; font-weight:500;
-  color:var(--gt-accent); background:var(--gt-surface); border:.5px solid var(--gt-accent);
-  border-radius:var(--gt-r); cursor:pointer; white-space:nowrap;
-  transition:background .15s,color .15s,transform .1s;
+  --b-fg:var(--gt-ink-2); --b-bg:var(--gt-surface-2); --b-bd:rgba(60,60,67,.18);
+  --b-bg-h:#e5e5ea; --b-bd-h:rgba(60,60,67,.32); --b-on:#0071e3;
+  all:unset; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  min-height:28px; padding:0 12px; font-family:var(--gt-font); font-size:12.5px; line-height:1; font-weight:600;
+  color:var(--b-fg); background:var(--b-bg); border:1px solid var(--b-bd);
+  border-radius:8px; cursor:pointer; white-space:nowrap; user-select:none; vertical-align:middle;
+  transition:background-color .12s, border-color .12s;
 }
-.gt-btn:hover{background:var(--gt-accent); color:#fff}
-.gt-btn:active{transform:scale(.97)}
-.gt-btn:focus-visible{outline:2px solid var(--gt-accent); outline-offset:2px}
-.gt-btn.is-active{background:var(--gt-accent); color:#fff}
+.gt-btn:hover{background:var(--b-bg-h); border-color:var(--b-bd-h)}
+.gt-btn:active{transform:translateY(1px)}
+.gt-btn:focus-visible{outline:2px solid #0071e3; outline-offset:2px}
+.gt-btn.is-active{background:var(--b-on); border-color:var(--b-on); color:#fff}
 .gt-btn.is-busy{opacity:.55; pointer-events:none}
 .gt-btn[disabled]{opacity:.45; cursor:not-allowed}
-.gt-btn--sm{padding:1px 8px; font-size:11px; line-height:18px}
-.gt-btn--warn{color:var(--gt-warn); border-color:var(--gt-warn)}
-.gt-btn--warn:hover,.gt-btn--warn.is-active{background:var(--gt-warn); color:#fff}
-.gt-btn--danger{color:var(--gt-danger); border-color:var(--gt-danger)}
-.gt-btn--danger:hover,.gt-btn--danger.is-active{background:var(--gt-danger); color:#fff}
-.gt-btn--quiet{color:var(--gt-ink-2); background:var(--gt-surface-2); border-color:#c6c6c8}
-.gt-btn--quiet:hover{background:#e5e5ea; color:var(--gt-ink)}
+.gt-btn svg{width:12px; height:12px; flex:none}
+.gt-btn--sm{min-height:24px; padding:0 9px; gap:5px; font-size:11.5px; border-radius:7px}
+.gt-btn--success{--b-fg:#1e7b34; --b-bg:rgba(52,199,89,.10); --b-bd:rgba(30,123,52,.30);
+  --b-bg-h:rgba(52,199,89,.18); --b-bd-h:rgba(30,123,52,.50); --b-on:#1e7b34}
+.gt-btn--warn{--b-fg:#c93400; --b-bg:rgba(255,149,0,.10); --b-bd:rgba(201,52,0,.28);
+  --b-bg-h:rgba(255,149,0,.18); --b-bd-h:rgba(201,52,0,.48); --b-on:#c93400}
+.gt-btn--danger{--b-fg:#d70015; --b-bg:rgba(255,59,48,.08); --b-bd:rgba(215,0,21,.26);
+  --b-bg-h:rgba(255,59,48,.15); --b-bd-h:rgba(215,0,21,.46); --b-on:#d70015}
+.gt-btn--quiet{--b-bg:transparent}
 
-.gt-group{
-  display:inline-flex; align-items:center; gap:6px; margin-left:8px; padding:4px; vertical-align:middle;
-  background:rgba(255,255,255,.6); border:.5px solid rgba(60,60,67,.12); border-radius:var(--gt-r-lg);
-  box-shadow:0 1px 3px rgba(0,0,0,.04);
-}
+/* Kısayol tuş kapağı: kısayollar kullanırken öğrenilsin diye butonun içinde.
+   Hepsi Alt ile çalışır; kapakta yalnızca harf, tam kombinasyon title'da. */
+.gt-kbd{all:unset; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center;
+  min-width:16px; height:16px; padding:0 4px; margin-right:-4px; border-radius:4px;
+  border:1px solid currentColor; font-family:var(--gt-font); font-size:9.5px; font-weight:700; line-height:1; opacity:.5}
+.gt-btn--sm .gt-kbd{min-width:14px; height:14px; padding:0 3px; margin-right:-3px; font-size:9px}
+.gt-btn.is-active .gt-kbd{opacity:.8}
+
+/* Buton kümesi: yanındaki butonlardan ince bir ayraçla ayrılır, kutu yok. */
+.gt-group{display:inline-flex; align-items:center; gap:4px; margin-left:8px; padding-left:8px;
+  border-left:1px solid rgba(60,60,67,.18); vertical-align:middle}
 
 .gt-chip{
   display:inline-flex; align-items:center; gap:5px; padding:2px 9px; vertical-align:middle;
@@ -628,12 +645,18 @@ css('gt-core-style', `
 `);
 
 const ui = {
-    button({ label, title, variant, small, onClick, id }) {
+    /** key: 'alt+x' → butonda [X] kapağı, title'a "(Alt+X)". icon: SVG metni. */
+    button({ label, title, variant, small, onClick, id, key, icon }) {
+        const combo = key ? key.split('+').map(p => p.length === 1 ? p.toUpperCase() : p[0].toUpperCase() + p.slice(1)).join('+') : null;
         return h('button', {
-            type: 'button', id, title,
+            type: 'button', id,
+            title: combo ? `${title ? title + ' ' : ''}(${combo})` : title,
             class: `gt-btn${variant ? ' gt-btn--' + variant : ''}${small ? ' gt-btn--sm' : ''}`,
             onclick: (e) => { e.preventDefault(); e.stopPropagation(); onClick?.(e); },
-        }, label);
+        },
+        icon ? h('span', { html: icon, style: { display: 'contents' } }) : null,
+        label,
+        combo ? h('kbd', { class: 'gt-kbd', 'aria-hidden': 'true' }, combo.split('+').pop()) : null);
     },
 
     chip: (label, tone = 'muted', extra) => h('span', { class: `gt-chip gt-chip--${tone}` }, label, extra),
