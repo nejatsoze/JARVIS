@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Core — paylaşılan çalışma zamanı
 // @namespace    http://tampermonkey.net/
-// @version      1.1.5
+// @version      1.1.6
 // @description  GamingTec script ailesinin ortak çekirdeği: tek veriyolu, rota-farkındalıklı modül yaşam döngüsü, sessionKey disiplinli API katmanı, tasarım token'ları + UI kiti (stiller her zaman aktif belgeye yazılır, kaybolursa kendini onarır), kısayol defteri, gameTranId veri katmanı ve Firefox için main-world ağ köprüsü. UI üretmez — tüm özellikler uydu scriptlerde yaşar. Çapraz origin izinleri (KYCAID, ipwho.is) burada toplanır; uydular GT.api.gm üzerinden kullanır, kendi @grant'ine ihtiyaç duymaz.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
@@ -42,7 +42,7 @@ const W = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow :
 // Çekirdek iki kez yüklenirse (iki sekme scripti, hatalı kurulum) ikincisi çekilir.
 if (W.GT && W.GT.__core) return;
 
-const VERSION   = '1.1.5';
+const VERSION   = '1.1.6';
 const API_LEVEL = 1;
 const IN_FRAME  = window.self !== window.top;
 
@@ -887,7 +887,7 @@ const GT = {
         try { list = JSON.parse(store('sessionStorage')?.getItem(FLIGHT_KEY) || '[]'); } catch { /* boş */ }
         console.table(list);
         return list.length;
-    }, { clear: () => store('sessionStorage')?.removeItem(FLIGHT_KEY) }),
+    }, { clear: () => store('sessionStorage')?.removeItem(FLIGHT_KEY), log: flight }),
     off(...ids) {
         const next = [...new Set([...offList(), ...ids])];
         store('localStorage')?.setItem(OFF_KEY, next.join(','));

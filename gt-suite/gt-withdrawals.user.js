@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Withdrawals — çekim masası
 // @namespace    palentis.gt
-// @version      1.0.8
+// @version      1.0.9
 // @description  Çekim sayfalarının tek sahibi: keep-alive, satır tıklama, zaman aşımı otomatik reddi (OTORED), tek tıkla şablonlu red, ONAY butonu, red şablonu kısayolları; oyuncu çekim popup'ında sade liste + işlem detayı ipucu, yatırım geçmişi popup'ında sütun/metin temizliği ve sağlayıcı adları. GT Core üzerine kurulur. Dört ayrı scriptin (Keep-Alive, Full Row Click, OTORED, Auto Process) birleşiğidir — o dördünü kapat.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
@@ -395,28 +395,71 @@ const session = (() => {
         return Array.from(dialog.querySelectorAll('button')).find(b => b.textContent.includes('Continue Session')) || null;
     }
 
+    let warnedNoButton = false;
+
     return {
         keepAlive(tag) {
             for (const doc of docs()) {
+                if (!doc.querySelector('session-termination')) continue;
                 const btn = button(doc);
-                if (!btn) continue;
+                if (!btn) {
+                    if (!warnedNoButton) { warnedNoButton = true; GT.flight.log?.('oturum', 'diyalog var, Continue butonu bulunamadı'); }
+                    continue;
+                }
                 btn.click();
+                warnedNoButton = false;
                 log(`Continue Session tıklandı (${tag}).`);
+                GT.flight.log?.('oturum', `Continue Session tıklandı (${tag})`);
                 return true;
             }
             return false;
         },
+
+        /** Sitenin hareketsizlik sayacı fare/klavye olaylarını dinliyor: sahte bir
+         *  mousemove sayacı sıfırlar, diyalog hiç açılmaz. keydown kullanılmıyor —
+         *  sayfanın/çekirdeğin kısayollarını tetikleyebilir. */
+        nudge() {
+            for (const doc of docs()) {
+                const target = doc.body || doc.documentElement;
+                const View = doc.defaultView;
+                if (!target || !View) continue;
+                target.dispatchEvent(new View.MouseEvent('mousemove', {
+                    bubbles: true, clientX: 2 + Math.floor(Math.random() * 6), clientY: 2 + Math.floor(Math.random() * 6),
+                }));
+            }
+        },
     };
 })();
+
+/** Gizli sekmede rAF hiç çalışmaz, setInterval dakikada bire kısılır; Worker
+ *  zamanlayıcısı kısılmaz. Worker açılamazsa (CSP) normal aralığa düşer. */
+function workerClock(ctx, fn) {
+    try {
+        const url = URL.createObjectURL(new Blob(['setInterval(() => postMessage(0), 1000);'], { type: 'application/javascript' }));
+        const worker = new Worker(url);
+        URL.revokeObjectURL(url);
+        ctx.own(worker); // ctx.destroy → worker.terminate()
+        worker.onmessage = fn;
+    } catch (e) {
+        warn('Worker açılamadı, setInterval kullanılıyor:', e);
+        ctx.interval(fn, 1000);
+    }
+}
 
 GT.define({
     id: 'wd-session-guard',
     source: 'withdrawals',
     setup(ctx) {
-        // "Continue Session" gözlemi/tıklaması her sayfada geçerli — zararsız,
-        // sadece o diyalog gerçekten varsa bir şey yapar.
-        ctx.tick(() => session.keepAlive('gözlemci'), { lazy: true });
-        ctx.interval(() => session.keepAlive('yoklama'), 4000);
+        // Her sayfada: sekme arka plandayken de saniyede bir diyaloğa bak,
+        // 50–70 sn'de bir hareketsizlik sayacını sıfırla.
+        const nextNudge = () => 50 + Math.floor(Math.random() * 21);
+        let sinceNudge = 0, nudgeAt = nextNudge();
+        workerClock(ctx, () => {
+            session.keepAlive('saat');
+            if (++sinceNudge < nudgeAt) return;
+            session.nudge();
+            sinceNudge = 0; nudgeAt = nextNudge();
+        });
     },
 });
 
@@ -494,12 +537,6 @@ GT.define({
             else warn('Go butonu 9 denemede yakalanamadı.');
         }
 
-        const blob = URL.createObjectURL(new Blob(
-            ['setInterval(() => postMessage(0), 1000);'], { type: 'application/javascript' }));
-        const worker = new Worker(blob);
-        URL.revokeObjectURL(blob);
-        ctx.own(worker); // ctx.destroy → worker.terminate()
-
         const nextGap = () => 240 + Math.floor(Math.random() * 181); // 240–420 sn
         let elapsed = 0, target = nextGap();
 
@@ -509,14 +546,13 @@ GT.define({
         };
         paint();
 
-        worker.onmessage = () => {
+        workerClock(ctx, () => {
             elapsed++;
             paint();
-            if (session.keepAlive('sayaç')) pulse('var(--gt-danger)');
             if (elapsed < target) return;
             clickGo();
             elapsed = 0; target = nextGap(); paint();
-        };
+        });
 
         log('Keep-Alive başladı.');
     },

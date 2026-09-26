@@ -127,6 +127,11 @@ branch'i bozma.
   belge) yazar; `ctx.mount` ve DOM'u başka belgeye ekleyen modüller
   `GT.ensureStyles(node.ownerDocument)` çağırır. Stil sorunu görürsen önce
   "stil etiketi bu belgede var mı" diye bak, `!important` ile boğuşma.
+- Oturum: `wd-session-guard` her sayfada Worker saatiyle (gizli sekmede rAF
+  hiç, setInterval dakikada bir çalışır — Worker kısılmaz) saniyede bir
+  "Continue Session" diyaloğuna bakar ve 50–70 sn'de bir sahte `mousemove`
+  ile sitenin hareketsizlik sayacını sıfırlar. Logout olursa `GT.flight()`
+  "oturum" satırlarına bak: tıklandı mı, diyalog butonsuz muydu.
 - `sessionKey` rotasyonlu: her `ics/*` isteğinde TAZE okunmalı, asla
   cache'lenmemeli — bayat anahtar sessiz 401 döner. `GT.api.ics()` bunu
   otomatik yapar.
