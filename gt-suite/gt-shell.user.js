@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Shell — arayüz iskeleti
 // @namespace    palentis.gt
-// @version      1.0.5
+// @version      1.0.6
 // @description  Her sayfada geçerli arayüz katmanı: varsayılan sayfa yönlendirme, logo yerine hızlı gezinme butonları, kapalı başlayan sidebar, navbar saatleri (GMT+0/+3/+8), alt sekmelerin butonlaştırılması, COMMENTS uyarısı ve bildirim şeritlerinin toast'a dönüşümü. GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
@@ -208,7 +208,9 @@ GT.define({
         ul.nav-account-info .thumb-sm, ul.nav-account-info > li:not(:first-child){display:none !important}
         ul.nav-account-info > li:first-child strong{font-size:0 !important}
         ul.nav-account-info > li:first-child strong::after{content:'MARCUS'; font-family:var(--gt-font); font-size:12.5px;
-          font-weight:700; letter-spacing:.08em; color:#1b1f24}`);
+          font-weight:700; letter-spacing:.08em; color:#1b1f24}
+        /* Hesap menüsü ekranın sağ kenarında: sağa değil sola doğru açılsın. */
+        ul.nav-account-info > li:first-child > .dropdown-menu{left:auto !important; right:0 !important}`);
 
         const paint = (group) => {
             for (const el of group.children) {
