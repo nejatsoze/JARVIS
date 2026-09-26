@@ -168,6 +168,8 @@ branch'i bozma.
   adacığında bitişik; seçili olan `.is-active` (koyu). Kısayol harfi butonda
   GÖSTERİLMEZ (kullanıcı istemedi) — `key` sadece title'a yazılır. Butonu
   title ile arama, id ver (`#gt-cre-btn`).
+- Renkler: koyu dolgu `--gt-strong` (#3a404a, seçili/aktif), ana yazı `--gt-text`
+  (#2c3139) — kullanıcı saf siyahı sert buldu. Yeni kodda bu değişkenleri kullan.
 - Tasarım değişikliklerinde önce önizleme görseli göster, kullanıcı onay
   vermeden koda geçme.
 - Sayfadaki Angular hücrelerine dokunulmaz: kopyala + CSS ile gizle.
