@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.22
+// @version      1.0.23
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -149,6 +149,33 @@ function field(label) {
         if (value) return { text: txt(value), pencil: edit?.querySelector('i.fa-pencil-square-o') || null };
     }
     return null;
+}
+
+/** Kayan liste (Son bonus, Yorumlar): öğeler 2 sn'de bir yukarıdan kayarak döner,
+    tıklayınca sıradakine geçer, fare üzerindeyken durur. Öğeler .is-in/.is-out alır. */
+function rotate(ctx, root, items, onChange) {
+    items[0]?.classList.add('is-in');
+    if (items.length < 2) return;
+    let i = 0, timer = null, paused = false;
+    const stop = () => clearInterval(timer);
+    ctx.onDestroy(stop);
+    const show = (next) => {
+        const prev = items[i];
+        prev.classList.replace('is-in', 'is-out');
+        const cur = items[next];
+        cur.classList.remove('is-out');
+        void cur.offsetWidth; // bekleme konumundan (yukarıdan) başlasın
+        cur.classList.add('is-in');
+        i = next;
+        onChange?.(i);
+        setTimeout(() => { if (prev !== items[i]) prev.classList.remove('is-out'); }, 360);
+    };
+    const step = () => { if (!root.isConnected) return stop(); if (!paused) show((i + 1) % items.length); };
+    const restart = () => { stop(); timer = setInterval(step, 2000); };
+    root.addEventListener('click', () => { show((i + 1) % items.length); restart(); });
+    root.addEventListener('mouseenter', () => { paused = true; });
+    root.addEventListener('mouseleave', () => { paused = false; });
+    restart();
 }
 
 const pref = (k, d) => { try { return localStorage.getItem('gt.player.' + k) ?? d; } catch { return d; } };
@@ -667,22 +694,28 @@ active-queued-optedin-bonus a.fa-times:hover{background:#fdecec; color:#d70015 !
 #gt-lookup .lb-item.is-out{transform:translateY(100%); opacity:0}
 @media (prefers-reduced-motion:reduce){#gt-lookup .lb-item{transition:none}}
 
-#gt-comments{position:fixed; top:20px; right:20px; width:340px; max-width:calc(100vw - 20px); max-height:70vh;
-  background:rgba(255,255,255,.88); backdrop-filter:blur(20px) saturate(180%); -webkit-backdrop-filter:blur(20px) saturate(180%);
-  border-radius:18px; box-shadow:0 10px 40px rgba(0,0,0,.18); z-index:999999; overflow:hidden;
-  font-family:var(--gt-font); opacity:0; transform:translateY(-12px) scale(.98); transition:opacity .45s, transform .45s}
-#gt-comments.in{opacity:1; transform:none}
-#gt-comments.out{opacity:0; transform:translateY(-6px) scale(.96); pointer-events:none}
-#gt-comments .h{display:flex; align-items:center; justify-content:space-between; padding:14px 16px 10px;
-  border-bottom:1px solid rgba(0,0,0,.06); font-size:15px; font-weight:600}
-#gt-comments .n{background:var(--gt-accent); color:#fff; font-size:11px; font-weight:700; border-radius:10px; padding:1px 7px; margin-left:6px}
-#gt-comments .b{max-height:calc(70vh - 52px); overflow-y:auto; padding:8px 10px 12px}
-#gt-comments .i{background:rgba(120,120,128,.08); border-radius:12px; padding:10px 12px; margin:6px 4px}
-#gt-comments .t{display:flex; justify-content:space-between; font-size:11px; color:var(--gt-muted); margin-bottom:4px}
-#gt-comments .s{font-weight:600; color:var(--gt-ink-2)}
-#gt-comments .s.hot{color:var(--gt-danger); font-weight:800}
-#gt-comments .c{font-size:13.5px; line-height:1.4; white-space:pre-wrap; word-break:break-word}
-#gt-comments .g{margin-top:6px; font-size:10.5px; color:var(--gt-accent); font-weight:600}
+/* Yorumlar: popup değil, Giriş Kayıtları kartının üstüne gömülü kayan kart.
+   Konumu/genişliği JS ile #gt-logs'tan alınır. */
+#gt-dash:not(.floating){position:relative}
+#gt-cmt{position:absolute; bottom:calc(100% + 10px); height:74px; box-sizing:border-box; padding:9px 14px;
+  background:#fff; border:1px solid #e4e7ec; border-radius:12px; box-shadow:0 1px 2px rgba(16,24,40,.05);
+  font-family:var(--gt-font); color:#1b1f24; cursor:pointer; user-select:none; overflow:hidden; text-align:left}
+#gt-cmt:hover{border-color:#c9ced6}
+#gt-cmt .cm-view{display:grid; height:100%; overflow:hidden}
+#gt-cmt .cm-item{grid-area:1/1; display:flex; flex-direction:column; gap:4px; min-width:0;
+  transform:translateY(-100%); opacity:0; transition:transform .35s cubic-bezier(.2,.7,.2,1), opacity .35s}
+#gt-cmt .cm-item.is-in{transform:none; opacity:1}
+#gt-cmt .cm-item.is-out{transform:translateY(100%); opacity:0}
+#gt-cmt .cm-head{display:flex; align-items:center; gap:7px; font-size:11.5px; white-space:nowrap; min-width:0}
+#gt-cmt .cm-title{font-weight:700; padding-right:7px; border-right:1px solid #eceef1}
+#gt-cmt .cm-who{font-weight:700; color:#0066cc; overflow:hidden; text-overflow:ellipsis}
+#gt-cmt .cm-who.hot{color:#d70015}
+#gt-cmt .cm-tag{font-size:10px; font-weight:600; padding:1px 7px; border-radius:20px; background:rgba(0,122,255,.08);
+  color:#0066cc; border:1px solid rgba(0,122,255,.25); overflow:hidden; text-overflow:ellipsis; max-width:40%}
+#gt-cmt .cm-date{margin-left:auto; font-size:11px; font-weight:500; color:#8e8e93}
+#gt-cmt .cm-text{font-size:12.5px; line-height:1.35; font-weight:500; overflow:hidden; display:-webkit-box;
+  -webkit-line-clamp:2; -webkit-box-orient:vertical; word-break:break-word; white-space:pre-wrap}
+@media (prefers-reduced-motion:reduce){#gt-cmt .cm-item{transition:none}}
 
 img[src*="assets/flags/"]{width:18px !important; height:18px !important; border-radius:50% !important;
   object-fit:cover !important; object-position:center !important}
@@ -1669,36 +1702,13 @@ GT.define({
             // Alan "Select Tag"ın içinde: tıklama yukarı çıkarsa etiket listesi açılıyor.
             for (const ev of ['mousedown', 'pointerdown', 'click']) root.addEventListener(ev, (e) => { e.stopPropagation(); e.preventDefault(); });
 
-            let items = [], i = 0, timer = null, paused = false;
-            const stop = () => clearInterval(timer);
-            ctx.onDestroy(stop);
-            const show = (next) => {
-                const prev = items[i];
-                prev.classList.replace('is-in', 'is-out');
-                const cur = items[next];
-                cur.classList.remove('is-out');
-                void cur.offsetWidth; // bekleme konumundan (yukarıdan) başlasın
-                cur.classList.add('is-in');
-                i = next;
-                count.textContent = `${i + 1}/${items.length}`;
-                setTimeout(() => { if (prev !== items[i]) prev.classList.remove('is-out'); }, 360);
-            };
-            const step = () => { if (!root.isConnected) return stop(); if (!paused) show((i + 1) % items.length); };
-            const restart = () => { stop(); timer = setInterval(step, 2000); };
-
             bonuses(pid).then((list) => {
                 const names = list.slice(0, 3).map(b => b.planName).filter(Boolean);
-                items = (names.length ? names : ['—']).map(n => h('span', { class: 'lb-item' }, n));
+                const items = (names.length ? names : ['—']).map(n => h('span', { class: 'lb-item' }, n));
                 view.replaceChildren(...items);
-                items[0].classList.add('is-in');
-                if (!names.length) return;
-                count.textContent = `1/${items.length}`;
-                if (items.length < 2) return;
-                root.title = 'Tıkla: sıradaki bonus';
-                root.addEventListener('click', () => { show((i + 1) % items.length); restart(); });
-                root.addEventListener('mouseenter', () => { paused = true; });
-                root.addEventListener('mouseleave', () => { paused = false; });
-                restart();
+                if (names.length) count.textContent = `1/${items.length}`;
+                if (items.length > 1) root.title = 'Tıkla: sıradaki bonus';
+                rotate(ctx, root, names.length ? items : [items[0]], (i) => { count.textContent = `${i + 1}/${items.length}`; });
             }).catch(() => { view.replaceChildren(h('span', { class: 'lb-item is-in' }, '—')); });
             return root;
         }
@@ -1721,7 +1731,7 @@ GT.define({
 });
 
 /* ════════════════════════════════════════════════════════════
-   5 · YORUM POPUP'I — oyuncuda yorum varsa otomatik açılır
+   5 · YORUMLAR — Giriş Kayıtları kartının üstünde gömülü, kayan kart
    ════════════════════════════════════════════════════════════ */
 GT.define({
     id: 'player-comments',
@@ -1732,29 +1742,53 @@ GT.define({
         const pid = api.partyId();
         let shown = false;
 
-        const drop = () => document.getElementById('gt-comments')?.remove();
+        const two = (n) => String(n).padStart(2, '0');
+        const fmtDate = (raw) => {
+            const d = parseStamp(raw);
+            return d ? `${two(d.getDate())}.${two(d.getMonth() + 1)}.${d.getFullYear()} ${two(d.getHours())}:${two(d.getMinutes())}` : (raw || '');
+        };
+        let comments = null;
 
-        function render(list) {
-            drop();
-            const root = ctx.own(h('div', { id: 'gt-comments' },
-                h('div', { class: 'h' },
-                    h('div', {}, 'Yorumlar', h('span', { class: 'n' }, list.length)),
-                    h('button', { class: 'gt-pop__x', type: 'button', onclick: () => { root.classList.remove('in'); setTimeout(drop, 250); } }, '✕')),
-                h('div', {
-                    class: 'b',
-                    html: [...list].sort((a, b) => new Date(b.date) - new Date(a.date)).map(c => {
-                        const [name, hot] = STAFF[c.staffName] || [c.staffName || '—', false];
-                        const tags = (c.tags || '').trim();
-                        return `<div class="i">
-                          <div class="t"><span class="s${hot ? ' hot' : ''}">${esc(name)}</span><span>${esc(c.date || '')}</span></div>
-                          <div class="c">${esc(c.comment || '')}</div>
-                          ${tags ? `<div class="g">${esc(tags)}</div>` : ''}</div>`;
-                    }).join(''),
-                })));
-            document.body.append(root);
-            requestAnimationFrame(() => root.classList.add('in'));
-            setTimeout(() => { root.classList.add('out'); setTimeout(drop, 700); }, 10000);
+        function build(list) {
+            const items = [...list].sort((a, b) => (parseStamp(b.date)?.getTime() || 0) - (parseStamp(a.date)?.getTime() || 0)).map(c => {
+                const [name, hot] = STAFF[c.staffName] || [c.staffName || '—', false];
+                const tags = (c.tags || '').trim();
+                const text = c.comment || '';
+                return h('div', { class: 'cm-item' },
+                    h('div', { class: 'cm-head' },
+                        h('span', { class: 'cm-title' }, 'Yorumlar'),
+                        h('span', { class: 'cm-who' + (hot ? ' hot' : '') }, name),
+                        tags ? h('span', { class: 'cm-tag', title: tags }, tags) : null,
+                        h('span', { class: 'cm-date' }, fmtDate(c.date))),
+                    h('div', { class: 'cm-text', title: text }, text));
+            });
+            const root = h('div', { id: 'gt-cmt', title: items.length > 1 ? 'Tıkla: sıradaki yorum' : null }, h('div', { class: 'cm-view' }, ...items));
+            return { root, items };
         }
+
+        // Giriş Kayıtları kartıyla aynı sol kenar ve genişlik.
+        const place = () => {
+            const root = document.getElementById('gt-cmt');
+            const logs = document.getElementById('gt-logs');
+            if (!root || !logs) return;
+            root.style.left = logs.offsetLeft + 'px';
+            root.style.width = logs.offsetWidth + 'px';
+        };
+        const sizeWatch = ctx.own(new ResizeObserver(place));
+
+        ctx.tick(() => {
+            if (!comments?.length) return;
+            const dash = document.getElementById('gt-dash');
+            if (!dash || document.getElementById('gt-cmt')?.isConnected) return;
+            const { root, items } = build(comments);
+            dash.append(ctx.own(root));
+            rotate(ctx, root, items);
+            sizeWatch.disconnect();
+            sizeWatch.observe(dash);
+            const logs = document.getElementById('gt-logs');
+            if (logs) sizeWatch.observe(logs);
+            place();
+        }, { lazy: true });
 
         function commentsTab() {
             for (const icon of $$('mat-icon.fa-comment.pin-tabs')) {
@@ -1772,7 +1806,7 @@ GT.define({
             if (!count) return;
             shown = true;
             api.json(api.ics(`players/${pid}/comment/`), { ttl: 30000 })
-                .then(list => { if (Array.isArray(list) && list.length) render(list); })
+                .then(list => { if (Array.isArray(list) && list.length) comments = list; })
                 .catch(e => oops('[Yorumlar]', e));
         }, { lazy: true });
     },
