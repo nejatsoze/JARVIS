@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.20
+// @version      1.0.21
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -105,24 +105,43 @@ const PERIODS = [
     ['LM', 'Geçen ay'], ['YTD', 'YTD'], ['LTD', 'LTD'],
 ];
 
-/** Gizlenen alanlar: etiket → {text, pencil}. Kartlar buradan okur. */
+/** Gizlenen alanlar: etiket → {text, pencil}. Kartlar buradan okur.
+    Değer KOPYALANMAZ, gizlenen hücreye referans tutulur ve her okumada canlı
+    alınır: Angular bazı alanları (VIP gibi) sonradan doldurur; ilk anda "N/A"
+    yazan hücreyi okuyup saklamak rozeti sonsuza kadar N/A bırakıyordu. */
 const hidden = new Map();
+let hiddenPid = null;
 
 /* Aynı etiket sayfada birden fazla yerde olabiliyor (ör. tablo + flex
-   düzeni); boş/N/A olan kopya, daha önce okunmuş gerçek değeri ezmesin. */
+   düzeni); boş/N/A olan kopya değil, dolu olan tercih edilir. */
 const EMPTY_VALUE = /^(n\/a|-|—|)$/i;
-function remember(label, info) {
-    const prev = hidden.get(label);
-    if (prev && !EMPTY_VALUE.test(prev.text) && EMPTY_VALUE.test(info.text)) {
-        if (!prev.pencil?.isConnected && info.pencil) prev.pencil = info.pencil;
-        return;
+function remember(label, { el, pencil }) {
+    const pid = api.partyId();
+    if (pid !== hiddenPid) { hidden.clear(); hiddenPid = pid; } // önceki oyuncunun değeri sızmasın
+    let entry = hidden.get(label);
+    if (!entry) {
+        entry = {
+            srcs: [], pencil: null, last: '',
+            get text() {
+                let fallback = null;
+                for (const src of this.srcs) {
+                    if (!src.isConnected) continue;
+                    const t = txt(src);
+                    if (!EMPTY_VALUE.test(t)) return (this.last = t);
+                    fallback ??= t;
+                }
+                return this.last || fallback || '';
+            },
+        };
+        hidden.set(label, entry);
     }
-    hidden.set(label, info);
+    if (el && !entry.srcs.includes(el)) entry.srcs.push(el);
+    if (pencil && !entry.pencil?.isConnected) entry.pencil = pencil;
 }
 
 function field(label) {
     const hit = hidden.get(label);
-    if (hit?.pencil?.isConnected || hit) return hit;
+    if (hit) return hit;
     for (const cell of $$('td.text-xs-left')) {
         if (txt(cell) !== label) continue;
         const value = cell.nextElementSibling;
@@ -689,7 +708,7 @@ GT.define({
 
                 const value = cell.nextElementSibling;
                 const edit = value?.nextElementSibling;
-                remember(label, { text: value ? txt(value) : '', pencil: edit?.querySelector('i.fa-pencil-square-o') || null });
+                remember(label, { el: value, pencil: edit?.querySelector('i.fa-pencil-square-o') || null });
 
                 hide(cell); hide(value);
                 if (edit?.querySelector('i.fa-pencil-square-o')) hide(edit);
@@ -716,7 +735,7 @@ GT.define({
                 const label = txt(item.children[0]);
                 if (!HIDE_LABELS.has(label)) continue;
                 const value = item.children[1];
-                remember(label, { text: value ? txt(value) : '', pencil: value?.querySelector('i.fa-pencil-square-o') || null });
+                remember(label, { el: value, pencil: value?.querySelector('i.fa-pencil-square-o') || null });
                 hide(item);
             }
         }
