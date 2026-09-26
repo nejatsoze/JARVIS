@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.19
+// @version      1.0.20
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -605,6 +605,28 @@ css('gt-player-style', `
 .mat-tab-labels:has(.pin-tabs) > .mat-tab-label-active:hover{background:#1b1f24 !important; color:#fff !important}
 .mat-tab-labels:has(.pin-tabs) > .mat-tab-label-active .pin-tabs{color:#fff !important}
 .mat-tab-labels:has(.pin-tabs) > .mat-tab-label-active + .mat-tab-label{border-left-color:transparent !important}
+
+/* Sitenin "Active / Queued / Opted-In Bonuses" tablosu: kart + sade tablo.
+   HTML'e dokunulmaz; sadece <active-queued-optedin-bonus> bileşeni. */
+div:has(> active-queued-optedin-bonus){overflow-y:auto !important}
+active-queued-optedin-bonus{display:block; box-sizing:border-box; margin:10px 0; padding:14px 16px 6px; background:#fff;
+  border:1px solid #e4e7ec; border-radius:14px; box-shadow:0 1px 2px rgba(16,24,40,.04); font-family:var(--gt-font); color:#1b1f24}
+active-queued-optedin-bonus .active-bonus-title{display:block; margin-bottom:10px; font-size:14px; font-weight:600; letter-spacing:-.1px; color:#1b1f24}
+active-queued-optedin-bonus table.player-active-bonuses-table{width:100%; border-collapse:collapse; font-size:12.5px; color:#1b1f24}
+active-queued-optedin-bonus thead th{position:sticky; top:0; z-index:1; background:#fff; padding:0 10px 8px !important;
+  font-size:11px; font-weight:500; color:#8e8e93; border:0 !important; border-bottom:1px solid #eceef1 !important;
+  text-decoration:none !important; white-space:nowrap}
+active-queued-optedin-bonus tbody td{padding:9px 10px !important; border:0; border-bottom:1px solid #f2f3f5; vertical-align:middle;
+  color:#1b1f24; font-variant-numeric:tabular-nums; white-space:nowrap}
+active-queued-optedin-bonus tbody tr:last-child td{border-bottom:0}
+active-queued-optedin-bonus tbody tr:hover td{background:#fafbfc}
+active-queued-optedin-bonus tbody td:nth-child(2){font-weight:700}
+active-queued-optedin-bonus .more-link{color:#1b1f24 !important; font-weight:600; cursor:help}
+active-queued-optedin-bonus .more-link:hover{text-decoration:underline}
+active-queued-optedin-bonus a.fa-times{display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px;
+  border-radius:7px; font-size:15px; color:#98a2b3 !important; text-decoration:none; cursor:pointer;
+  transition:background-color .12s, color .12s}
+active-queued-optedin-bonus a.fa-times:hover{background:#fdecec; color:#d70015 !important}
 
 #gt-lookup{display:inline-flex; align-items:center; gap:8px; margin-left:12px; vertical-align:middle; position:relative; top:2px}
 /* Son bonus: buton kutusunda, son 3 bonus 2 sn'de bir yukarıdan kayarak döner. */
