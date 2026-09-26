@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Shell — arayüz iskeleti
 // @namespace    palentis.gt
-// @version      1.0.3
+// @version      1.0.4
 // @description  Her sayfada geçerli arayüz katmanı: varsayılan sayfa yönlendirme, logo yerine hızlı gezinme butonları, kapalı başlayan sidebar, navbar saatleri (GMT+0/+3/+8), alt sekmelerin butonlaştırılması, COMMENTS uyarısı ve bildirim şeritlerinin toast'a dönüşümü. GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
@@ -161,49 +161,73 @@ GT.define({
     id: 'shell-clocks',
     source: 'shell',
     setup(ctx) {
+        // London bilerek sabit UTC+0 (yaz saati uygulanmaz); İstanbul ve Hong Kong zaten sabit.
         const CLOCKS = [
-            { offset: 0, flag: '🇬🇧' },
-            { offset: 3, flag: '🇹🇷' },
-            { offset: 8, flag: '🕉️' },
+            { city: 'London', tz: 'UTC' },
+            { city: 'Istanbul', tz: 'Europe/Istanbul' },
+            { city: 'Hong Kong', tz: 'Asia/Hong_Kong' },
         ];
         const MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
                         'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
         const pad = (n) => String(n).padStart(2, '0');
-        const shifted = (offset) => new Date(Date.now() + offset * 3600000);
-        const clock = (d) => `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
-        const day = (d) => `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+        const fmt = new Map(CLOCKS.map(c => [c.tz, new Intl.DateTimeFormat('en-GB', {
+            timeZone: c.tz, year: 'numeric', month: 'numeric', day: 'numeric',
+            hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })]));
+        const now = (tz) => {
+            const p = Object.fromEntries(fmt.get(tz).formatToParts(new Date()).map(x => [x.type, +x.value]));
+            return { h: p.hour, m: p.minute, s: p.second, day: `${p.day} ${MONTHS[p.month - 1]} ${p.year}` };
+        };
+        const isNight = (h) => h < 7 || h >= 19;
 
         css('gt-shell-clocks', `
-        #gt-clocks{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
-          display:flex; align-items:center; gap:8px; z-index:10; pointer-events:none}
-        #gt-clocks .pill{display:inline-flex; align-items:center; gap:6px; padding:4px 12px;
-          background:#F2F2F4; color:var(--gt-ink-2); border:.5px solid var(--gt-line); border-radius:14px;
-          font-family:var(--gt-font); font-size:13px; line-height:1.2; font-variant-numeric:tabular-nums;
-          box-shadow:0 1px 2px rgba(0,0,0,.04); pointer-events:auto}`);
+        #gt-clocks{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:10;
+          display:inline-flex !important; align-items:stretch; background:#fff; border:1px solid #d9dde3; border-radius:12px;
+          box-shadow:0 1px 1.5px rgba(16,24,40,.06); overflow:hidden; font-family:var(--gt-font); line-height:1}
+        #gt-clocks .clk{display:flex; align-items:baseline; gap:8px; padding:7px 16px; border-left:1px solid #eceef1;
+          background:#fff; transition:background-color .4s, color .4s}
+        #gt-clocks .clk:first-child{border-left:0}
+        #gt-clocks .dn{width:6px; height:6px; border-radius:50%; background:#f59e0b; align-self:center}
+        #gt-clocks .city{font-size:11px; font-weight:600; color:#8e8e93}
+        #gt-clocks .t{font-size:17px; font-weight:700; letter-spacing:-.3px; color:#1b1f24; font-variant-numeric:tabular-nums}
+        #gt-clocks .s{font-size:11px; font-weight:600; color:#b0b4bb; margin-left:-5px; font-variant-numeric:tabular-nums}
+        /* Gece (19:00–07:00): o şehrin kutusu koyu */
+        #gt-clocks .clk.night{background:#1b1f24; border-left-color:#1b1f24}
+        #gt-clocks .clk.night + .clk{border-left-color:transparent}
+        #gt-clocks .clk.night .dn{background:#8b93ff}
+        #gt-clocks .clk.night .city{color:#9aa0a8}
+        #gt-clocks .clk.night .t{color:#fff}
+        #gt-clocks .clk.night .s{color:#6b7280}
+
+        /* Sağdaki hesap alanı: avatar, dil ve tarih gizli; kullanıcı adı yerine MARCUS.
+           Tıklanınca sitenin hesap menüsü (şifre, tema) yine açılır. */
+        ul.nav-account-info .thumb-sm, ul.nav-account-info > li:not(:first-child){display:none !important}
+        ul.nav-account-info > li:first-child strong{font-size:0 !important}
+        ul.nav-account-info > li:first-child strong::after{content:'MARCUS'; font-family:var(--gt-font); font-size:12.5px;
+          font-weight:700; letter-spacing:.08em; color:#1b1f24}`);
+
+        const paint = (group) => {
+            for (const el of group.children) {
+                const { h: hh, m, s, day } = now(el.dataset.tz);
+                el.classList.toggle('night', isNight(hh));
+                el.querySelector('.t').textContent = `${pad(hh)}:${pad(m)}`;
+                el.querySelector('.s').textContent = pad(s);
+                el.title = day;
+            }
+        };
 
         ctx.mount(topBar, 'gt-clocks', (bar) => {
             if (getComputedStyle(bar).position === 'static') bar.style.position = 'relative';
-            return h('div', {}, CLOCKS.map(c =>
-                h('span', { class: 'pill', dataset: { offset: String(c.offset) } },
-                    h('span', {}, c.flag),
-                    h('span', { class: 'time' }, clock(shifted(c.offset))))));
-        });
-
-        // Sağdaki orijinal "UTC+0000" tarih öğesini gizle
-        ctx.each('span.hidden-xs-down', (span) => {
-            if (!span.textContent.includes('UTC+0000')) return;
-            const li = span.closest('li');
-            if (li) li.style.display = 'none';
+            const group = h('div', {}, CLOCKS.map(c =>
+                h('span', { class: 'clk', dataset: { tz: c.tz } },
+                    h('span', { class: 'dn' }), h('span', { class: 'city' }, c.city),
+                    h('span', { class: 't' }), h('span', { class: 's' }))));
+            paint(group);
+            return group;
         });
 
         ctx.interval(() => {
             const group = document.getElementById('gt-clocks');
-            if (!group?.isConnected) return;
-            for (const pill of group.children) {
-                const d = shifted(Number(pill.dataset.offset));
-                pill.querySelector('.time').textContent = clock(d);
-                pill.title = day(d);
-            }
+            if (group?.isConnected) paint(group);
         }, 1000);
     },
 });
