@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Shell — arayüz iskeleti
 // @namespace    palentis.gt
-// @version      1.0.6
+// @version      1.0.7
 // @description  Her sayfada geçerli arayüz katmanı: varsayılan sayfa yönlendirme, logo yerine hızlı gezinme butonları, kapalı başlayan sidebar, navbar saatleri (GMT+0/+3/+8), alt sekmelerin butonlaştırılması, COMMENTS uyarısı ve bildirim şeritlerinin toast'a dönüşümü. GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
@@ -101,9 +101,9 @@ GT.define({
         #gt-nav{position:absolute; left:52px; top:50%; transform:translateY(-50%); z-index:11; margin:0;
           display:inline-flex !important}
         /* Üst barın kendi a/div kuralları ID ile geçilir. */
-        #gt-nav > a{color:#1b1f24; text-decoration:none; font:600 12.5px/1 var(--gt-font); height:28px; padding:0 12px}
+        #gt-nav > a{color:var(--gt-text, #1b1f24); text-decoration:none; font:600 12.5px/1 var(--gt-font); height:28px; padding:0 12px}
         #gt-nav > a:hover{background:#f5f6f8}
-        #gt-nav > a.is-active{background:#1b1f24; color:#fff}`);
+        #gt-nav > a.is-active{background:var(--gt-strong, #1b1f24); color:#fff}`);
 
         const link = (label, path) => h('a', {
             class: 'gt-btn', 'data-path': path,
@@ -188,10 +188,10 @@ GT.define({
         #gt-clocks .clk:first-child{border-left:0}
         #gt-clocks .dn{width:6px; height:6px; border-radius:50%; background:#f59e0b; align-self:center}
         #gt-clocks .city{font-size:11px; font-weight:600; color:#8e8e93}
-        #gt-clocks .t{font-size:17px; font-weight:700; letter-spacing:-.3px; color:#1b1f24; font-variant-numeric:tabular-nums}
+        #gt-clocks .t{font-size:17px; font-weight:700; letter-spacing:-.3px; color:var(--gt-text, #1b1f24); font-variant-numeric:tabular-nums}
         #gt-clocks .s{font-size:11px; font-weight:600; color:#b0b4bb; margin-left:-5px; font-variant-numeric:tabular-nums}
         /* Gece (19:00–07:00): o şehrin kutusu koyu */
-        #gt-clocks .clk.night{background:#1b1f24; border-left-color:#1b1f24}
+        #gt-clocks .clk.night{background:var(--gt-strong, #1b1f24); border-left-color:var(--gt-strong, #1b1f24)}
         #gt-clocks .clk.night + .clk{border-left-color:transparent}
         #gt-clocks .clk.night .dn{background:#8b93ff}
         #gt-clocks .clk.night .city{color:#9aa0a8}
@@ -208,9 +208,30 @@ GT.define({
         ul.nav-account-info .thumb-sm, ul.nav-account-info > li:not(:first-child){display:none !important}
         ul.nav-account-info > li:first-child strong{font-size:0 !important}
         ul.nav-account-info > li:first-child strong::after{content:'MARCUS'; font-family:var(--gt-font); font-size:12.5px;
-          font-weight:700; letter-spacing:.08em; color:#1b1f24}
+          font-weight:700; letter-spacing:.08em; color:var(--gt-text, #1b1f24)}
         /* Hesap menüsü ekranın sağ kenarında: sağa değil sola doğru açılsın. */
-        ul.nav-account-info > li:first-child > .dropdown-menu{left:auto !important; right:0 !important}`);
+        ul.nav-account-info > li:first-child > .dropdown-menu{left:auto !important; right:0 !important}
+
+        /* Üstteki pencere sekmeleri (sitenin açtığı oyuncu sekmeleri): adacık, aktif koyu,
+           × büyük ve üzerine gelince kırmızı. Pin işlevsiz olduğu için gizli. */
+        .mat-tab-nav-bar .mat-ink-bar{display:none !important}
+        .mat-tab-nav-bar .mat-tab-links{display:inline-flex !important; background:#fff; border:1px solid #d9dde3; border-radius:9px;
+          box-shadow:0 1px 1.5px rgba(16,24,40,.06); overflow:hidden; margin:4px 0}
+        .mat-tab-nav-bar a.mat-tab-link{height:30px !important; min-width:0 !important; margin:0 !important; padding:0 5px 0 12px !important;
+          gap:4px; opacity:1 !important; border:0 !important; border-radius:0 !important; background:#fff !important; color:#344054 !important;
+          font-family:var(--gt-font) !important; font-size:12px !important; font-weight:600 !important; text-decoration:none !important;
+          transition:background-color .12s}
+        .mat-tab-nav-bar a.mat-tab-link + a.mat-tab-link{border-left:1px solid #eceef1 !important}
+        .mat-tab-nav-bar a.mat-tab-link:hover{background:#f5f6f8 !important}
+        .mat-tab-nav-bar a.mat-tab-link .inner-ellipsis-overflow{max-width:190px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:0 2px 0 0 !important}
+        .mat-tab-nav-bar a.mat-tab-link .fa-thumb-tack{display:none !important}
+        .mat-tab-nav-bar a.mat-tab-link .close-tabs{display:inline-flex !important; align-items:center; justify-content:center; width:22px; height:22px;
+          margin:0 !important; border-radius:6px; font-size:13px !important; color:#8e8e93 !important; cursor:pointer; transition:background-color .12s, color .12s}
+        .mat-tab-nav-bar a.mat-tab-link .close-tabs:hover{background:#fdecec !important; color:#d70015 !important}
+        .mat-tab-nav-bar a.mat-tab-link.mat-tab-label-active{background:var(--gt-strong, #1b1f24) !important; color:#fff !important}
+        .mat-tab-nav-bar a.mat-tab-link.mat-tab-label-active + a.mat-tab-link{border-left-color:transparent !important}
+        .mat-tab-nav-bar a.mat-tab-link.mat-tab-label-active .close-tabs{color:#c9ced6 !important}
+        .mat-tab-nav-bar a.mat-tab-link.mat-tab-label-active .close-tabs:hover{background:#d70015 !important; color:#fff !important}`);
 
         const paint = (group) => {
             for (const el of group.children) {

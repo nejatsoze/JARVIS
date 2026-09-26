@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Core — paylaşılan çalışma zamanı
 // @namespace    http://tampermonkey.net/
-// @version      1.1.8
+// @version      1.1.9
 // @description  GamingTec script ailesinin ortak çekirdeği: tek veriyolu, rota-farkındalıklı modül yaşam döngüsü, sessionKey disiplinli API katmanı, tasarım token'ları + UI kiti (stiller her zaman aktif belgeye yazılır, kaybolursa kendini onarır), kısayol defteri, gameTranId veri katmanı ve Firefox için main-world ağ köprüsü. UI üretmez — tüm özellikler uydu scriptlerde yaşar. Çapraz origin izinleri (KYCAID, ipwho.is) burada toplanır; uydular GT.api.gm üzerinden kullanır, kendi @grant'ine ihtiyaç duymaz.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
@@ -42,7 +42,7 @@ const W = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow :
 // Çekirdek iki kez yüklenirse (iki sekme scripti, hatalı kurulum) ikincisi çekilir.
 if (W.GT && W.GT.__core) return;
 
-const VERSION   = '1.1.8';
+const VERSION   = '1.1.9';
 const API_LEVEL = 1;
 const IN_FRAME  = window.self !== window.top;
 
@@ -523,7 +523,9 @@ css('gt-core-style', `
 :root{
   --gt-accent:#007AFF; --gt-accent-soft:rgba(0,122,255,.08);
   --gt-danger:#FF3B30; --gt-success:#34C759; --gt-warn:#FF9500; --gt-vip:#AF52DE;
-  --gt-ink:#1c1c1e; --gt-ink-2:#48484a; --gt-muted:#8e8e93;
+  /* Koyu tonlar tek yerden: --gt-strong seçili/aktif dolgu, --gt-text ana yazı. */
+  --gt-strong:#1b1f24; --gt-text:#1b1f24;
+  --gt-ink:var(--gt-text); --gt-ink-2:#48484a; --gt-muted:#8e8e93;
   --gt-surface:#fff; --gt-surface-2:#f2f2f7; --gt-line:rgba(0,0,0,.08);
   --gt-r:12px; --gt-r-lg:16px;
   --gt-shadow:0 1px 3px rgba(0,0,0,.06);
@@ -543,14 +545,14 @@ css('gt-core-style', `
 .gt-btn{
   all:unset; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center; gap:6px;
   height:28px; padding:0 11px; font-family:var(--gt-font); font-size:12.5px; line-height:1; font-weight:600;
-  color:#1b1f24; background:#fff; border:1px solid #d9dde3; border-radius:8px;
+  color:var(--gt-text); background:#fff; border:1px solid #d9dde3; border-radius:8px;
   box-shadow:0 1px 1.5px rgba(16,24,40,.06); cursor:pointer; white-space:nowrap; user-select:none;
   vertical-align:middle; transition:background-color .12s, border-color .12s;
 }
 .gt-btn:hover{background:#f5f6f8; border-color:#c9ced6}
 .gt-btn:active{transform:translateY(1px)}
 .gt-btn:focus-visible{outline:2px solid #2563eb; outline-offset:2px}
-.gt-btn.is-active,.gt-btn.is-active:hover{background:#1b1f24; border-color:#1b1f24; color:#fff}
+.gt-btn.is-active,.gt-btn.is-active:hover{background:var(--gt-strong); border-color:var(--gt-strong); color:#fff}
 .gt-btn.is-busy{opacity:.55; pointer-events:none}
 .gt-btn[disabled]{opacity:.45; cursor:not-allowed}
 .gt-btn svg{width:13px; height:13px; flex:none}

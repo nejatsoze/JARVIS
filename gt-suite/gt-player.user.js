@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.23
+// @version      1.0.24
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -650,7 +650,7 @@ css('gt-player-style', `
 .mat-tab-labels:has(.pin-tabs) > .mat-tab-label:hover{background:#f5f6f8 !important}
 .mat-tab-labels:has(.pin-tabs) > .mat-tab-label .pin-tabs{color:#98a2b3 !important; margin-right:6px}
 .mat-tab-labels:has(.pin-tabs) > .mat-tab-label-active,
-.mat-tab-labels:has(.pin-tabs) > .mat-tab-label-active:hover{background:#1b1f24 !important; color:#fff !important}
+.mat-tab-labels:has(.pin-tabs) > .mat-tab-label-active:hover{background:var(--gt-strong, #1b1f24) !important; color:#fff !important}
 .mat-tab-labels:has(.pin-tabs) > .mat-tab-label-active .pin-tabs{color:#fff !important}
 .mat-tab-labels:has(.pin-tabs) > .mat-tab-label-active + .mat-tab-label{border-left-color:transparent !important}
 
@@ -658,18 +658,18 @@ css('gt-player-style', `
    HTML'e dokunulmaz; sadece <active-queued-optedin-bonus> bileşeni. */
 div:has(> active-queued-optedin-bonus){overflow-y:auto !important}
 active-queued-optedin-bonus{display:block; box-sizing:border-box; margin:10px 0; padding:14px 16px 6px; background:#fff;
-  border:1px solid #e4e7ec; border-radius:14px; box-shadow:0 1px 2px rgba(16,24,40,.04); font-family:var(--gt-font); color:#1b1f24}
-active-queued-optedin-bonus .active-bonus-title{display:block; margin-bottom:10px; font-size:14px; font-weight:600; letter-spacing:-.1px; color:#1b1f24}
-active-queued-optedin-bonus table.player-active-bonuses-table{width:100%; border-collapse:collapse; font-size:12.5px; color:#1b1f24}
+  border:1px solid #e4e7ec; border-radius:14px; box-shadow:0 1px 2px rgba(16,24,40,.04); font-family:var(--gt-font); color:var(--gt-text, #1b1f24)}
+active-queued-optedin-bonus .active-bonus-title{display:block; margin-bottom:10px; font-size:14px; font-weight:600; letter-spacing:-.1px; color:var(--gt-text, #1b1f24)}
+active-queued-optedin-bonus table.player-active-bonuses-table{width:100%; border-collapse:collapse; font-size:12.5px; color:var(--gt-text, #1b1f24)}
 active-queued-optedin-bonus thead th{position:sticky; top:0; z-index:1; background:#fff; padding:0 10px 8px !important;
   font-size:11px; font-weight:500; color:#8e8e93; border:0 !important; border-bottom:1px solid #eceef1 !important;
   text-decoration:none !important; white-space:nowrap}
 active-queued-optedin-bonus tbody td{padding:9px 10px !important; border:0; border-bottom:1px solid #f2f3f5; vertical-align:middle;
-  color:#1b1f24; font-variant-numeric:tabular-nums; white-space:nowrap}
+  color:var(--gt-text, #1b1f24); font-variant-numeric:tabular-nums; white-space:nowrap}
 active-queued-optedin-bonus tbody tr:last-child td{border-bottom:0}
 active-queued-optedin-bonus tbody tr:hover td{background:#fafbfc}
 active-queued-optedin-bonus tbody td:nth-child(2){font-weight:700}
-active-queued-optedin-bonus .more-link{color:#1b1f24 !important; font-weight:600; cursor:help}
+active-queued-optedin-bonus .more-link{color:var(--gt-text, #1b1f24) !important; font-weight:600; cursor:help}
 active-queued-optedin-bonus .more-link:hover{text-decoration:underline}
 active-queued-optedin-bonus a.fa-times{display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px;
   border-radius:7px; font-size:15px; color:#98a2b3 !important; text-decoration:none; cursor:pointer;
@@ -680,11 +680,11 @@ active-queued-optedin-bonus a.fa-times:hover{background:#fdecec; color:#d70015 !
 /* Son bonus: buton kutusunda, son 3 bonus 2 sn'de bir yukarıdan kayarak döner. */
 #gt-lookup .lastbonus{display:inline-flex; align-items:center; gap:7px; box-sizing:border-box; height:28px; padding:0 11px;
   background:#fff; border:1px solid #d9dde3; border-radius:8px; box-shadow:0 1px 1.5px rgba(16,24,40,.06);
-  font-family:var(--gt-font); font-size:12.5px; font-weight:600; color:#1b1f24; white-space:nowrap; cursor:pointer;
+  font-family:var(--gt-font); font-size:12.5px; font-weight:600; color:var(--gt-text, #1b1f24); white-space:nowrap; cursor:pointer;
   user-select:none; transition:background-color .12s, border-color .12s}
 #gt-lookup .lastbonus:hover{background:#f5f6f8; border-color:#c9ced6}
 #gt-lookup .lastbonus b{font-weight:700}
-#gt-lookup .lb-n{font-size:11px; font-weight:500; color:#1b1f24; font-variant-numeric:tabular-nums;
+#gt-lookup .lb-n{font-size:11px; font-weight:500; color:var(--gt-text, #1b1f24); font-variant-numeric:tabular-nums;
   padding-right:7px; border-right:1px solid #eceef1}
 #gt-lookup .lb-n:empty{display:none}
 #gt-lookup .lb-view{display:inline-grid; overflow:hidden; height:18px; line-height:18px}
@@ -699,7 +699,7 @@ active-queued-optedin-bonus a.fa-times:hover{background:#fdecec; color:#d70015 !
 #gt-dash:not(.floating){position:relative}
 #gt-cmt{position:absolute; bottom:calc(100% + 10px); height:74px; box-sizing:border-box; padding:9px 14px;
   background:#fff; border:1px solid #e4e7ec; border-radius:12px; box-shadow:0 1px 2px rgba(16,24,40,.05);
-  font-family:var(--gt-font); color:#1b1f24; cursor:pointer; user-select:none; overflow:hidden; text-align:left}
+  font-family:var(--gt-font); color:var(--gt-text, #1b1f24); cursor:pointer; user-select:none; overflow:hidden; text-align:left}
 #gt-cmt:hover{border-color:#c9ced6}
 #gt-cmt .cm-view{display:grid; height:100%; overflow:hidden}
 #gt-cmt .cm-item{grid-area:1/1; display:flex; flex-direction:column; gap:4px; min-width:0;
