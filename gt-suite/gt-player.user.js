@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.18
+// @version      1.0.19
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -607,8 +607,22 @@ css('gt-player-style', `
 .mat-tab-labels:has(.pin-tabs) > .mat-tab-label-active + .mat-tab-label{border-left-color:transparent !important}
 
 #gt-lookup{display:inline-flex; align-items:center; gap:8px; margin-left:12px; vertical-align:middle; position:relative; top:2px}
-#gt-lookup .lastbonus{font-family:var(--gt-font); font-size:12px; font-weight:500; color:var(--gt-accent); white-space:nowrap}
+/* Son bonus: buton kutusunda, son 3 bonus 2 sn'de bir yukarıdan kayarak döner. */
+#gt-lookup .lastbonus{display:inline-flex; align-items:center; gap:7px; box-sizing:border-box; height:28px; padding:0 11px;
+  background:#fff; border:1px solid #d9dde3; border-radius:8px; box-shadow:0 1px 1.5px rgba(16,24,40,.06);
+  font-family:var(--gt-font); font-size:12.5px; font-weight:600; color:#1b1f24; white-space:nowrap; cursor:pointer;
+  user-select:none; transition:background-color .12s, border-color .12s}
+#gt-lookup .lastbonus:hover{background:#f5f6f8; border-color:#c9ced6}
 #gt-lookup .lastbonus b{font-weight:700}
+#gt-lookup .lb-n{font-size:11px; font-weight:500; color:#1b1f24; font-variant-numeric:tabular-nums;
+  padding-right:7px; border-right:1px solid #eceef1}
+#gt-lookup .lb-n:empty{display:none}
+#gt-lookup .lb-view{display:inline-grid; overflow:hidden; height:18px; line-height:18px}
+#gt-lookup .lb-item{grid-area:1/1; transform:translateY(-100%); opacity:0;
+  transition:transform .35s cubic-bezier(.2,.7,.2,1), opacity .35s}
+#gt-lookup .lb-item.is-in{transform:none; opacity:1}
+#gt-lookup .lb-item.is-out{transform:translateY(100%); opacity:0}
+@media (prefers-reduced-motion:reduce){#gt-lookup .lb-item{transition:none}}
 
 #gt-comments{position:fixed; top:20px; right:20px; width:340px; max-width:calc(100vw - 20px); max-height:70vh;
   background:rgba(255,255,255,.88); backdrop-filter:blur(20px) saturate(180%); -webkit-backdrop-filter:blur(20px) saturate(180%);
@@ -1603,13 +1617,55 @@ GT.define({
         const lookupBtn = (icon, label, title, key, run) =>
             ui.button({ label, title, key, icon, small: true, onClick: run });
 
+        /** Son 3 bonus (en yeni önce) 2 sn'de bir döner; tıklayınca sıradakine geçer,
+         *  fare üzerindeyken durur. */
+        function bonusTicker() {
+            const count = h('span', { class: 'lb-n' });
+            const view = h('span', { class: 'lb-view' }, h('span', { class: 'lb-item is-in' }, '…'));
+            const root = h('span', { class: 'lastbonus' }, h('b', {}, 'Son bonus'), count, view);
+            // Alan "Select Tag"ın içinde: tıklama yukarı çıkarsa etiket listesi açılıyor.
+            for (const ev of ['mousedown', 'pointerdown', 'click']) root.addEventListener(ev, (e) => { e.stopPropagation(); e.preventDefault(); });
+
+            let items = [], i = 0, timer = null, paused = false;
+            const stop = () => clearInterval(timer);
+            ctx.onDestroy(stop);
+            const show = (next) => {
+                const prev = items[i];
+                prev.classList.replace('is-in', 'is-out');
+                const cur = items[next];
+                cur.classList.remove('is-out');
+                void cur.offsetWidth; // bekleme konumundan (yukarıdan) başlasın
+                cur.classList.add('is-in');
+                i = next;
+                count.textContent = `${i + 1}/${items.length}`;
+                setTimeout(() => { if (prev !== items[i]) prev.classList.remove('is-out'); }, 360);
+            };
+            const step = () => { if (!root.isConnected) return stop(); if (!paused) show((i + 1) % items.length); };
+            const restart = () => { stop(); timer = setInterval(step, 2000); };
+
+            bonuses(pid).then((list) => {
+                const names = list.slice(0, 3).map(b => b.planName).filter(Boolean);
+                items = (names.length ? names : ['—']).map(n => h('span', { class: 'lb-item' }, n));
+                view.replaceChildren(...items);
+                items[0].classList.add('is-in');
+                if (!names.length) return;
+                count.textContent = `1/${items.length}`;
+                if (items.length < 2) return;
+                root.title = 'Tıkla: sıradaki bonus';
+                root.addEventListener('click', () => { show((i + 1) % items.length); restart(); });
+                root.addEventListener('mouseenter', () => { paused = true; });
+                root.addEventListener('mouseleave', () => { paused = false; });
+                restart();
+            }).catch(() => { view.replaceChildren(h('span', { class: 'lb-item is-in' }, '—')); });
+            return root;
+        }
+
         ctx.mount(
             () => $$('mat-label').find(el => /Select Tag|Etiket Seç/.test(el.textContent))
                     ?.closest('.mat-form-field-infix, .mat-mdc-form-field-infix, .mat-form-field-flex'),
             'gt-lookup',
             () => {
-                const label = h('span', { class: 'lastbonus' });
-                bonuses(pid).then(list => { label.innerHTML = `<b>Son bonus:</b> ${esc(list[0]?.planName || '—')}`; }).catch(() => {});
+                const label = bonusTicker();
                 return h('span', {},
                     h('span', { class: 'gt-group' },
                         lookupBtn(ICON.search, 'IP', 'Aynı IP\'deki hesaplar', 'alt+p', showDuplicates),
