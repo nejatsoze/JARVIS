@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Shell — arayüz iskeleti
 // @namespace    palentis.gt
-// @version      1.0.11
+// @version      1.0.12
 // @description  Her sayfada geçerli arayüz katmanı: varsayılan sayfa yönlendirme, logo yerine hızlı gezinme butonları, kapalı başlayan sidebar, navbar saatleri (GMT+0/+3/+8), alt sekmelerin butonlaştırılması, COMMENTS uyarısı ve bildirim şeritlerinin toast'a dönüşümü. GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
@@ -89,7 +89,8 @@ GT.define({
 });
 
 /* ════════════════════════════════════════════════════════════
-   2 · LOGO YERİNE HIZLI GEZİNME
+   2 · LOGO GİZLİ — Oyuncu Ara / Çekimler butonları kaldırıldı; yerlerini
+   sekme çubuğundaki sabit Pending Withdrawals + Player Search aldı (4c).
    ════════════════════════════════════════════════════════════ */
 GT.define({
     id: 'shell-nav',
@@ -97,37 +98,7 @@ GT.define({
     setup(ctx) {
         const B64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAA';
         const LOGO = `img[src^="${B64}"], img[src*="new_logo.png"], .sidebar-logo.omega-logo-white`;
-
-        css('gt-shell-nav', `
-        #gt-nav{position:absolute; left:52px; top:50%; transform:translateY(-50%); z-index:11; margin:0;
-          display:inline-flex !important}
-        /* Üst barın kendi a/div kuralları ID ile geçilir. */
-        #gt-nav > a{color:var(--gt-text, #343a43); text-decoration:none; font:600 12.5px/1 var(--gt-font); height:28px; padding:0 12px}
-        #gt-nav > a:hover{background:#f5f6f8}
-        #gt-nav > a.is-active{background:var(--gt-strong, #525a66); color:#fff}`);
-
-        const link = (label, path) => h('a', {
-            class: 'gt-btn', 'data-path': path,
-            href: path, routerlink: path.replace('/core', ''), routerlinkactive: 'true',
-            onclick: (e) => { e.preventDefault(); router.go(path); },
-        }, label);
-
-        // Logo kutusu her hâlükârda gizlenir; butonlar artık ona bağlı değil.
         ctx.each(LOGO, (el) => el.style.setProperty('display', 'none', 'important'));
-
-        // Çapa üst bar: sidebar kapanınca logo yuvası DOM'dan gidiyordu ve
-        // butonlar onunla birlikte kayboluyordu. Üst bar her zaman yerinde.
-        ctx.mount(topBar, 'gt-nav', (bar) => {
-            if (getComputedStyle(bar).position === 'static') bar.style.position = 'relative';
-            return h('div', { class: 'gt-group' }, link('Oyuncu Ara', SEARCH), link('Çekimler', PENDING));
-        });
-
-        // Bulunulan sayfanın butonu koyu (seçili) görünür.
-        const markActive = () => {
-            for (const a of $$('#gt-nav a[data-path]')) a.classList.toggle('is-active', location.pathname.startsWith(a.dataset.path));
-        };
-        ctx.tick(markActive, { lazy: true });
-        ctx.onRoute(markActive);
     },
 });
 
@@ -256,7 +227,7 @@ GT.define({
 GT.define({
     id: 'shell-wintabs',
     source: 'shell',
-    setup() {
+    setup(ctx) {
         css('gt-shell-wintabs', `
         /* Üstteki pencere sekmeleri (sitenin açtığı oyuncu sekmeleri): adacık, aktif koyu,
            × büyük ve üzerine gelince kırmızı. Pin işlevsiz olduğu için gizli. */
@@ -283,8 +254,36 @@ GT.define({
         .mat-tab-nav-bar a.mat-tab-link.mat-tab-label-active + a.mat-tab-link{border-left-color:transparent !important}
         .mat-tab-nav-bar a.mat-tab-link[data-gt-tab]{background:var(--gt-strong, #525a66) !important; color:#fff !important}
         .mat-tab-nav-bar a.mat-tab-link[data-gt-tab] + a.mat-tab-link{border-left-color:transparent !important}
-        .mat-tab-nav-bar a.mat-tab-link[data-gt-tab] .close-tabs{color:#c9ced6 !important}
-        .mat-tab-nav-bar a.mat-tab-link[data-gt-tab] .close-tabs:hover{background:#d70015 !important; color:#fff !important}`);
+        .mat-tab-nav-bar a.mat-tab-link[data-gt-tab]{padding-right:12px !important}
+        .mat-tab-nav-bar a.mat-tab-link[data-gt-tab] .close-tabs{display:none !important}
+        .mat-tab-nav-bar a.mat-tab-link[data-gt-tab] + a.mat-tab-link[data-gt-tab]{border-left:1px solid rgba(255,255,255,.14) !important}
+        /* Açık olan sabit sekme: turuncu alt çizgi + hafif ışıma */
+        .mat-tab-nav-bar a.mat-tab-link[data-gt-tab].gt-here{
+          box-shadow:inset 0 -3px 0 #f59e0b, inset 0 -10px 12px -8px rgba(245,158,11,.55) !important}
+        /* Sitenin kendi Player Search sekmesi gizli: yerine sabit olanı var */
+        .mat-tab-nav-bar a.mat-tab-link[href*="/players/search"]:not([data-gt-tab]){display:none !important}`);
+
+        // Sabit Player Search sekmesi: Pending Withdrawals'ın hemen yanında.
+        // Sekme listesi sitenin kodu tarafından yeniden çizilebilir; kaybolursa geri konur.
+        const searchTab = ctx.own(h('a', {
+            id: 'gt-search-tab', class: 'mat-tab-link', 'data-gt-tab': '2', href: SEARCH,
+            onclick: (e) => { e.preventDefault(); e.stopPropagation(); router.go(SEARCH); },
+        }, h('span', { class: 'inner-ellipsis-overflow' }, 'Player Search')));
+
+        const sync = () => {
+            const list = $('.mat-tab-nav-bar .mat-tab-links');
+            if (!list) return;
+            const pending = list.querySelector('a.mat-tab-link[data-gt-tab="1"]');
+            const want = pending ? pending.nextElementSibling : list.firstElementChild;
+            if (searchTab.parentElement !== list || (want !== searchTab)) {
+                pending ? pending.after(searchTab) : list.prepend(searchTab);
+            }
+            const path = location.pathname;
+            pending?.classList.toggle('gt-here', path.startsWith(PENDING));
+            searchTab.classList.toggle('gt-here', path.includes('/players/search'));
+        };
+        ctx.tick(sync, { lazy: true });
+        ctx.onRoute(sync);
     },
 });
 
