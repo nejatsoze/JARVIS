@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Shell — arayüz iskeleti
 // @namespace    palentis.gt
-// @version      1.0.12
+// @version      1.0.13
 // @description  Her sayfada geçerli arayüz katmanı: varsayılan sayfa yönlendirme, logo yerine hızlı gezinme butonları, kapalı başlayan sidebar, navbar saatleri (GMT+0/+3/+8), alt sekmelerin butonlaştırılması, COMMENTS uyarısı ve bildirim şeritlerinin toast'a dönüşümü. GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
@@ -257,13 +257,15 @@ GT.define({
         .mat-tab-nav-bar a.mat-tab-link[data-gt-tab]{padding-right:12px !important}
         .mat-tab-nav-bar a.mat-tab-link[data-gt-tab] .close-tabs{display:none !important}
         .mat-tab-nav-bar a.mat-tab-link[data-gt-tab] + a.mat-tab-link[data-gt-tab]{border-left:1px solid rgba(255,255,255,.14) !important}
-        /* Açık olan sabit sekme: turuncu alt çizgi + hafif ışıma */
+        /* Açık olan sabit sekme: neon turuncu alt çizgi + ışıma */
         .mat-tab-nav-bar a.mat-tab-link[data-gt-tab].gt-here{
-          box-shadow:inset 0 -3px 0 #f59e0b, inset 0 -10px 12px -8px rgba(245,158,11,.55) !important}
+          box-shadow:inset 0 -3px 0 #ffa31a, inset 0 -4px 6px -1px rgba(255,163,26,.9),
+            inset 0 -16px 18px -10px rgba(255,163,26,.75) !important;
+          text-shadow:0 0 8px rgba(255,190,90,.45)}
         /* Sitenin kendi Player Search sekmesi gizli: yerine sabit olanı var */
         .mat-tab-nav-bar a.mat-tab-link[href*="/players/search"]:not([data-gt-tab]){display:none !important}`);
 
-        // Sabit Player Search sekmesi: Pending Withdrawals'ın hemen yanında.
+        // Sabit Player Search sekmesi: en solda, Pending Withdrawals'ın önünde.
         // Sekme listesi sitenin kodu tarafından yeniden çizilebilir; kaybolursa geri konur.
         const searchTab = ctx.own(h('a', {
             id: 'gt-search-tab', class: 'mat-tab-link', 'data-gt-tab': '2', href: SEARCH,
@@ -274,10 +276,9 @@ GT.define({
             const list = $('.mat-tab-nav-bar .mat-tab-links');
             if (!list) return;
             const pending = list.querySelector('a.mat-tab-link[data-gt-tab="1"]');
-            const want = pending ? pending.nextElementSibling : list.firstElementChild;
-            if (searchTab.parentElement !== list || (want !== searchTab)) {
-                pending ? pending.after(searchTab) : list.prepend(searchTab);
-            }
+            const placed = searchTab.parentElement === list
+                && (pending ? pending.previousElementSibling === searchTab : list.firstElementChild === searchTab);
+            if (!placed) pending ? pending.before(searchTab) : list.prepend(searchTab);
             const path = location.pathname;
             pending?.classList.toggle('gt-here', path.startsWith(PENDING));
             searchTab.classList.toggle('gt-here', path.includes('/players/search'));
