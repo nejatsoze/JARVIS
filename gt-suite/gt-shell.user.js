@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Shell — arayüz iskeleti
 // @namespace    palentis.gt
-// @version      1.0.14
+// @version      1.0.15
 // @description  Her sayfada geçerli arayüz katmanı: varsayılan sayfa yönlendirme, logo yerine hızlı gezinme butonları, kapalı başlayan sidebar, navbar saatleri (GMT+0/+3/+8), alt sekmelerin butonlaştırılması, COMMENTS uyarısı ve bildirim şeritlerinin toast'a dönüşümü. GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
@@ -85,6 +85,21 @@ GT.define({
         guard();
         ctx.onRoute(guard);
         ctx.tick(() => { guard(); retab(); });
+
+        // Sekme × ile kapatılınca site Player Search'e düşüyor; kısa süre içinde oraya
+        // (ya da overview'a) giderse Pending Withdrawals'a çevir.
+        let closedAt = 0;
+        ctx.on(W.document, 'click', (e) => {
+            if (e.target.closest?.('.mat-tab-nav-bar .close-tabs')) closedAt = Date.now();
+        }, { capture: true });
+        ctx.onRoute(() => {
+            if (Date.now() - closedAt > 2000) return;
+            const path = location.pathname;
+            if (path.includes('/players/search') || path.includes('/classic/overview')) {
+                closedAt = 0;
+                router.go(PENDING);
+            }
+        });
     },
 });
 
