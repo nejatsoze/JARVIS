@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Shell — arayüz iskeleti
 // @namespace    palentis.gt
-// @version      1.0.9
+// @version      1.0.10
 // @description  Her sayfada geçerli arayüz katmanı: varsayılan sayfa yönlendirme, logo yerine hızlı gezinme butonları, kapalı başlayan sidebar, navbar saatleri (GMT+0/+3/+8), alt sekmelerin butonlaştırılması, COMMENTS uyarısı ve bildirim şeritlerinin toast'a dönüşümü. GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
@@ -202,43 +202,7 @@ GT.define({
         #gt-clocks .clk[data-tz="Asia/Hong_Kong"] .dn{background:#f59e0b !important; animation:gt-beacon 2.4s ease-in-out infinite}
         @keyframes gt-beacon{0%,100%{opacity:.25; box-shadow:0 0 0 rgba(245,158,11,0)}
           50%{opacity:1; box-shadow:0 0 6px 1px rgba(245,158,11,.85)}}
-        @media (prefers-reduced-motion:reduce){#gt-clocks .clk[data-tz="Asia/Hong_Kong"] .dn{animation:none}}
-
-        /* Sağdaki hesap alanı: avatar, dil ve tarih gizli; kullanıcı adı yerine MARCUS.
-           Tıklanınca sitenin hesap menüsü (şifre, tema) yine açılır. */
-        ul.nav-account-info .thumb-sm, ul.nav-account-info > li:not(:first-child){display:none !important}
-        ul.nav-account-info > li:first-child strong{font-size:0 !important}
-        ul.nav-account-info > li:first-child strong::after{content:'MARCUS'; font-family:var(--gt-font); font-size:12.5px;
-          font-weight:700; letter-spacing:.08em; color:var(--gt-text, #343a43)}
-        /* Hesap menüsü ekranın sağ kenarında: sağa değil sola doğru açılsın. */
-        ul.nav-account-info > li:first-child > .dropdown-menu{left:auto !important; right:0 !important}
-
-        /* Üstteki pencere sekmeleri (sitenin açtığı oyuncu sekmeleri): adacık, aktif koyu,
-           × büyük ve üzerine gelince kırmızı. Pin işlevsiz olduğu için gizli. */
-        .mat-tab-nav-bar .mat-ink-bar{display:none !important}
-        .mat-tab-nav-bar .mat-tab-links{display:inline-flex !important; background:#fff; border:1px solid #d9dde3; border-radius:9px;
-          box-shadow:0 1px 1.5px rgba(16,24,40,.06); overflow:hidden; margin:4px 0 6px}
-        /* Pending sayfasının içerik paneli sekme çubuğuna doğru taşıp adacığın altını örtüyordu. */
-        .router-tab-header-container{position:relative !important; z-index:3 !important}
-        .mat-tab-nav-bar a.mat-tab-link{height:30px !important; min-width:0 !important; margin:0 !important; padding:0 5px 0 12px !important;
-          gap:4px; opacity:1 !important; border:0 !important; border-radius:0 !important; background:#fff !important; color:#344054 !important;
-          font-family:var(--gt-font) !important; font-size:12px !important; font-weight:600 !important; text-decoration:none !important;
-          transition:background-color .12s}
-        .mat-tab-nav-bar a.mat-tab-link + a.mat-tab-link{border-left:1px solid #eceef1 !important}
-        .mat-tab-nav-bar a.mat-tab-link:hover{background:#f5f6f8 !important}
-        .mat-tab-nav-bar a.mat-tab-link .inner-ellipsis-overflow{max-width:190px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:0 2px 0 0 !important}
-        .mat-tab-nav-bar a.mat-tab-link .fa-thumb-tack{display:none !important}
-        .mat-tab-nav-bar a.mat-tab-link .close-tabs{display:inline-flex !important; align-items:center; justify-content:center; width:22px; height:22px;
-          position:static !important; float:none !important; inset:auto !important; transform:none !important; flex:none;
-          margin:0 !important; border-radius:6px; font-size:13px !important; color:#8e8e93 !important; cursor:pointer; transition:background-color .12s, color .12s}
-        .mat-tab-nav-bar a.mat-tab-link .close-tabs:hover{background:#fdecec !important; color:#d70015 !important}
-        /* Üç ton: sabit Pending Withdrawals koyu gri · seçili sekme açık gri · diğerleri beyaz */
-        .mat-tab-nav-bar a.mat-tab-link.mat-tab-label-active{background:#e1e5ea !important; color:var(--gt-text, #343a43) !important}
-        .mat-tab-nav-bar a.mat-tab-link.mat-tab-label-active + a.mat-tab-link{border-left-color:transparent !important}
-        .mat-tab-nav-bar a.mat-tab-link[data-gt-tab]{background:var(--gt-strong, #525a66) !important; color:#fff !important}
-        .mat-tab-nav-bar a.mat-tab-link[data-gt-tab] + a.mat-tab-link{border-left-color:transparent !important}
-        .mat-tab-nav-bar a.mat-tab-link[data-gt-tab] .close-tabs{color:#c9ced6 !important}
-        .mat-tab-nav-bar a.mat-tab-link[data-gt-tab] .close-tabs:hover{background:#d70015 !important; color:#fff !important}`);
+        @media (prefers-reduced-motion:reduce){#gt-clocks .clk[data-tz="Asia/Hong_Kong"] .dn{animation:none}}`);
 
         const paint = (group) => {
             for (const el of group.children) {
@@ -264,6 +228,60 @@ GT.define({
             const group = document.getElementById('gt-clocks');
             if (group?.isConnected) paint(group);
         }, 1000);
+    },
+});
+
+/* ════════════════════════════════════════════════════════════
+   4b · HESAP ALANI — avatar/dil/tarih gizli, kullanıcı adı yerine MARCUS
+   ════════════════════════════════════════════════════════════ */
+GT.define({
+    id: 'shell-account',
+    source: 'shell',
+    setup() {
+        css('gt-shell-account', `
+        /* Sağdaki hesap alanı: avatar, dil ve tarih gizli; kullanıcı adı yerine MARCUS.
+           Tıklanınca sitenin hesap menüsü (şifre, tema) yine açılır. */
+        ul.nav-account-info .thumb-sm, ul.nav-account-info > li:not(:first-child){display:none !important}
+        ul.nav-account-info > li:first-child strong{font-size:0 !important}
+        ul.nav-account-info > li:first-child strong::after{content:'MARCUS'; font-family:var(--gt-font); font-size:12.5px;
+          font-weight:700; letter-spacing:.08em; color:var(--gt-text, #343a43)}
+        /* Hesap menüsü ekranın sağ kenarında: sağa değil sola doğru açılsın. */
+        ul.nav-account-info > li:first-child > .dropdown-menu{left:auto !important; right:0 !important}`);
+    },
+});
+
+/* ════════════════════════════════════════════════════════════
+   4c · PENCERE SEKMELERİ — sitenin üstteki oyuncu sekmeleri
+   ════════════════════════════════════════════════════════════ */
+GT.define({
+    id: 'shell-wintabs',
+    source: 'shell',
+    setup() {
+        css('gt-shell-wintabs', `
+        /* Üstteki pencere sekmeleri (sitenin açtığı oyuncu sekmeleri): adacık, aktif koyu,
+           × büyük ve üzerine gelince kırmızı. Pin işlevsiz olduğu için gizli. */
+        .mat-tab-nav-bar .mat-ink-bar{display:none !important}
+        .mat-tab-nav-bar .mat-tab-links{display:inline-flex !important; background:#fff; border:1px solid #d9dde3; border-radius:9px;
+          box-shadow:0 1px 1.5px rgba(16,24,40,.06); overflow:hidden; margin:4px 0 6px}
+        .mat-tab-nav-bar a.mat-tab-link{height:30px !important; min-width:0 !important; margin:0 !important; padding:0 5px 0 12px !important;
+          gap:4px; opacity:1 !important; border:0 !important; border-radius:0 !important; background:#fff !important; color:#344054 !important;
+          font-family:var(--gt-font) !important; font-size:12px !important; font-weight:600 !important; text-decoration:none !important;
+          transition:background-color .12s}
+        .mat-tab-nav-bar a.mat-tab-link + a.mat-tab-link{border-left:1px solid #eceef1 !important}
+        .mat-tab-nav-bar a.mat-tab-link:hover{background:#f5f6f8 !important}
+        .mat-tab-nav-bar a.mat-tab-link .inner-ellipsis-overflow{max-width:190px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:0 2px 0 0 !important}
+        .mat-tab-nav-bar a.mat-tab-link .fa-thumb-tack{display:none !important}
+        .mat-tab-nav-bar a.mat-tab-link .close-tabs{display:inline-flex !important; align-items:center; justify-content:center; width:22px; height:22px;
+          position:static !important; float:none !important; inset:auto !important; transform:none !important; flex:none;
+          margin:0 !important; border-radius:6px; font-size:13px !important; color:#8e8e93 !important; cursor:pointer; transition:background-color .12s, color .12s}
+        .mat-tab-nav-bar a.mat-tab-link .close-tabs:hover{background:#fdecec !important; color:#d70015 !important}
+        /* Üç ton: sabit Pending Withdrawals koyu gri · seçili sekme açık gri · diğerleri beyaz */
+        .mat-tab-nav-bar a.mat-tab-link.mat-tab-label-active{background:#e1e5ea !important; color:var(--gt-text, #343a43) !important}
+        .mat-tab-nav-bar a.mat-tab-link.mat-tab-label-active + a.mat-tab-link{border-left-color:transparent !important}
+        .mat-tab-nav-bar a.mat-tab-link[data-gt-tab]{background:var(--gt-strong, #525a66) !important; color:#fff !important}
+        .mat-tab-nav-bar a.mat-tab-link[data-gt-tab] + a.mat-tab-link{border-left-color:transparent !important}
+        .mat-tab-nav-bar a.mat-tab-link[data-gt-tab] .close-tabs{color:#c9ced6 !important}
+        .mat-tab-nav-bar a.mat-tab-link[data-gt-tab] .close-tabs:hover{background:#d70015 !important; color:#fff !important}`);
     },
 });
 
