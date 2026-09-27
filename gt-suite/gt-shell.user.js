@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Shell — arayüz iskeleti
 // @namespace    palentis.gt
-// @version      1.0.8
+// @version      1.0.9
 // @description  Her sayfada geçerli arayüz katmanı: varsayılan sayfa yönlendirme, logo yerine hızlı gezinme butonları, kapalı başlayan sidebar, navbar saatleri (GMT+0/+3/+8), alt sekmelerin butonlaştırılması, COMMENTS uyarısı ve bildirim şeritlerinin toast'a dönüşümü. GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
@@ -217,7 +217,9 @@ GT.define({
            × büyük ve üzerine gelince kırmızı. Pin işlevsiz olduğu için gizli. */
         .mat-tab-nav-bar .mat-ink-bar{display:none !important}
         .mat-tab-nav-bar .mat-tab-links{display:inline-flex !important; background:#fff; border:1px solid #d9dde3; border-radius:9px;
-          box-shadow:0 1px 1.5px rgba(16,24,40,.06); overflow:hidden; margin:4px 0}
+          box-shadow:0 1px 1.5px rgba(16,24,40,.06); overflow:hidden; margin:4px 0 6px}
+        /* Pending sayfasının içerik paneli sekme çubuğuna doğru taşıp adacığın altını örtüyordu. */
+        .router-tab-header-container{position:relative !important; z-index:3 !important}
         .mat-tab-nav-bar a.mat-tab-link{height:30px !important; min-width:0 !important; margin:0 !important; padding:0 5px 0 12px !important;
           gap:4px; opacity:1 !important; border:0 !important; border-radius:0 !important; background:#fff !important; color:#344054 !important;
           font-family:var(--gt-font) !important; font-size:12px !important; font-weight:600 !important; text-decoration:none !important;
