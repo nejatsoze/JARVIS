@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Shell — arayüz iskeleti
 // @namespace    palentis.gt
-// @version      1.0.13
+// @version      1.0.14
 // @description  Her sayfada geçerli arayüz katmanı: varsayılan sayfa yönlendirme, logo yerine hızlı gezinme butonları, kapalı başlayan sidebar, navbar saatleri (GMT+0/+3/+8), alt sekmelerin butonlaştırılması, COMMENTS uyarısı ve bildirim şeritlerinin toast'a dönüşümü. GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
@@ -233,11 +233,11 @@ GT.define({
            × büyük ve üzerine gelince kırmızı. Pin işlevsiz olduğu için gizli. */
         .mat-tab-nav-bar .mat-ink-bar{display:none !important}
         /* Eski tip sayfaların iframe'i site tarafından top:26px (eski ince sekme çubuğu)
-           ile yerleştiriliyor; bizim çubuğumuz ~42px olduğu için sekmenin altını örtüyordu. */
-        iframe-projector iframe{top:42px !important}
+           ile yerleştiriliyor; bizim çubuğumuz ~44px olduğu için sekmenin altını örtüyordu. */
+        iframe-projector iframe{top:44px !important}
         .mat-tab-nav-bar .mat-tab-links{display:inline-flex !important; background:#fff; border:1px solid #d9dde3; border-radius:9px;
           box-shadow:0 1px 1.5px rgba(16,24,40,.06); overflow:hidden; margin:4px 0 6px}
-        .mat-tab-nav-bar a.mat-tab-link{height:30px !important; min-width:0 !important; margin:0 !important; padding:0 5px 0 12px !important;
+        .mat-tab-nav-bar a.mat-tab-link{height:32px !important; min-width:0 !important; margin:0 !important; padding:0 0 0 12px !important;
           gap:4px; opacity:1 !important; border:0 !important; border-radius:0 !important; background:#fff !important; color:#344054 !important;
           font-family:var(--gt-font) !important; font-size:12px !important; font-weight:600 !important; text-decoration:none !important;
           transition:background-color .12s}
@@ -245,9 +245,9 @@ GT.define({
         .mat-tab-nav-bar a.mat-tab-link:hover{background:#f5f6f8 !important}
         .mat-tab-nav-bar a.mat-tab-link .inner-ellipsis-overflow{max-width:190px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin:0 2px 0 0 !important}
         .mat-tab-nav-bar a.mat-tab-link .fa-thumb-tack{display:none !important}
-        .mat-tab-nav-bar a.mat-tab-link .close-tabs{display:inline-flex !important; align-items:center; justify-content:center; width:22px; height:22px;
+        .mat-tab-nav-bar a.mat-tab-link .close-tabs{display:inline-flex !important; align-items:center; justify-content:center; width:32px; height:32px;
           position:static !important; float:none !important; inset:auto !important; transform:none !important; flex:none;
-          margin:0 !important; border-radius:6px; font-size:13px !important; color:#8e8e93 !important; cursor:pointer; transition:background-color .12s, color .12s}
+          margin:0 0 0 4px !important; border-radius:0; font-size:16px !important; color:#8e8e93 !important; cursor:pointer; transition:background-color .12s, color .12s}
         .mat-tab-nav-bar a.mat-tab-link .close-tabs:hover{background:#fdecec !important; color:#d70015 !important}
         /* Üç ton: sabit Pending Withdrawals koyu gri · seçili sekme açık gri · diğerleri beyaz */
         .mat-tab-nav-bar a.mat-tab-link.mat-tab-label-active{background:#e1e5ea !important; color:var(--gt-text, #343a43) !important}
