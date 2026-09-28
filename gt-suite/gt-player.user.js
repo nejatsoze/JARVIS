@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.28
+// @version      1.0.29
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -642,28 +642,24 @@ css('gt-player-style', `
 .mat-tab-labels:has(.pin-tabs){display:inline-flex !important; width:fit-content; background:#fff; border:1px solid #d9dde3;
   border-radius:9px; box-shadow:0 1px 1.5px rgba(16,24,40,.06); overflow:hidden}
 .mat-tab-list:has(.pin-tabs) .mat-ink-bar{display:none !important}
-/* Üstteki pencere sekmeleriyle aynı ölçü (32px, 12px yazı); raptiye yok. Seçili sekme
-   sabit sekmelerdeki gibi başında yanıp sönen turuncu noktayla belli olur (nokta yeri hep var, yazı kaymaz).
-   Yazı ile nokta arasını sitenin .pl-10 dolgusu açıyor. */
-.mat-tab-labels:has(.pin-tabs) > .mat-tab-label{height:32px !important; min-width:0 !important; margin:0 !important; padding:0 2px 0 12px !important;
+/* Üstteki pencere sekmeleriyle aynı ölçü (32px, 12px yazı). Her sekmenin kendi ikonu var
+   (.pin-tabs sınıflı mat-icon, raptiye değil); seçili sekmede ikon turuncu yanıp söner.
+   Yazı rengi zorla koyu: GT Shell'in eski "seçili sekme yazısı beyaz" kuralı burada geçmesin. */
+.mat-tab-labels:has(.pin-tabs) > .mat-tab-label{height:32px !important; min-width:0 !important; margin:0 !important; padding:0 2px !important;
   opacity:1 !important; background:#fff !important; color:#344054 !important; border:0 !important; border-radius:0 !important;
   font-family:var(--gt-font) !important; font-size:12px !important; font-weight:600 !important;
   transition:background-color .12s}
+.mat-tab-labels:has(.pin-tabs) > .mat-tab-label .mat-tab-label-content{color:#344054 !important}
 .mat-tab-labels:has(.pin-tabs) > .mat-tab-label + .mat-tab-label{border-left:1px solid #eceef1 !important}
 .mat-tab-labels:has(.pin-tabs) > .mat-tab-label:hover{background:#f5f6f8 !important}
-/* .pin-tabs raptiye değil: COMMENTS / APPLY BONUS sekmelerinin kendi ikonu (sadece ikonla görünüyorlar).
-   Onlarda nokta yok; seçiliyken ikonun kendisi turuncu yanıp söner. */
-.mat-tab-labels:has(.pin-tabs) > .mat-tab-label .pin-tabs{color:#98a2b3 !important; margin:0 !important}
-.mat-tab-labels:has(.pin-tabs) > .mat-tab-label:has(.pin-tabs)::before{display:none}
-.mat-tab-labels:has(.pin-tabs) > .mat-tab-label:has(.pin-tabs){padding:0 2px !important}
+.mat-tab-labels:has(.pin-tabs) > .mat-tab-label .pin-tabs{color:#98a2b3 !important}
 .mat-tab-labels:has(.pin-tabs) > .mat-tab-label-active .pin-tabs{color:#f59e0b !important; animation:gt-tabicon 2.4s ease-in-out infinite}
 @keyframes gt-tabicon{0%,100%{opacity:.45; text-shadow:none} 50%{opacity:1; text-shadow:0 0 6px rgba(245,158,11,.85)}}
-.mat-tab-labels:has(.pin-tabs) > .mat-tab-label::before{content:''; flex:none; width:6px; height:6px; border-radius:50%;
-  background:#d0d5dd}
-.mat-tab-labels:has(.pin-tabs) > .mat-tab-label-active::before{background:#f59e0b; animation:gt-tabdot 2.4s ease-in-out infinite}
-@keyframes gt-tabdot{0%,100%{opacity:.35; box-shadow:0 0 0 rgba(245,158,11,0)}
-  50%{opacity:1; box-shadow:0 0 6px 1px rgba(245,158,11,.85)}}
-@media (prefers-reduced-motion:reduce){.mat-tab-labels:has(.pin-tabs) > .mat-tab-label-active::before, .mat-tab-labels:has(.pin-tabs) > .mat-tab-label-active .pin-tabs{animation:none; opacity:1}}
+/* Okunmamış yorum uyarısı (GT Shell, COMMENTS (n>0)): kırmızı zemin korunur */
+.mat-tab-labels:has(.pin-tabs) > .mat-tab-label.gt-has-comments{background:#e5484d !important}
+.mat-tab-labels:has(.pin-tabs) > .mat-tab-label.gt-has-comments .mat-tab-label-content,
+.mat-tab-labels:has(.pin-tabs) > .mat-tab-label.gt-has-comments .pin-tabs{color:#fff !important}
+@media (prefers-reduced-motion:reduce){.mat-tab-labels:has(.pin-tabs) > .mat-tab-label-active .pin-tabs{animation:none; opacity:1}}
 
 /* Sitenin "Active / Queued / Opted-In Bonuses" tablosu: kart + sade tablo.
    HTML'e dokunulmaz; sadece <active-queued-optedin-bonus> bileşeni. */
