@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.29
+// @version      1.0.30
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -649,6 +649,12 @@ css('gt-player-style', `
   opacity:1 !important; background:#fff !important; color:#344054 !important; border:0 !important; border-radius:0 !important;
   font-family:var(--gt-font) !important; font-size:12px !important; font-weight:600 !important;
   transition:background-color .12s}
+/* Sitenin kendi !important'lı 20px yükseklik kuralı yukarıdakini eziyordu (ölçüldü: 20px);
+   seçici bilerek güçlendirildi, kapsayıcılar da sabit yükseklikte kalıp kesmesin. */
+html body .mat-tab-group .mat-tab-labels:has(.pin-tabs) > .mat-tab-label.mat-tab-label.mat-tab-label{height:32px !important; min-height:32px !important}
+html body .mat-tab-group .mat-tab-header:has(.pin-tabs),
+html body .mat-tab-group .mat-tab-label-container:has(.pin-tabs),
+html body .mat-tab-group .mat-tab-list:has(.pin-tabs){height:auto !important; min-height:0 !important}
 .mat-tab-labels:has(.pin-tabs) > .mat-tab-label .mat-tab-label-content{color:#344054 !important}
 .mat-tab-labels:has(.pin-tabs) > .mat-tab-label + .mat-tab-label{border-left:1px solid #eceef1 !important}
 .mat-tab-labels:has(.pin-tabs) > .mat-tab-label:hover{background:#f5f6f8 !important}
