@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Shell — arayüz iskeleti
 // @namespace    palentis.gt
-// @version      1.0.15
+// @version      1.0.16
 // @description  Her sayfada geçerli arayüz katmanı: varsayılan sayfa yönlendirme, logo yerine hızlı gezinme butonları, kapalı başlayan sidebar, navbar saatleri (GMT+0/+3/+8), alt sekmelerin butonlaştırılması, COMMENTS uyarısı ve bildirim şeritlerinin toast'a dönüşümü. GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
@@ -141,18 +141,22 @@ GT.define({
 });
 
 /* ════════════════════════════════════════════════════════════
-   4 · NAVBAR SAATLERİ (GMT+0 / +3 / +8)
-   Enjeksiyon bir kez; saniyede bir sadece üç metin düğümü yazılır.
+   4 · NAVBAR SAATLERİ — London / Istanbul / Pattaya / Bali / Tokyo (UTC sırası)
+   Her kutu kendi yerel saatine göre gökyüzü rengini alır; gün doğumu ve
+   batımı şehrin koordinatından o gün için hesaplanır. Nokta: doğuş/batış
+   turuncu, gündüz sarı (beyaz ışıma), gece beyaz; hepsi yanıp söner.
    ════════════════════════════════════════════════════════════ */
 GT.define({
     id: 'shell-clocks',
     source: 'shell',
     setup(ctx) {
-        // London bilerek sabit UTC+0 (yaz saati uygulanmaz); İstanbul ve Hong Kong zaten sabit.
+        // London bilerek sabit UTC+0 (yaz saati uygulanmaz).
         const CLOCKS = [
-            { city: 'London', tz: 'UTC' },
-            { city: 'Istanbul', tz: 'Europe/Istanbul' },
-            { city: 'Hong Kong', tz: 'Asia/Hong_Kong' },
+            { city: 'London',   tz: 'UTC',            lat: 51.507, lng: -0.128 },
+            { city: 'Istanbul', tz: 'Europe/Istanbul', lat: 41.008, lng: 28.978 },
+            { city: 'Pattaya',  tz: 'Asia/Bangkok',    lat: 12.924, lng: 100.883 },
+            { city: 'Bali',     tz: 'Asia/Makassar',   lat: -8.650, lng: 115.217 },
+            { city: 'Tokyo',    tz: 'Asia/Tokyo',      lat: 35.676, lng: 139.650 },
         ];
         const MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
                         'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
@@ -160,44 +164,103 @@ GT.define({
         const fmt = new Map(CLOCKS.map(c => [c.tz, new Intl.DateTimeFormat('en-GB', {
             timeZone: c.tz, year: 'numeric', month: 'numeric', day: 'numeric',
             hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })]));
-        const now = (tz) => {
-            const p = Object.fromEntries(fmt.get(tz).formatToParts(new Date()).map(x => [x.type, +x.value]));
-            return { h: p.hour, m: p.minute, s: p.second, day: `${p.day} ${MONTHS[p.month - 1]} ${p.year}` };
+        const now = (tz, d) => {
+            const p = Object.fromEntries(fmt.get(tz).formatToParts(d).map(x => [x.type, +x.value]));
+            return { h: p.hour, m: p.minute, s: p.second, day: `${p.day} ${MONTHS[p.month - 1]} ${p.year}`, key: `${p.year}-${p.month}-${p.day}` };
         };
-        const isNight = (h) => h < 7 || h >= 19;
+
+        /** NOAA yaklaşık formülü: gün doğumu / batımı, UTC dakikası. */
+        function sunUTC(d, lat, lng) {
+            const rad = Math.PI / 180;
+            const n = Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - Date.UTC(d.getUTCFullYear(), 0, 0)) / 864e5);
+            const g = 2 * Math.PI / 365 * (n - 1);
+            const eq = 229.18 * (0.000075 + 0.001868 * Math.cos(g) - 0.032077 * Math.sin(g) - 0.014615 * Math.cos(2 * g) - 0.040849 * Math.sin(2 * g));
+            const decl = 0.006918 - 0.399912 * Math.cos(g) + 0.070257 * Math.sin(g) - 0.006758 * Math.cos(2 * g)
+                + 0.000907 * Math.sin(2 * g) - 0.002697 * Math.cos(3 * g) + 0.00148 * Math.sin(3 * g);
+            const cosH = Math.cos(90.833 * rad) / (Math.cos(lat * rad) * Math.cos(decl)) - Math.tan(lat * rad) * Math.tan(decl);
+            const ha = Math.acos(Math.min(1, Math.max(-1, cosH))) / rad;
+            return { rise: 720 - 4 * (lng + ha) - eq, set: 720 - 4 * (lng - ha) - eq };
+        }
+
+        /* Gökyüzü durakları [üst renk, ufuk rengi]; saatleri o günün doğuş (R) ve batışına (S) göre kayar. */
+        const hex = (c) => [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16));
+        const skyStops = (R, S) => [
+            [0,              '#0b1026', '#1c2748'],   // gece
+            [R - 2,          '#141a3a', '#2b3560'],
+            [R - 1,          '#2e3a78', '#c98bb0'],   // şafak
+            [R,              '#6c8fd6', '#ffc59a'],   // gün doğumu
+            [R + 1.5,        '#5ea8ea', '#bfe2ff'],   // sabah
+            [(R + S) / 2,    '#4a9be6', '#aedcff'],   // öğle
+            [S - 2.5,        '#5aa4e4', '#cfe6f7'],
+            [S - 1.2,        '#7fa8d8', '#ffd59a'],   // altın saat
+            [S - 0.2,        '#f08a4b', '#ffcf7a'],   // gün batımı
+            [S + 0.5,        '#c8445a', '#ff8a4c'],   // kızıl
+            [S + 1.2,        '#5b3a8c', '#d9667a'],   // alacakaranlık
+            [S + 2.2,        '#1e2656', '#4a3f7a'],
+            [S + 3.5,        '#0e1430', '#1e2748'],
+            [24,             '#0b1026', '#1c2748'],
+        ].map(([h, a, b]) => [h, hex(a), hex(b)])
+         .filter((s, i, all) => i === 0 || (s[0] > all[i - 1][0] && s[0] <= 24));
+
+        const suns = new Map(); // tz → { key, R, S, stops } — günde bir hesaplanır
+        function sunFor(c, t, d) {
+            let v = suns.get(c.tz);
+            if (v?.key === t.key) return v;
+            const off = ((t.h * 60 + t.m) - (d.getUTCHours() * 60 + d.getUTCMinutes()) + 2160) % 1440 - 720;
+            const { rise, set } = sunUTC(d, c.lat, c.lng);
+            const R = (((rise + off) % 1440 + 1440) % 1440) / 60, S = (((set + off) % 1440 + 1440) % 1440) / 60;
+            v = { key: t.key, R, S, stops: skyStops(R, S) };
+            suns.set(c.tz, v);
+            return v;
+        }
+        function sky(stops, hf) {
+            let i = stops.findIndex(s => s[0] > hf) - 1;
+            if (i < 0) i = stops.length - 2;
+            const [h0, t0, b0] = stops[i], [h1, t1, b1] = stops[i + 1], f = (hf - h0) / (h1 - h0);
+            const mix = (a, b) => a.map((v, k) => Math.round(v + (b[k] - v) * f));
+            const top = mix(t0, t1), bot = mix(b0, b1);
+            const lum = (c) => (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
+            return { bg: `linear-gradient(180deg, rgb(${top}) 0%, rgb(${bot}) 100%)`, light: (lum(top) + lum(bot)) / 2 > 0.55 };
+        }
+        const phase = (hf, R, S) => (hf >= R + 1 && hf < S - 1.2) ? 'day'
+            : ((hf >= R - 1 && hf < R + 1) || (hf >= S - 1.2 && hf < S + 1.2)) ? 'edge' : 'night';
 
         css('gt-shell-clocks', `
         #gt-clocks{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:10;
           display:inline-flex !important; align-items:stretch; background:#fff; border:1px solid #d9dde3; border-radius:12px;
           box-shadow:0 1px 1.5px rgba(16,24,40,.06); overflow:hidden; font-family:var(--gt-font); line-height:1}
-        #gt-clocks .clk{display:flex; align-items:baseline; gap:8px; padding:7px 16px; border-left:1px solid #eceef1;
-          background:#fff; transition:background-color .4s, color .4s}
+        #gt-clocks .clk{display:flex; align-items:baseline; gap:8px; padding:7px 16px; border-left:1px solid rgba(255,255,255,.18);
+          color:#fff; transition:color .8s}
         #gt-clocks .clk:first-child{border-left:0}
-        #gt-clocks .dn{width:6px; height:6px; border-radius:50%; background:#f59e0b; align-self:center}
-        #gt-clocks .city{font-size:11px; font-weight:600; color:#8e8e93}
-        #gt-clocks .t{font-size:17px; font-weight:700; letter-spacing:-.3px; color:var(--gt-text, #343a43); font-variant-numeric:tabular-nums}
-        #gt-clocks .s{font-size:11px; font-weight:600; color:#b0b4bb; margin-left:-5px; font-variant-numeric:tabular-nums}
-        /* Gece (19:00–07:00): o şehrin kutusu koyu */
-        #gt-clocks .clk.night{background:var(--gt-strong, #525a66); border-left-color:var(--gt-strong, #525a66)}
-        #gt-clocks .clk.night + .clk{border-left-color:transparent}
-        #gt-clocks .clk.night .dn{background:#8b93ff}
-        #gt-clocks .clk.night .city{color:#9aa0a8}
-        #gt-clocks .clk.night .t{color:#fff}
-        #gt-clocks .clk.night .s{color:#6b7280}
-        /* Hong Kong: gökdelen tepesindeki uyarı ışığı gibi yavaşça yanıp söner, gece de turuncu */
-        #gt-clocks .clk[data-tz="Asia/Hong_Kong"] .dn{background:#f59e0b !important; animation:gt-beacon 2.4s ease-in-out infinite}
-        @keyframes gt-beacon{0%,100%{opacity:.25; box-shadow:0 0 0 rgba(245,158,11,0)}
-          50%{opacity:1; box-shadow:0 0 6px 1px rgba(245,158,11,.85)}}
-        @media (prefers-reduced-motion:reduce){#gt-clocks .clk[data-tz="Asia/Hong_Kong"] .dn{animation:none}}`);
+        #gt-clocks .clk.light{color:#1f2a37}
+        #gt-clocks .city{font-size:11px; font-weight:600; opacity:.72}
+        #gt-clocks .t{font-size:17px; font-weight:700; letter-spacing:-.3px; font-variant-numeric:tabular-nums}
+        #gt-clocks .s{font-size:11px; font-weight:600; opacity:.5; margin-left:-5px; font-variant-numeric:tabular-nums}
+        /* Güneş/ay noktası: doğuş-batış turuncu, gündüz sarı + beyaz ışıma, gece beyaz */
+        #gt-clocks .dn{--c:245,158,11; --g:245,158,11; width:6px; height:6px; border-radius:50%; align-self:center;
+          background:rgb(var(--c)); animation:gt-sun 2.4s ease-in-out infinite}
+        #gt-clocks .dn.day{--c:250,204,21; --g:255,255,255}
+        #gt-clocks .dn.night{--c:255,255,255; --g:255,255,255}
+        @keyframes gt-sun{0%,100%{opacity:.35; box-shadow:0 0 0 rgba(var(--g),0)}
+          50%{opacity:1; box-shadow:0 0 6px 1px rgba(var(--g),.9)}}
+        #gt-clocks .dn.day{animation-name:gt-sunday}
+        @keyframes gt-sunday{0%,100%{opacity:.45; box-shadow:0 0 0 rgba(255,255,255,0)}
+          50%{opacity:1; box-shadow:0 0 5px 2px rgba(255,255,255,.95), 0 0 12px 4px rgba(250,204,21,.55)}}
+        @media (prefers-reduced-motion:reduce){#gt-clocks .dn{animation:none; opacity:1}}`);
 
         const paint = (group) => {
-            for (const el of group.children) {
-                const { h: hh, m, s, day } = now(el.dataset.tz);
-                el.classList.toggle('night', isNight(hh));
-                el.querySelector('.t').textContent = `${pad(hh)}:${pad(m)}`;
-                el.querySelector('.s').textContent = pad(s);
-                el.title = day;
-            }
+            const d = new Date();
+            [...group.children].forEach((el, i) => {
+                const c = CLOCKS[i], t = now(c.tz, d), sun = sunFor(c, t, d);
+                const hf = t.h + t.m / 60, { bg, light } = sky(sun.stops, hf);
+                if (el.dataset.bg !== bg) { el.dataset.bg = bg; el.style.background = bg; }
+                el.classList.toggle('light', light);
+                const dot = el.firstChild, ph = phase(hf, sun.R, sun.S);
+                if (dot.dataset.ph !== ph) { dot.dataset.ph = ph; dot.className = `dn ${ph}`; }
+                el.querySelector('.t').textContent = `${pad(t.h)}:${pad(t.m)}`;
+                el.querySelector('.s').textContent = pad(t.s);
+                el.title = `${t.day} · gün doğumu ${pad(Math.floor(sun.R))}:${pad(Math.round(sun.R % 1 * 60) % 60)} · gün batımı ${pad(Math.floor(sun.S))}:${pad(Math.round(sun.S % 1 * 60) % 60)}`;
+            });
         };
 
         ctx.mount(topBar, 'gt-clocks', (bar) => {
@@ -272,11 +335,13 @@ GT.define({
         .mat-tab-nav-bar a.mat-tab-link[data-gt-tab]{padding-right:12px !important}
         .mat-tab-nav-bar a.mat-tab-link[data-gt-tab] .close-tabs{display:none !important}
         .mat-tab-nav-bar a.mat-tab-link[data-gt-tab] + a.mat-tab-link[data-gt-tab]{border-left:1px solid rgba(255,255,255,.14) !important}
-        /* Açık olan sabit sekme: neon turuncu alt çizgi + ışıma */
-        .mat-tab-nav-bar a.mat-tab-link[data-gt-tab].gt-here{
-          box-shadow:inset 0 -3px 0 #ffa31a, inset 0 -4px 6px -1px rgba(255,163,26,.9),
-            inset 0 -16px 18px -10px rgba(255,163,26,.75) !important;
-          text-shadow:0 0 8px rgba(255,190,90,.45)}
+        /* Sabit sekmenin başında nokta: yeri hep var (yazı kaymasın), açık olanda turuncu ve yanıp söner */
+        .mat-tab-nav-bar a.mat-tab-link[data-gt-tab]::before{content:''; width:6px; height:6px; border-radius:50%; flex:none;
+          margin-right:4px; background:rgba(255,255,255,.22)}
+        .mat-tab-nav-bar a.mat-tab-link[data-gt-tab].gt-here::before{background:#f59e0b; animation:gt-tabdot 2.4s ease-in-out infinite}
+        @keyframes gt-tabdot{0%,100%{opacity:.35; box-shadow:0 0 0 rgba(245,158,11,0)}
+          50%{opacity:1; box-shadow:0 0 6px 1px rgba(245,158,11,.85)}}
+        @media (prefers-reduced-motion:reduce){.mat-tab-nav-bar a.mat-tab-link[data-gt-tab].gt-here::before{animation:none; opacity:1}}
         /* Sitenin kendi Player Search sekmesi gizli: yerine sabit olanı var */
         .mat-tab-nav-bar a.mat-tab-link[href*="/players/search"]:not([data-gt-tab]){display:none !important}`);
 
