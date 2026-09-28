@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.25
+// @version      1.0.26
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -693,6 +693,23 @@ active-queued-optedin-bonus a.fa-times:hover{background:#fdecec; color:#d70015 !
 #gt-lookup .lb-item.is-in{transform:none; opacity:1}
 #gt-lookup .lb-item.is-out{transform:translateY(100%); opacity:0}
 @media (prefers-reduced-motion:reduce){#gt-lookup .lb-item{transition:none}}
+/* IP: profil açılınca arka planda aranır; başka hesap varsa kırmızı + nabız + sayı rozeti. */
+#gt-lookup .gt-group.ip-hit{overflow:visible}
+#gt-lookup .gt-group.ip-hit > .gt-btn:first-child{border-radius:8px 0 0 8px}
+#gt-lookup .gt-btn.ip-hit{position:relative; padding-left:10px; background:#fef3f2; color:#b42318; animation:gt-ip-pulse 2s ease-in-out infinite}
+#gt-lookup .gt-btn.ip-hit:hover{background:#fee4e2}
+#gt-lookup .gt-btn.ip-hit svg{display:none}
+#gt-lookup .gt-btn.ip-hit::before{content:''; width:7px; height:7px; border-radius:50%; background:#f04438; flex:none; animation:gt-ip-dot 2s ease-in-out infinite}
+@keyframes gt-ip-pulse{
+  0%,100%{box-shadow:inset 0 0 0 1px #fecdca, inset 0 0 2px rgba(240,68,56,.1)}
+  50%{box-shadow:inset 0 0 0 1px #fda29b, inset 0 0 10px rgba(240,68,56,.45)}}
+@keyframes gt-ip-dot{
+  0%,100%{box-shadow:0 0 0 0 rgba(240,68,56,0)}
+  50%{box-shadow:0 0 6px 2px rgba(240,68,56,.8)}}
+#gt-lookup .ip-badge{position:absolute; top:-8px; right:-7px; min-width:16px; height:16px; padding:0 4px; box-sizing:border-box; border-radius:8px;
+  background:#e5484d; color:#fff; font:700 10px/13px var(--gt-font); text-align:center; border:1.5px solid #fff;
+  box-shadow:0 1px 3px rgba(180,35,24,.45), 0 0 6px rgba(240,68,56,.55); z-index:1; pointer-events:none}
+@media (prefers-reduced-motion:reduce){#gt-lookup .gt-btn.ip-hit, #gt-lookup .gt-btn.ip-hit::before{animation:none}}
 
 /* Yorumlar: popup değil, Giriş Kayıtları kartının üstüne gömülü kayan kart.
    Konumu/genişliği JS ile #gt-logs'tan alınır. */
@@ -1713,18 +1730,35 @@ GT.define({
             return root;
         }
 
+        // Profil açılınca IP araması arka planda yapılır (sonuç 60 sn önbellekte,
+        // tıklayınca pencere beklemeden açılır). Oyuncunun kendisi sayılmaz.
+        let ipBtn = null, ipOthers = 0;
+        const paintIp = () => {
+            if (!ipBtn || !ipOthers) return;
+            ipBtn.classList.add('ip-hit');
+            ipBtn.parentElement?.classList.add('ip-hit');
+            ipBtn.title = `Aynı IP'de ${ipOthers} başka hesap (Alt+P)`;
+            if (!ipBtn.querySelector('.ip-badge')) ipBtn.append(h('span', { class: 'ip-badge' }, String(ipOthers)));
+        };
+        duplicateRows(pid, { checkIp: 'true' })
+            .then((rows) => { ipOthers = rows.filter(r => r.id !== String(pid)).length; paintIp(); })
+            .catch(() => {});
+
         ctx.mount(
             () => $$('mat-label').find(el => /Select Tag|Etiket Seç/.test(el.textContent))
                     ?.closest('.mat-form-field-infix, .mat-mdc-form-field-infix, .mat-form-field-flex'),
             'gt-lookup',
             () => {
                 const label = bonusTicker();
-                return h('span', {},
+                ipBtn = lookupBtn(ICON.search, 'IP', 'Aynı IP\'deki hesaplar', 'alt+p', showDuplicates);
+                const root = h('span', {},
                     h('span', { class: 'gt-group' },
-                        lookupBtn(ICON.search, 'IP', 'Aynı IP\'deki hesaplar', 'alt+p', showDuplicates),
+                        ipBtn,
                         lookupBtn(ICON.search, 'PT', 'Bonus + yatırım + çekim özeti', null, showSummary),
                         lookupBtn(PERSON_ICON, 'NAME', 'Aynı ad soyadlı hesaplar', 'alt+n', showSameName)),
                     label);
+                paintIp();
+                return root;
             },
         );
     },
