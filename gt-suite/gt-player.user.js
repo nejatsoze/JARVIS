@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.31
+// @version      1.0.32
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -1885,9 +1885,9 @@ GT.define({
 
 /* ════════════════════════════════════════════════════════════
    7 · OYUNCU BAŞLIĞI — durum adacığı + etiket seçici
-   · İsim etiketi: bayrağın hemen önündeki <label> (isim ne olursa olsun).
-   · Bayrak / yenile / çevrimiçi: yerlerinden oynatılmaz, CSS ile bitişik
-     adacık; çevrimiçi durumu sitenin inline rengine bakılarak data-gt-on.
+   · İsim etiketi: bayrak/yenile/durum ile aynı kapsayıcıdaki <label> (isim ne olursa olsun).
+   · Bayrak / yenile / çevrimiçi: yerlerinden oynatılmaz, data-gt-st ile işaretlenip CSS
+     ile bitişik adacık; çevrimiçi durumu sitenin inline rengine bakılarak data-gt-on.
    · Etiket seçici (mat-select): kapalı hali pill; seçimler hap olarak
      üstüne çizilir (Angular'ın metni yerinde, sadece görünmez). Açık panel
      aria-owns üzerinden bulunur, sadece O panel data-gt-tag ile stillenir.
@@ -1896,26 +1896,26 @@ const TAG_ICON = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http
 const CHEV = (c) => `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>`)}")`;
 
 css('gt-player-head', `
-label:has(+ .flag-icon){display:none !important}
-
-/* Durum adacığı: .flag-icon + .refresh-icon + .online-icon bitişik kutular */
-.flag-icon:has(+ .refresh-icon), .flag-icon + .refresh-icon, .refresh-icon + .online-icon{
-  display:inline-flex !important; align-items:center; justify-content:center; box-sizing:border-box; width:28px; height:30px;
-  margin:0 !important; padding:0 !important; vertical-align:middle; background:#fff; border:1px solid #d9dde3; border-left:0; border-right:0}
-.flag-icon:has(+ .refresh-icon){border-left:1px solid #d9dde3; border-radius:9px 0 0 9px; width:31px; padding-left:3px !important}
-.refresh-icon + .online-icon{border-right:1px solid #d9dde3; border-radius:0 9px 9px 0; width:31px; padding-right:3px !important}
-.flag-icon + .refresh-icon:not(:has(+ .online-icon)){border-right:1px solid #d9dde3; border-radius:0 9px 9px 0}
-.flag-icon:has(+ .refresh-icon) img{display:block; width:18px !important; height:18px !important; border-radius:50%; object-fit:cover;
-  box-shadow:0 0 0 1px rgba(16,24,40,.08)}
-.flag-icon + .refresh-icon{cursor:pointer; color:#667085}
-.flag-icon + .refresh-icon > i{display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:6px;
-  font-size:13px !important; transition:background-color .12s, color .12s}
-.flag-icon + .refresh-icon:hover > i{background:#f2f4f7; color:var(--gt-text, #343a43)}
-.refresh-icon + .online-icon > i{display:block; width:10px; height:10px; border-radius:50%; font-size:0 !important; background:#98a2b3}
-.refresh-icon + .online-icon[data-gt-on="1"] > i{background:#12b76a; animation:gt-live 2s ease-in-out infinite}
+/* İsim etiketi ve durum adacığı: sıra sayfada bayrak → isim → yenile → durum; JS kapsayıcıyı bulup
+   isim etiketine data-gt-name, üç simgeye data-gt-st="first|mid|last" verir (sıradan bağımsız). */
+label[data-gt-name]{display:none !important}
+[data-gt-st]{display:inline-flex !important; align-items:center; justify-content:center; box-sizing:border-box; width:28px; height:30px;
+  margin:0 !important; padding:0 !important; vertical-align:middle; background:#fff; border:1px solid #d9dde3; border-left:0; border-right:0;
+  float:none !important; position:static !important}
+[data-gt-st="first"]{border-left:1px solid #d9dde3; border-radius:9px 0 0 9px; width:31px; padding-left:3px !important}
+[data-gt-st="last"]{border-right:1px solid #d9dde3; border-radius:0 9px 9px 0; width:31px; padding-right:3px !important}
+[data-gt-st].flag-icon img{display:block !important; width:18px !important; height:18px !important; min-width:0 !important; max-width:none !important;
+  margin:0 !important; border-radius:50% !important; object-fit:cover !important; box-shadow:0 0 0 1px rgba(16,24,40,.08)}
+[data-gt-st].refresh-icon{cursor:pointer; color:#667085}
+[data-gt-st].refresh-icon > i{display:inline-flex !important; align-items:center; justify-content:center; width:24px; height:24px; margin:0 !important;
+  border-radius:6px; font-size:13px !important; transition:background-color .12s, color .12s}
+[data-gt-st].refresh-icon:hover > i{background:#f2f4f7; color:var(--gt-text, #343a43)}
+[data-gt-st].online-icon > i{display:block !important; width:10px !important; height:10px !important; margin:0 !important; border-radius:50%;
+  font-size:0 !important; background:#98a2b3}
+[data-gt-st].online-icon[data-gt-on="1"] > i{background:#12b76a; animation:gt-live 2s ease-in-out infinite}
 @keyframes gt-live{0%,100%{box-shadow:0 0 0 0 rgba(18,183,106,.55), 0 0 4px 1px rgba(18,183,106,.6)}
   70%{box-shadow:0 0 0 6px rgba(18,183,106,0), 0 0 8px 2px rgba(18,183,106,.35)}}
-@media (prefers-reduced-motion:reduce){.refresh-icon + .online-icon[data-gt-on="1"] > i{animation:none}}
+@media (prefers-reduced-motion:reduce){[data-gt-st].online-icon[data-gt-on="1"] > i{animation:none}}
 
 /* Etiket seçici — kapalı */
 i.fa-tag[mattooltip="Player Tag"]{display:none !important}
@@ -1973,11 +1973,25 @@ GT.define({
     setup(ctx) {
         const OFF = /^(gray|grey|#808080|#888|#999|rgb\(128, ?128, ?128\)|silver|lightgr[ae]y)$/i;
         ctx.tick(() => {
-            // çevrimiçi ışığı
-            for (const dot of $$('.refresh-icon + .online-icon')) {
-                const c = (dot.querySelector('i')?.style.color || '').trim();
-                const on = c && !OFF.test(c) ? '1' : '0';
-                if (dot.dataset.gtOn !== on) dot.dataset.gtOn = on;
+            // durum adacığı: yenile simgesinin kapsayıcısındaki bayrak / yenile / durum + isim etiketi
+            for (const ref of $$('.refresh-icon')) {
+                const box = ref.parentElement;
+                if (!box) continue;
+                const flag = box.querySelector(':scope > .flag-icon');
+                if (!flag) continue;   // oyuncu başlığı değil
+                const dot = box.querySelector(':scope > .online-icon');
+                const name = [...box.children].find(e => e.tagName === 'LABEL');
+                if (name && !name.dataset.gtName) name.dataset.gtName = '1';
+                const items = [...box.children].filter(e => e === flag || e === ref || e === dot);
+                items.forEach((e, i) => {
+                    const pos = i === 0 ? 'first' : i === items.length - 1 ? 'last' : 'mid';
+                    if (e.dataset.gtSt !== pos) e.dataset.gtSt = pos;
+                });
+                if (dot) {
+                    const c = (dot.querySelector('i')?.style.color || '').trim();
+                    const on = c && !OFF.test(c) ? '1' : '0';
+                    if (dot.dataset.gtOn !== on) dot.dataset.gtOn = on;
+                }
             }
 
             // etiket seçici
