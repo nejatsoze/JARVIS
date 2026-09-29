@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Withdrawals — çekim masası
 // @namespace    palentis.gt
-// @version      1.0.16
+// @version      1.0.17
 // @description  Çekim sayfalarının tek sahibi: keep-alive, satır tıklama, zaman aşımı otomatik reddi (OTORED), tek tıkla şablonlu red, ONAY butonu, red şablonu kısayolları; oyuncu çekim popup'ında sade liste + işlem detayı ipucu, yatırım geçmişi popup'ında sütun/metin temizliği ve sağlayıcı adları. GT Core üzerine kurulur. Dört ayrı scriptin (Keep-Alive, Full Row Click, OTORED, Auto Process) birleşiğidir — o dördünü kapat.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
@@ -317,6 +317,9 @@ GT.define({
             [...top.rows].slice(1).forEach(r => { r.dataset.gtFilter = '1'; });
             // Seçim butonları (Select All / Unselect All / Process / Batch) kullanılmıyor
             $('input[type=button][value="Select All"]')?.closest('table')?.setAttribute('data-gt-hide', '1');
+            // "Total sum of selected" kutusu da kullanılmıyor (sadece gizli, form alanları yerinde)
+            const sum = $('#manualPortion');
+            (sum?.closest('fieldset') || sum?.closest('table'))?.setAttribute('data-gt-hide', '1');
         }
 
         function tidyTable() {
