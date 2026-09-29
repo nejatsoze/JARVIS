@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Withdrawals — çekim masası
 // @namespace    palentis.gt
-// @version      1.0.14
+// @version      1.0.15
 // @description  Çekim sayfalarının tek sahibi: keep-alive, satır tıklama, zaman aşımı otomatik reddi (OTORED), tek tıkla şablonlu red, ONAY butonu, red şablonu kısayolları; oyuncu çekim popup'ında sade liste + işlem detayı ipucu, yatırım geçmişi popup'ında sütun/metin temizliği ve sağlayıcı adları. GT Core üzerine kurulur. Dört ayrı scriptin (Keep-Alive, Full Row Click, OTORED, Auto Process) birleşiğidir — o dördünü kapat.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
@@ -246,22 +246,22 @@ const WD_NUM = ['AMOUNT', 'PROCESSED AMOUNT', 'PENDING AMOUNT'];
 const WD_ALL = 'gt.wd.allcols';
 
 css('gt-wd-clean', `
-[data-gt-hide], .gt-utc{display:none !important}
-table:not(.gt-all) [data-gt-col="h"]{display:none !important}
+body.gt-wdc [data-gt-hide], .gt-utc{display:none !important}
+body.gt-wdc table:not(.gt-all) [data-gt-col="h"]{display:none !important}
 
 /* Üst form: ilk satır (tarih, Go/Reset, OTORED, Filtreler) açık; diğerleri Filtreler altında */
-table[data-gt-top]:not(.gt-open) tr[data-gt-filter]{display:none !important}
-table[data-gt-top] td{padding:3px 6px 3px 0 !important; vertical-align:middle}
-table[data-gt-top] input.date{box-sizing:border-box; height:28px; width:96px; padding:0 8px; border:1px solid #d9dde3 !important;
+body.gt-wdc table[data-gt-top]:not(.gt-open) tr[data-gt-filter]{display:none !important}
+body.gt-wdc table[data-gt-top] td{padding:3px 6px 3px 0 !important; vertical-align:middle}
+body.gt-wdc table[data-gt-top] input.date{box-sizing:border-box; height:28px; width:96px; padding:0 8px; border:1px solid #d9dde3 !important;
   border-radius:8px; font:600 12px var(--gt-font); color:var(--gt-text, #343a43); text-align:center; background:#fff}
-table[data-gt-top] input[type=submit], table[data-gt-top] input[type=reset]{all:unset; box-sizing:border-box !important;
+body.gt-wdc table[data-gt-top] input[type=submit], body.gt-wdc table[data-gt-top] input[type=reset]{all:unset; box-sizing:border-box !important;
   display:inline-flex !important; align-items:center; height:28px !important; padding:0 12px !important; margin:0 0 0 4px !important;
   border-radius:8px !important; font:600 12px var(--gt-font) !important; cursor:pointer !important; background-image:none !important;
   text-shadow:none !important; box-shadow:0 1px 1.5px rgba(16,24,40,.06) !important}
-table[data-gt-top] input[type=submit]{background:#16a34a !important; border:1px solid #15803d !important; color:#fff !important}
-table[data-gt-top] input[type=submit]:hover{background:#15803d !important}
-table[data-gt-top] input[type=reset]{background:#fff !important; border:1px solid #d9dde3 !important; color:var(--gt-text, #343a43) !important}
-table[data-gt-top] input[type=reset]:hover{background:#f5f6f8 !important}
+body.gt-wdc table[data-gt-top] input[type=submit]{background:#16a34a !important; border:1px solid #15803d !important; color:#fff !important}
+body.gt-wdc table[data-gt-top] input[type=submit]:hover{background:#15803d !important}
+body.gt-wdc table[data-gt-top] input[type=reset]{background:#fff !important; border:1px solid #d9dde3 !important; color:var(--gt-text, #343a43) !important}
+body.gt-wdc table[data-gt-top] input[type=reset]:hover{background:#f5f6f8 !important}
 #gt-wd-filters{margin-left:6px}
 #gt-wd-filters.is-active svg{transform:rotate(180deg)}
 
@@ -270,19 +270,19 @@ table[data-gt-top] input[type=reset]:hover{background:#f5f6f8 !important}
   border-radius:12px 12px 0 0; background:#fff; font:500 12px var(--gt-font); color:#667085}
 #gt-wd-bar b{color:var(--gt-text, #343a43)}
 #gt-wd-bar .sp{flex:1}
-#pending_withdrawals{border-collapse:collapse !important; width:100% !important; border:1px solid #e4e7ec !important; background:#fff !important;
+body.gt-wdc #pending_withdrawals{border-collapse:collapse !important; width:100% !important; border:1px solid #e4e7ec !important; background:#fff !important;
   font-family:var(--gt-font) !important}
-#pending_withdrawals tr[data-gt-head] > *{background:#f8f9fb !important; color:#667085 !important; font:700 11px var(--gt-font) !important;
+body.gt-wdc #pending_withdrawals tr[data-gt-head] > *{background:#f8f9fb !important; color:#667085 !important; font:700 11px var(--gt-font) !important;
   letter-spacing:.3px; text-transform:uppercase; padding:9px 12px !important; border:0 !important; border-bottom:1px solid #eceef1 !important;
   white-space:nowrap; text-align:left}
-#pending_withdrawals tr[id^="pending_withdrawals_row"] > td{background:#fff !important; padding:9px 12px !important; border:0 !important;
+body.gt-wdc #pending_withdrawals tr[id^="pending_withdrawals_row"] > td{background:#fff !important; padding:9px 12px !important; border:0 !important;
   border-bottom:1px solid #f0f2f5 !important; font:500 12.5px var(--gt-font) !important; color:var(--gt-text, #343a43); white-space:nowrap;
   vertical-align:middle}
-#pending_withdrawals tr[id^="pending_withdrawals_row"]:hover > td{background:#fafbfc !important}
-#pending_withdrawals tr[data-gt-total] > td{background:#f8f9fb !important; font:700 12.5px var(--gt-font) !important; padding:9px 12px !important;
+body.gt-wdc #pending_withdrawals tr[id^="pending_withdrawals_row"]:hover > td{background:#fafbfc !important}
+body.gt-wdc #pending_withdrawals tr[data-gt-total] > td{background:#f8f9fb !important; font:700 12.5px var(--gt-font) !important; padding:9px 12px !important;
   border:0 !important}
-#pending_withdrawals [data-gt-num]{text-align:right !important; font-variant-numeric:tabular-nums}
-#pending_withdrawals tr[data-gt-head] > [data-gt-num]{text-align:right !important}
+body.gt-wdc #pending_withdrawals [data-gt-num]{text-align:right !important; font-variant-numeric:tabular-nums}
+body.gt-wdc #pending_withdrawals tr[data-gt-head] > [data-gt-num]{text-align:right !important}
 .gt-vip{display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; background:#f2f4f7; color:#475467}
 .gt-vip[data-v="gold"]{background:#fef6e0; color:#8a6100}
 .gt-vip[data-v="bronze"]{background:#f7ece4; color:#8a4b1f}
@@ -294,9 +294,13 @@ table[data-gt-top] input[type=reset]:hover{background:#f5f6f8 !important}
 GT.define({
     id: 'wd-clean-list',
     scope: 'both',   // klasik liste iframe içinde render ediliyor
-    match: at.pending,
+    // Sadece asıl Pending Withdrawals sayfası: oyuncu profilindeki çekim popup'ı da içeride
+    // aynı PendingWithdrawals.action'ı açıyor, orada ONAY / red / işlem detayı var, dokunulmaz.
+    match: () => at.pending() && /classic\/payment\/pendingWithdrawals/i.test(topHref()) && !inWithdrawalPopup(),
     source: 'withdrawals',
     setup(ctx) {
+        document.body.classList.add('gt-wdc');
+        ctx.onDestroy(() => document.body.classList.remove('gt-wdc'));
         const up = (s) => s.replace(/\s+/g, ' ').trim().toUpperCase();
         const allOn = () => localStorage.getItem(WD_ALL) === '1';
         let done = null, hidden = 0;
