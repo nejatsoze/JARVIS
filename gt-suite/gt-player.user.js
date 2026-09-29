@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.30
+// @version      1.0.31
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -1880,6 +1880,134 @@ GT.define({
                 backgroundColor: value === 'OPEN' ? '#FF3B30' : value === 'PASS' ? '#34C759' : '',
             });
         });
+    },
+});
+
+/* ════════════════════════════════════════════════════════════
+   7 · OYUNCU BAŞLIĞI — durum adacığı + etiket seçici
+   · İsim etiketi: bayrağın hemen önündeki <label> (isim ne olursa olsun).
+   · Bayrak / yenile / çevrimiçi: yerlerinden oynatılmaz, CSS ile bitişik
+     adacık; çevrimiçi durumu sitenin inline rengine bakılarak data-gt-on.
+   · Etiket seçici (mat-select): kapalı hali pill; seçimler hap olarak
+     üstüne çizilir (Angular'ın metni yerinde, sadece görünmez). Açık panel
+     aria-owns üzerinden bulunur, sadece O panel data-gt-tag ile stillenir.
+   ════════════════════════════════════════════════════════════ */
+const TAG_ICON = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#98a2b3" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.3" fill="#98a2b3"/></svg>')}")`;
+const CHEV = (c) => `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>`)}")`;
+
+css('gt-player-head', `
+label:has(+ .flag-icon){display:none !important}
+
+/* Durum adacığı: .flag-icon + .refresh-icon + .online-icon bitişik kutular */
+.flag-icon:has(+ .refresh-icon), .flag-icon + .refresh-icon, .refresh-icon + .online-icon{
+  display:inline-flex !important; align-items:center; justify-content:center; box-sizing:border-box; width:28px; height:30px;
+  margin:0 !important; padding:0 !important; vertical-align:middle; background:#fff; border:1px solid #d9dde3; border-left:0; border-right:0}
+.flag-icon:has(+ .refresh-icon){border-left:1px solid #d9dde3; border-radius:9px 0 0 9px; width:31px; padding-left:3px !important}
+.refresh-icon + .online-icon{border-right:1px solid #d9dde3; border-radius:0 9px 9px 0; width:31px; padding-right:3px !important}
+.flag-icon + .refresh-icon:not(:has(+ .online-icon)){border-right:1px solid #d9dde3; border-radius:0 9px 9px 0}
+.flag-icon:has(+ .refresh-icon) img{display:block; width:18px !important; height:18px !important; border-radius:50%; object-fit:cover;
+  box-shadow:0 0 0 1px rgba(16,24,40,.08)}
+.flag-icon + .refresh-icon{cursor:pointer; color:#667085}
+.flag-icon + .refresh-icon > i{display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:6px;
+  font-size:13px !important; transition:background-color .12s, color .12s}
+.flag-icon + .refresh-icon:hover > i{background:#f2f4f7; color:var(--gt-text, #343a43)}
+.refresh-icon + .online-icon > i{display:block; width:10px; height:10px; border-radius:50%; font-size:0 !important; background:#98a2b3}
+.refresh-icon + .online-icon[data-gt-on="1"] > i{background:#12b76a; animation:gt-live 2s ease-in-out infinite}
+@keyframes gt-live{0%,100%{box-shadow:0 0 0 0 rgba(18,183,106,.55), 0 0 4px 1px rgba(18,183,106,.6)}
+  70%{box-shadow:0 0 0 6px rgba(18,183,106,0), 0 0 8px 2px rgba(18,183,106,.35)}}
+@media (prefers-reduced-motion:reduce){.refresh-icon + .online-icon[data-gt-on="1"] > i{animation:none}}
+
+/* Etiket seçici — kapalı */
+i.fa-tag[mattooltip="Player Tag"]{display:none !important}
+mat-form-field[data-gt-tag]{margin-left:10px}
+mat-form-field[data-gt-tag] #gt-lookup{top:0}
+mat-form-field[data-gt-tag] .mat-form-field-wrapper{padding-bottom:0 !important}
+mat-form-field[data-gt-tag] .mat-form-field-flex{align-items:center}
+mat-form-field[data-gt-tag] .mat-form-field-infix{display:flex !important; align-items:center; width:auto !important; padding:0 !important; border-top:0 !important}
+mat-form-field[data-gt-tag] .mat-form-field-label-wrapper,
+mat-form-field[data-gt-tag] .mat-form-field-underline,
+mat-form-field[data-gt-tag] .mat-form-field-subscript-wrapper{display:none !important}
+mat-form-field[data-gt-tag] mat-select{position:relative; box-sizing:border-box; display:inline-flex !important; align-items:center; height:30px;
+  min-width:150px; max-width:280px; width:auto !important; padding:0 30px 0 30px; background:#fff ${TAG_ICON} no-repeat 10px 50% / 13px 13px;
+  border:1px solid #d9dde3; border-radius:9px; box-shadow:0 1px 1.5px rgba(16,24,40,.06); font-family:var(--gt-font); font-size:12.5px;
+  cursor:pointer; transition:border-color .12s, box-shadow .12s}
+mat-form-field[data-gt-tag] mat-select:hover{border-color:#c9ced6}
+mat-form-field[data-gt-tag] mat-select[aria-expanded="true"]{border-color:var(--gt-strong, #525a66); box-shadow:0 0 0 3px rgba(82,90,102,.12)}
+/* Tetik tüm kutuyu kaplar (tıklama Angular'a gider); genişliği akıştaki haplar belirler */
+mat-form-field[data-gt-tag] .mat-select-trigger{position:absolute !important; inset:0; display:flex !important; align-items:center; height:auto !important;
+  padding:0 30px; box-sizing:border-box}
+mat-form-field[data-gt-tag] .mat-select-value{display:block !important; max-width:none !important; width:auto !important; white-space:nowrap}
+mat-form-field[data-gt-tag] .mat-select-placeholder{color:transparent !important}
+mat-form-field[data-gt-tag] .mat-select-placeholder::before{content:'Etiket seç'; color:#98a2b3; font-weight:500}
+mat-form-field[data-gt-tag] .mat-select-value-text{visibility:hidden}
+mat-form-field[data-gt-tag] .mat-select-arrow-wrapper{position:absolute; right:9px; top:50%; transform:translateY(-50%); width:14px; height:14px}
+mat-form-field[data-gt-tag] .mat-select-arrow{width:14px !important; height:14px !important; border:0 !important; margin:0 !important;
+  background:${CHEV('#98a2b3')} no-repeat center / 14px 14px; transition:transform .15s}
+mat-form-field[data-gt-tag] mat-select[aria-expanded="true"] .mat-select-arrow{transform:rotate(180deg); background-image:${CHEV('#525a66')}}
+.gt-tagchips{display:flex; align-items:center; gap:4px; overflow:hidden; pointer-events:none}
+.gt-tagchips:empty{display:none}
+.gt-tagchips span{display:inline-flex; align-items:center; height:20px; padding:0 8px; border-radius:999px; background:#f2f4f7;
+  color:var(--gt-text, #343a43); font:600 11.5px var(--gt-font); white-space:nowrap}
+.gt-tagchips span.more{background:transparent; color:#667085; padding:0 2px}
+
+/* Etiket seçici — açık panel (sadece bu seçicinin paneli) */
+.mat-select-panel[data-gt-tag]{padding:5px !important; border:1px solid #e4e7ec; border-radius:12px !important; background:#fff;
+  box-shadow:0 12px 24px -6px rgba(16,24,40,.16), 0 4px 8px -4px rgba(16,24,40,.08) !important}
+.mat-select-panel[data-gt-tag] .mat-option{height:32px !important; line-height:32px !important; padding:0 9px !important; border-radius:7px;
+  font:500 12.5px var(--gt-font) !important; color:var(--gt-text, #343a43) !important; background:transparent}
+.mat-select-panel[data-gt-tag] .mat-option:hover, .mat-select-panel[data-gt-tag] .mat-option.mat-active{background:#f5f6f8 !important}
+.mat-select-panel[data-gt-tag] .mat-option.mat-selected{font-weight:600 !important; background:transparent}
+.mat-select-panel[data-gt-tag] .mat-option.mat-selected:hover{background:#f5f6f8 !important}
+.mat-select-panel[data-gt-tag] .mat-pseudo-checkbox{position:relative; box-sizing:border-box; width:15px; height:15px; margin-right:9px;
+  border:1.5px solid #c9ced6 !important; border-radius:4px; color:#c9ced6}
+.mat-select-panel[data-gt-tag] .mat-pseudo-checkbox-checked::after{content:''; position:absolute; top:2.5px; left:2px; width:7px; height:3px;
+  border:2px solid #fff; border-top:0; border-right:0; transform:rotate(-45deg); box-sizing:content-box; opacity:1; background:none}
+.mat-select-panel[data-gt-tag] .mat-pseudo-checkbox-checked{background:var(--gt-strong, #525a66) !important; border-color:var(--gt-strong, #525a66) !important}
+.mat-select-panel[data-gt-tag] .mat-option-ripple{display:none}
+`);
+
+GT.define({
+    id: 'player-head',
+    match: at.playerDetail,
+    source: 'player',
+    setup(ctx) {
+        const OFF = /^(gray|grey|#808080|#888|#999|rgb\(128, ?128, ?128\)|silver|lightgr[ae]y)$/i;
+        ctx.tick(() => {
+            // çevrimiçi ışığı
+            for (const dot of $$('.refresh-icon + .online-icon')) {
+                const c = (dot.querySelector('i')?.style.color || '').trim();
+                const on = c && !OFF.test(c) ? '1' : '0';
+                if (dot.dataset.gtOn !== on) dot.dataset.gtOn = on;
+            }
+
+            // etiket seçici
+            for (const label of $$('mat-label')) {
+                if (!/Select Tag|Etiket Seç/.test(label.textContent)) continue;
+                const field = label.closest('mat-form-field');
+                const sel = field?.querySelector('mat-select');
+                if (sel) tagField(field, sel);
+            }
+        }, { lazy: true });
+
+        function tagField(field, sel) {
+            if (!field.dataset.gtTag) field.dataset.gtTag = '1';
+
+            let chips = sel.querySelector(':scope > .gt-tagchips');
+            if (!chips) { chips = h('span', { class: 'gt-tagchips' }); sel.append(chips); }
+            const text = txt(sel.querySelector('.mat-select-value-text'));
+            if (chips.dataset.v !== text) {
+                chips.dataset.v = text;
+                const names = text ? text.split(/\s*,\s*/).filter(Boolean) : [];
+                chips.replaceChildren(...names.slice(0, 2).map(n => h('span', {}, n)),
+                    ...(names.length > 2 ? [h('span', { class: 'more' }, `+${names.length - 2}`)] : []));
+            }
+
+            if (sel.getAttribute('aria-expanded') === 'true') {
+                const first = (sel.getAttribute('aria-owns') || '').split(/\s+/)[0];
+                const panel = first && document.getElementById(first)?.closest('.mat-select-panel');
+                if (panel && !panel.dataset.gtTag) panel.dataset.gtTag = '1';
+            }
+        }
     },
 });
 
