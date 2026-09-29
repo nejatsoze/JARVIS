@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Withdrawals — çekim masası
 // @namespace    palentis.gt
-// @version      1.0.17
+// @version      1.0.18
 // @description  Çekim sayfalarının tek sahibi: keep-alive, satır tıklama, zaman aşımı otomatik reddi (OTORED), tek tıkla şablonlu red, ONAY butonu, red şablonu kısayolları; oyuncu çekim popup'ında sade liste + işlem detayı ipucu, yatırım geçmişi popup'ında sütun/metin temizliği ve sağlayıcı adları. GT Core üzerine kurulur. Dört ayrı scriptin (Keep-Alive, Full Row Click, OTORED, Auto Process) birleşiğidir — o dördünü kapat.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
@@ -124,6 +124,29 @@ css('gt-wd-style', `
 .gt-quick-reject > .gt-btn.gt-btn--danger::before{content:'' !important; display:block !important; width:7px !important;
   height:7px !important; border-radius:50% !important; background:#e5484d !important; flex:none !important}
 .gt-quick-reject[data-busy="1"]{pointer-events:none; opacity:.6}
+.gt-quick-reject .gt-qr-note{font:600 12px var(--gt-font); color:var(--gt-muted, #667085); padding:2px 0}
+.gt-quick-reject .gt-qr-sep{height:1px; background:#eceef1; margin:3px 2px 0}
+
+/* Tutarlı red (ÇVRM / B.RED): kutucuk + buton tek adacık. Legacy input/button !important kurallarına karşı dar kapsamlı !important. */
+.gt-quick-reject .gt-amt{display:flex !important; height:26px; box-sizing:border-box; border:1px solid #d9dde3; border-radius:8px; overflow:hidden;
+  background:#fff; box-shadow:0 1px 1.5px rgba(16,24,40,.06)}
+.gt-quick-reject .gt-amt > input{all:unset; box-sizing:border-box !important; width:46px !important; height:24px !important; margin:0 !important;
+  padding:0 6px !important; border:0 !important; border-right:1px solid #eceef1 !important; border-radius:0 !important; background:#f8f9fb !important;
+  font:600 12px var(--gt-font) !important; color:var(--gt-text, #343a43) !important; text-align:center !important; box-shadow:none !important}
+.gt-quick-reject .gt-amt > input::placeholder{color:#c0c5cc; font-weight:500}
+.gt-quick-reject .gt-amt > input:focus{background:#fff !important; box-shadow:inset 0 0 0 2px rgba(82,90,102,.18) !important}
+.gt-quick-reject .gt-amt > .gt-btn.gt-btn--danger{all:unset; box-sizing:border-box !important; flex:1 !important; display:inline-flex !important;
+  align-items:center !important; gap:6px !important; height:24px !important; min-height:0 !important; margin:0 !important; padding:0 8px !important;
+  background:#fff !important; background-image:none !important; color:#b42318 !important; border:0 !important; border-radius:0 !important;
+  box-shadow:none !important; font-family:var(--gt-font) !important; font-size:12px !important; font-weight:600 !important; line-height:1 !important;
+  text-transform:none !important; text-shadow:none !important; white-space:nowrap !important; cursor:pointer !important;
+  transition:background-color .12s, color .12s}
+.gt-quick-reject .gt-amt > .gt-btn.gt-btn--danger::before{content:'' !important; display:block !important; width:7px !important; height:7px !important;
+  border-radius:50% !important; background:#e5484d !important; flex:none !important}
+.gt-quick-reject .gt-amt > .gt-btn.gt-btn--danger:not([disabled]):hover{background:#d70015 !important; color:#fff !important}
+.gt-quick-reject .gt-amt > .gt-btn.gt-btn--danger:not([disabled]):hover::before{background:#fff !important}
+.gt-quick-reject .gt-amt > .gt-btn.gt-btn--danger[disabled]{color:#c9ced6 !important; cursor:not-allowed !important; opacity:1 !important}
+.gt-quick-reject .gt-amt > .gt-btn.gt-btn--danger[disabled]::before{background:#e4e7ec !important}
 
 /* ONAY: açık yeşil zemin, noktasız; yazı/boyut red butonlarıyla aynı (12px 600, 26px).
    Legacy sayfanın a/font kuralları eziyordu → red butonları gibi dar kapsamlı !important. */
@@ -405,21 +428,53 @@ GT.define({
     setup(ctx) {
         const LABELS = ['IP', 'PT', 'KYC', 'HVL1', 'FORM'];
 
-        async function run(item, label, box) {
-            if (!confirm(`Talep "${label}" şablonuyla reddedilecek.\n\nOnaylıyor musun?`)) return;
+        /** Tutarlı şablonlar: kutucuğa yazılan sayı açıklamaya binlik ayraçlı girer (3500 → 3.500). */
+        const AMOUNT = {
+            'ÇVRM': (x) => `${x} TL çevriminiz bulunmaktadır. Çevriminizi tamamladıktan sonra yeniden çekim talebi iletebilirsiniz.`,
+            'B.RED': (y) => `Eklenen freespinler ile bakiyenizi belirlenen limit ve üzerine ulaştırabildiğinizde çekim yapabilirsiniz. Bonus kazancınız ${y} TL olduğu için bonusunuz otomatik olarak iptal edilmiştir`,
+        };
 
-            const restore = box.innerHTML;
+        async function run(item, label, box, text = REASONS[label], ask = `Talep "${label}" şablonuyla reddedilecek.`) {
+            if (!confirm(`${ask}\n\nOnaylıyor musun?`)) return;
+
+            // innerHTML'i geri yüklemek dinleyicileri siler (hata sonrası butonlar ölüydü): içerik yerinde kalır
             box.dataset.busy = '1';
-            box.innerHTML = '<span style="font-size:12px;color:var(--gt-muted)">İşleniyor…</span>';
+            const note = h('span', { class: 'gt-qr-note' }, 'İşleniyor…');
+            box.prepend(note);
             try {
-                await reject(item.paymentid, item.partyId, REASONS[label]);
+                await reject(item.paymentid, item.partyId, text);
                 item.row.remove(); // sonraki bekleyen satır butonları kendiliğinden alır
             } catch (e) {
                 oops('[Hızlı red]', e);
                 alert('İşlem tamamlanamadı: ' + e.message);
-                box.innerHTML = restore;
+                note.remove();
                 delete box.dataset.busy;
             }
+        }
+
+        function amountRow(item, label, box) {
+            const input = h('input', { type: 'text', inputmode: 'numeric', maxlength: '6', placeholder: 'TL', autocomplete: 'off' });
+            const btn = h('button', { type: 'button', class: 'gt-btn gt-btn--sm gt-btn--danger', disabled: true }, label);
+            const value = () => input.value.replace(/\D/g, '');
+            const go = () => {
+                const n = Number(value());
+                if (!n) { input.focus(); return; }
+                const text = AMOUNT[label](n.toLocaleString('tr-TR'));
+                run(item, label, box, text, `Talep "${label}" ile şu açıklamayla reddedilecek:\n\n${text}`);
+            };
+            input.addEventListener('input', () => {
+                const v = value();
+                if (input.value !== v) input.value = v;
+                btn.disabled = !v;
+            });
+            // Enter: sayfanın kendi formunu göndermesin, butona bassın
+            input.addEventListener('keydown', (e) => {
+                if (e.key !== 'Enter') return;
+                e.preventDefault(); e.stopPropagation();
+                go();
+            });
+            btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); go(); });
+            return h('div', { class: 'gt-amt', title: `${label}: tutarı yaz, butona bas ya da Enter` }, input, btn);
         }
 
         function build(item) {
@@ -431,6 +486,8 @@ GT.define({
                     onClick: () => run(item, label, box),
                 }));
             }
+            box.append(h('div', { class: 'gt-qr-sep' }));
+            for (const label of Object.keys(AMOUNT)) box.append(amountRow(item, label, box));
             return box;
         }
 
