@@ -140,7 +140,11 @@ branch'i bozma.
   cache'lenmemeli — bayat anahtar sessiz 401 döner. `GT.api.ics()` bunu
   otomatik yapar.
 - KYCAID portre akışı (CSRF token → `/api/session` → `/api/verifications`)
-  Bearer token akışından tamamen ayrı, karıştırılmamalı.
+  Bearer token akışından tamamen ayrı, karıştırılmamalı. KYCAID oturumu
+  HttpOnly çerezde (localStorage/sessionStorage'da token yok). GT Shell'in
+  `shell-kycaid` modülü 4 dk'da bir aynı akışı atarak oturumu açık tutar
+  (sekmeler arası localStorage kilidi `gt.kyc.ping`); durum `GT.kycaid()`,
+  düşüş `GT.flight()`'ta "kycaid" satırı.
 - `player-transactions` verisi `gameTranId` ile gruplanmalı (bir turda
   birden fazla BET/WIN satırı olabilir), `platformName` ile filtrelenmeli
   (`gameName` ile değil).

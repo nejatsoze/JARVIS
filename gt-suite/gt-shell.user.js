@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Shell — arayüz iskeleti
 // @namespace    palentis.gt
-// @version      1.0.16
+// @version      1.0.17
 // @description  Her sayfada geçerli arayüz katmanı: varsayılan sayfa yönlendirme, logo yerine hızlı gezinme butonları, kapalı başlayan sidebar, navbar saatleri (GMT+0/+3/+8), alt sekmelerin butonlaştırılması, COMMENTS uyarısı ve bildirim şeritlerinin toast'a dönüşümü. GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
@@ -38,6 +38,64 @@ function topBar() {
     }
     return null;
 }
+
+/* ════════════════════════════════════════════════════════════
+   0 · KYCAID OTURUMU AÇIK TUTMA
+   KYCAID oturumu HttpOnly çerezde (sayfa JS'i görmez), sunucu uzun süre istek
+   gelmezse kapatıyor. KYCAID sekmesinin arka planda uyanık kalmasına güvenmek
+   yerine GT (hep açık) 4 dakikada bir sitenin kendi liste isteğinin aynısını
+   atar. Birden çok GT sekmesi varsa localStorage kilidiyle sadece biri atar.
+   Konsol: GT.kycaid() → son durum.
+   ════════════════════════════════════════════════════════════ */
+GT.define({
+    id: 'shell-kycaid',
+    source: 'shell',
+    setup(ctx) {
+        const EVERY = 4 * 60 * 1000;
+        const LOCK = 'gt.kyc.ping', STATE = 'gt.kyc.state';
+        const ls = (() => { try { return W.localStorage; } catch { return null; } })();
+        const read = () => { try { return JSON.parse(ls?.getItem(STATE) || 'null'); } catch { return null; } };
+        GT.kycaid = () => { const s = read(); console.table(s ? [s] : []); return s?.ok; };
+
+        let busy = false;
+        async function ping() {
+            const last = +(ls?.getItem(LOCK) || 0);
+            if (busy || Date.now() - last < EVERY - 20000) return;
+            busy = true;
+            ls?.setItem(LOCK, String(Date.now()));
+            const prev = read();
+            let ok = false, why = '';
+            try {
+                const s = await GT.api.gm({ method: 'GET', url: 'https://app.kycaid.com/api/session', headers: { Accept: 'application/json' }, timeout: 20000 });
+                let csrf; try { csrf = JSON.parse(s.responseText)?.session?.['csrf-token']; } catch { /* JSON değil: giriş sayfası */ }
+                if (!csrf) why = `oturum yok (HTTP ${s.status})`;
+                else {
+                    const v = await GT.api.gm({
+                        method: 'POST', url: 'https://app.kycaid.com/api/verifications', timeout: 20000,
+                        headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'CSRF-Token': csrf },
+                        data: JSON.stringify({ customer_id: 24931, timezone: 'Europe/Kiev', page: 1, count: 1 }),
+                    });
+                    // Oturum CSRF ile doğrulandı; liste isteği sadece "gerçek hareket" için.
+                    // 401/403 dışındaki cevaplar oturumun kapandığı anlamına gelmez.
+                    ok = v.status !== 401 && v.status !== 403;
+                    why = ok ? (v.status < 300 ? '' : `liste HTTP ${v.status}`) : `liste HTTP ${v.status}`;
+                }
+            } catch (e) { why = `ağ: ${e?.message || e?.error || 'hata'}`; }
+            const now = new Date().toLocaleTimeString('tr-TR');
+            ls?.setItem(STATE, JSON.stringify({ ok, son: now, neden: why, dusus: ok ? '' : (prev && !prev.ok ? prev.dusus : now) }));
+            if (!prev || prev.ok !== ok) {
+                GT.flight.log('kycaid', ok ? 'açık' : `KAPALI: ${why}`);
+                ok ? log('[KYCAID] Oturum açık, 4 dk\'da bir canlı tutuluyor.')
+                   : console.warn(`[GT] KYCAID oturumu kapalı (${why}). app.kycaid.com'a tekrar giriş yapılmalı.`);
+            }
+            busy = false;
+        }
+
+        ping();
+        ctx.interval(ping, 60 * 1000);   // arka planda dakikada bir kısılır; 4 dk'lık aralık için yeterli
+        ctx.on(W.document, 'visibilitychange', () => { if (!W.document.hidden) ping(); });
+    },
+});
 
 /* ════════════════════════════════════════════════════════════
    1 · VARSAYILAN SAYFA — overview yerine bekleyen çekimler
