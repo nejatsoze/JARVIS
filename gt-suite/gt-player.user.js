@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.33
+// @version      1.0.34
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -1900,7 +1900,7 @@ css('gt-player-head', `
 /* İsim etiketi ve durum adacığı: sıra sayfada bayrak → isim → yenile → durum; JS kapsayıcıyı bulup
    isim etiketine data-gt-name, üç simgeye data-gt-st="first|mid|last" verir (sıradan bağımsız). */
 label[data-gt-name]{display:none !important}
-[data-gt-stbox]{transform:translateY(var(--gt-dy, 0px))}
+[data-gt-stbox] > [data-gt-st]{transform:translateY(var(--gt-dy, 0px))}
 [data-gt-st]{display:inline-flex !important; align-items:center; justify-content:center; box-sizing:border-box; width:28px; height:30px;
   margin:0 !important; padding:0 !important; vertical-align:middle; background:#fff; border:1px solid #d9dde3; border-left:0; border-right:0;
   float:none !important; position:static !important}
@@ -2057,15 +2057,25 @@ GT.define({
             lastSel = sel;
         }
 
-        /** Durum adacığını etiket kutusuyla aynı hizaya getirir (farklı kapsayıcılarda duruyorlar). */
+        /** Durum adacığını etiket kutusuyla aynı hizaya getirir. Sadece üç simge kaydırılır
+         *  (kapsayıcı değil: etiket kutusu da onun içinde olabilir → kayma döngüsü, 1.0.33).
+         *  Birkaç denemede oturmazsa hizalama kapanır ve sıfırlanır. */
+        let tries = 0, gaveUp = false;
         function align() {
-            if (!lastSel?.isConnected || !lastBox?.isConnected) return;
+            if (gaveUp || !lastSel?.isConnected || !lastBox?.isConnected) return;
             const pr = lastSel.getBoundingClientRect(), ref = lastBox.querySelector(':scope > .refresh-icon');
             if (!pr.height || !ref) return;
             const ir = ref.getBoundingClientRect();
             const cur = parseFloat(lastBox.style.getPropertyValue('--gt-dy')) || 0;
             const want = Math.round(cur + (pr.top + pr.height / 2) - (ir.top + ir.height / 2));
-            if (Math.abs(want - cur) >= 1 && Math.abs(want) <= 40) lastBox.style.setProperty('--gt-dy', `${want}px`);
+            if (Math.abs(want - cur) < 1) { tries = 0; return; }
+            if (++tries > 4 || Math.abs(want) > 40) {
+                gaveUp = true;
+                lastBox.style.removeProperty('--gt-dy');
+                GT.flight.log('player-head', 'hizalama kapatıldı');
+                return;
+            }
+            lastBox.style.setProperty('--gt-dy', `${want}px`);
         }
     },
 });
