@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Withdrawals — çekim masası
 // @namespace    palentis.gt
-// @version      1.0.15
+// @version      1.0.16
 // @description  Çekim sayfalarının tek sahibi: keep-alive, satır tıklama, zaman aşımı otomatik reddi (OTORED), tek tıkla şablonlu red, ONAY butonu, red şablonu kısayolları; oyuncu çekim popup'ında sade liste + işlem detayı ipucu, yatırım geçmişi popup'ında sütun/metin temizliği ve sağlayıcı adları. GT Core üzerine kurulur. Dört ayrı scriptin (Keep-Alive, Full Row Click, OTORED, Auto Process) birleşiğidir — o dördünü kapat.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
@@ -125,14 +125,16 @@ css('gt-wd-style', `
   height:7px !important; border-radius:50% !important; background:#e5484d !important; flex:none !important}
 .gt-quick-reject[data-busy="1"]{pointer-events:none; opacity:.6}
 
-/* ONAY hücredeki birincil aksiyon: tek dolu yeşil; red şablonları noktalı beyaz alternatifler. */
+/* ONAY: açık yeşil zemin, noktasız; yazı/boyut red butonlarıyla aynı (12px 600, 26px).
+   Legacy sayfanın a/font kuralları eziyordu → red butonları gibi dar kapsamlı !important. */
 a.gt-onay{
-  display:flex !important; align-items:center; justify-content:center; box-sizing:border-box;
-  height:28px; margin-bottom:5px; padding:0 12px; font-family:var(--gt-font); font-size:12.5px;
-  font-weight:700; line-height:1; background:#16a34a; color:#fff !important; border:1px solid #15803d;
-  border-radius:8px; box-shadow:0 1px 2px rgba(22,163,74,.35); text-decoration:none !important;
-  white-space:nowrap; cursor:pointer; transition:background-color .12s}
-a.gt-onay:hover{background:#15803d}
+  display:flex !important; align-items:center !important; justify-content:center !important; box-sizing:border-box !important;
+  height:26px !important; margin:0 0 5px !important; padding:0 10px !important; font-family:var(--gt-font) !important;
+  font-size:12px !important; font-weight:600 !important; line-height:1 !important; letter-spacing:normal !important;
+  background:#ecfdf3 !important; color:#067647 !important; border:1px solid #75e0a7 !important; border-radius:8px !important;
+  box-shadow:0 1px 1.5px rgba(16,24,40,.06) !important; text-decoration:none !important; text-shadow:none !important;
+  white-space:nowrap; cursor:pointer; transition:background-color .12s, border-color .12s, color .12s}
+a.gt-onay:hover{background:#17b26a !important; border-color:#17b26a !important; color:#fff !important}
 a.gt-onay:focus-visible{outline:2px solid #0071e3; outline-offset:2px}
 
 #gt-keepalive{position:fixed; bottom:20px; right:20px; z-index:999999; display:flex; align-items:center;
