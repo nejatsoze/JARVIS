@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Withdrawals — çekim masası
 // @namespace    palentis.gt
-// @version      1.0.13
+// @version      1.0.14
 // @description  Çekim sayfalarının tek sahibi: keep-alive, satır tıklama, zaman aşımı otomatik reddi (OTORED), tek tıkla şablonlu red, ONAY butonu, red şablonu kısayolları; oyuncu çekim popup'ında sade liste + işlem detayı ipucu, yatırım geçmişi popup'ında sütun/metin temizliği ve sağlayıcı adları. GT Core üzerine kurulur. Dört ayrı scriptin (Keep-Alive, Full Row Click, OTORED, Auto Process) birleşiğidir — o dördünü kapat.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
@@ -233,6 +233,156 @@ GT.define({
    şablon butonları. Ana Pending Withdrawals listesinde ÇIKMAZ.
    ════════════════════════════════════════════════════════════ */
 /** Üst pencerenin adresi — popup içeriği iframe'de olsa da popup rotası okunur. */
+/* ════════════════════════════════════════════════════════════
+   2b · SADE LİSTE — Pending Withdrawals (JMesa tablosu, iframe içinde)
+   HTML'e dokunmadan: satır/hücreler data-gt-* ile işaretlenir, CSS gizler.
+   Sütunlar SİLİNMEZ (OTORED STATUS ve tarih hücresini okuyor); " UTC"
+   metinden atılmaz, gizli span'e alınır (textContent aynı kalır).
+   "Tüm sütunlar" gizlenenleri geri getirir, tercih localStorage'da.
+   ════════════════════════════════════════════════════════════ */
+const WD_HIDE = ['REQUEST ID', 'TYPE', 'STATUS', 'BRAND NAME', 'BRAND', 'CURRENCY', 'COUNTRY',
+    'ANTIFRAUD STATUS', 'TRUST LEVEL', 'PROCESSED AMOUNT', 'PENDING AMOUNT'];
+const WD_NUM = ['AMOUNT', 'PROCESSED AMOUNT', 'PENDING AMOUNT'];
+const WD_ALL = 'gt.wd.allcols';
+
+css('gt-wd-clean', `
+[data-gt-hide], .gt-utc{display:none !important}
+table:not(.gt-all) [data-gt-col="h"]{display:none !important}
+
+/* Üst form: ilk satır (tarih, Go/Reset, OTORED, Filtreler) açık; diğerleri Filtreler altında */
+table[data-gt-top]:not(.gt-open) tr[data-gt-filter]{display:none !important}
+table[data-gt-top] td{padding:3px 6px 3px 0 !important; vertical-align:middle}
+table[data-gt-top] input.date{box-sizing:border-box; height:28px; width:96px; padding:0 8px; border:1px solid #d9dde3 !important;
+  border-radius:8px; font:600 12px var(--gt-font); color:var(--gt-text, #343a43); text-align:center; background:#fff}
+table[data-gt-top] input[type=submit], table[data-gt-top] input[type=reset]{all:unset; box-sizing:border-box !important;
+  display:inline-flex !important; align-items:center; height:28px !important; padding:0 12px !important; margin:0 0 0 4px !important;
+  border-radius:8px !important; font:600 12px var(--gt-font) !important; cursor:pointer !important; background-image:none !important;
+  text-shadow:none !important; box-shadow:0 1px 1.5px rgba(16,24,40,.06) !important}
+table[data-gt-top] input[type=submit]{background:#16a34a !important; border:1px solid #15803d !important; color:#fff !important}
+table[data-gt-top] input[type=submit]:hover{background:#15803d !important}
+table[data-gt-top] input[type=reset]{background:#fff !important; border:1px solid #d9dde3 !important; color:var(--gt-text, #343a43) !important}
+table[data-gt-top] input[type=reset]:hover{background:#f5f6f8 !important}
+#gt-wd-filters{margin-left:6px}
+#gt-wd-filters.is-active svg{transform:rotate(180deg)}
+
+/* Tablo kartı */
+#gt-wd-bar{display:flex; align-items:center; gap:10px; margin:12px 0 0; padding:8px 12px; border:1px solid #e4e7ec; border-bottom:0;
+  border-radius:12px 12px 0 0; background:#fff; font:500 12px var(--gt-font); color:#667085}
+#gt-wd-bar b{color:var(--gt-text, #343a43)}
+#gt-wd-bar .sp{flex:1}
+#pending_withdrawals{border-collapse:collapse !important; width:100% !important; border:1px solid #e4e7ec !important; background:#fff !important;
+  font-family:var(--gt-font) !important}
+#pending_withdrawals tr[data-gt-head] > *{background:#f8f9fb !important; color:#667085 !important; font:700 11px var(--gt-font) !important;
+  letter-spacing:.3px; text-transform:uppercase; padding:9px 12px !important; border:0 !important; border-bottom:1px solid #eceef1 !important;
+  white-space:nowrap; text-align:left}
+#pending_withdrawals tr[id^="pending_withdrawals_row"] > td{background:#fff !important; padding:9px 12px !important; border:0 !important;
+  border-bottom:1px solid #f0f2f5 !important; font:500 12.5px var(--gt-font) !important; color:var(--gt-text, #343a43); white-space:nowrap;
+  vertical-align:middle}
+#pending_withdrawals tr[id^="pending_withdrawals_row"]:hover > td{background:#fafbfc !important}
+#pending_withdrawals tr[data-gt-total] > td{background:#f8f9fb !important; font:700 12.5px var(--gt-font) !important; padding:9px 12px !important;
+  border:0 !important}
+#pending_withdrawals [data-gt-num]{text-align:right !important; font-variant-numeric:tabular-nums}
+#pending_withdrawals tr[data-gt-head] > [data-gt-num]{text-align:right !important}
+.gt-vip{display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; background:#f2f4f7; color:#475467}
+.gt-vip[data-v="gold"]{background:#fef6e0; color:#8a6100}
+.gt-vip[data-v="bronze"]{background:#f7ece4; color:#8a4b1f}
+.gt-vip[data-v="silver"]{background:#eef1f4; color:#4b5563}
+.gt-vip[data-v="platinum"]{background:#e8f1f8; color:#1e5a86}
+.gt-vip[data-v="diamond"]{background:#ece8fb; color:#4b32a8}
+`);
+
+GT.define({
+    id: 'wd-clean-list',
+    scope: 'both',   // klasik liste iframe içinde render ediliyor
+    match: at.pending,
+    source: 'withdrawals',
+    setup(ctx) {
+        const up = (s) => s.replace(/\s+/g, ' ').trim().toUpperCase();
+        const allOn = () => localStorage.getItem(WD_ALL) === '1';
+        let done = null, hidden = 0;
+
+        /** Satırdaki hücreleri colspan'e göre sütun konumuna eşler. */
+        const positions = (row) => { let p = 0; return [...row.cells].map(c => { const at0 = p; p += c.colSpan || 1; return [at0, c]; }); };
+
+        function tidyTop() {
+            const top = $('#startDate')?.closest('table');
+            if (!top || top.dataset.gtTop) return;
+            top.dataset.gtTop = '1';
+            [...top.rows].slice(1).forEach(r => { r.dataset.gtFilter = '1'; });
+            // Seçim butonları (Select All / Unselect All / Process / Batch) kullanılmıyor
+            $('input[type=button][value="Select All"]')?.closest('table')?.setAttribute('data-gt-hide', '1');
+        }
+
+        function tidyTable() {
+            const table = $('#pending_withdrawals');
+            if (!table) return;
+            const rows = [...table.rows];
+            if (done === table && table.dataset.gtRows === String(rows.length)) return;
+            const hi = rows.findIndex(r => { const t = up(r.textContent); return t.includes('REQUEST DATE') && t.includes('PARTY ID'); });
+            if (hi < 0) return;
+            const head = rows[hi];
+            head.dataset.gtHead = '1';
+            rows.slice(0, hi).forEach(r => { r.dataset.gtHide = '1'; });   // araç çubuğu + sütun filtre satırı
+
+            const cols = new Map();   // konum → başlık
+            for (const [p, c] of positions(head)) cols.set(p, up(c.textContent));
+            const width = [...cols.keys()].length;
+            hidden = [...cols.values()].filter(n => WD_HIDE.includes(n)).length;
+
+            for (const r of rows.slice(hi)) {
+                if (r !== head && !r.id) r.dataset.gtTotal = '1';
+                const cells = positions(r);
+                if (cells.length !== width) continue;   // birleşik hücreli satır: dokunma
+                for (const [p, c] of cells) {
+                    const name = cols.get(p) || '';
+                    if (WD_HIDE.includes(name)) c.dataset.gtCol = 'h';
+                    if (WD_NUM.includes(name)) c.dataset.gtNum = '1';
+                    if (r === head || r.dataset.gtTotal) continue;
+                    if (name === 'REQUEST DATE') {
+                        for (const n of [...c.childNodes]) {
+                            if (n.nodeType !== 3 || !/\sUTC\s*$/.test(n.nodeValue)) continue;
+                            const m = n.nodeValue.match(/^(.*?)(\s+UTC\s*)$/s);
+                            n.nodeValue = m[1];
+                            n.after(h('span', { class: 'gt-utc' }, m[2]));
+                        }
+                    }
+                    if (name === 'VIP LEVEL' && !c.querySelector('.gt-vip')) {
+                        const v = txt(c);
+                        if (v && v !== 'N/A') c.replaceChildren(h('span', { class: 'gt-vip', 'data-v': v.toLowerCase() }, v));
+                    }
+                }
+            }
+            table.classList.toggle('gt-all', allOn());
+            table.dataset.gtRows = String(rows.length);
+            done = table;
+        }
+
+        ctx.tick(() => { tidyTop(); tidyTable(); }, { lazy: true });
+
+        // Filtreler: Brand / Currency / onay kutuları bu butonun altında
+        ctx.mount('#gt-otored', 'gt-wd-filters', () => {
+            const btn = GT.ui.button({ label: 'Filtreler', small: true, icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>',
+                onClick: () => btn.classList.toggle('is-active', $('#startDate')?.closest('table')?.classList.toggle('gt-open')) });
+            return btn;
+        }, 'after');
+
+        // Tablonun üstünde: bekleyen sayısı, yenile, tüm sütunlar
+        ctx.mount('#pending_withdrawals', 'gt-wd-bar', () => {
+            const count = h('b', {}, String($$('tr[id^="pending_withdrawals_row"]').length));
+            const label = () => allOn() ? 'Sade görünüm' : `Tüm sütunlar (${hidden} gizli)`;
+            const toggle = GT.ui.button({ label: label(), small: true, onClick: () => {
+                localStorage.setItem(WD_ALL, allOn() ? '0' : '1');
+                $('#pending_withdrawals')?.classList.toggle('gt-all', allOn());
+                toggle.textContent = label();
+            } });
+            const refresh = GT.ui.button({ label: 'Yenile', small: true, title: 'Listeyi yenile',
+                onClick: () => $('input[type=submit][name=execute][value="Go"]')?.click() });
+            ctx.tick(() => { if (!toggle.textContent.includes(`(${hidden} `) && !allOn()) toggle.textContent = label(); }, { lazy: true });
+            return h('div', {}, h('span', {}, count, ' bekleyen talep'), refresh, h('span', { class: 'sp' }), toggle);
+        }, 'before');
+    },
+});
+
 function topHref() {
     try { return window.top.location.href; } catch { return location.href; }
 }
