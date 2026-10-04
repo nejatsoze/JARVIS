@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.36
+// @version      1.0.37
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -2233,6 +2233,8 @@ const TX_TYPES = {
 const TX_PERIODS = [['Bugün', 1], ['3 gün', 3], ['7 gün', 7], ['30 gün', 30]];
 
 css('gt-player-tx', `
+/* Bonus tablosunun kutusu sabit yükseklikli ve kaydırmalı: kartın üstündeki bu tür kutular uzar (JS işaretler) */
+[data-gt-grow]{height:auto !important; max-height:none !important; overflow:visible !important}
 #gt-tx{display:block; box-sizing:border-box; margin:10px 0; background:#fff; border:1px solid #e4e7ec; border-radius:14px;
   box-shadow:0 1px 2px rgba(16,24,40,.04); font-family:var(--gt-font); color:var(--gt-text, #343a43); font-size:12.5px}
 #gt-tx .hd{display:flex; align-items:center; gap:10px; padding:12px 16px}
@@ -2331,6 +2333,19 @@ GT.define({
             refresh();
             return card;
         }, 'after');
+
+        // Kartın atalarından sabit yükseklikli + taşan (kaydırmalı/kesilen) olanları uzat.
+        ctx.tick(() => {
+            const card = document.getElementById('gt-tx');
+            if (!card?.isConnected) return;
+            let el = card.parentElement;
+            for (let i = 0; el && i < 8 && el !== document.body; i++, el = el.parentElement) {
+                if (el.dataset.gtGrow) continue;
+                if (el.tagName === 'MAT-TAB-GROUP') break;
+                const oy = getComputedStyle(el).overflowY;
+                if (/auto|scroll|hidden/.test(oy) && el.scrollHeight > el.clientHeight + 2) el.dataset.gtGrow = '1';
+            }
+        }, { lazy: true });
     },
 });
 
