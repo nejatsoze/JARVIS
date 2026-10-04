@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.37
+// @version      1.0.38
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -2184,7 +2184,9 @@ GT.define({
             const render = () => {
                 const term = q.value.trim().toLocaleLowerCase('tr');
                 const rows = COUNTRIES.filter(c => !term || c.name.toLocaleLowerCase('tr').includes(term) || c.code.toLowerCase() === term);
-                rows.sort((a, b) => (b.code === cur) - (a.code === cur));
+                // Türkiye her zaman en üstte, sonra oyuncunun şu anki ülkesi, sonra alfabetik
+                const rank = (c) => (c.code === 'TR' ? 0 : c.code === cur ? 1 : 2);
+                rows.sort((a, b) => rank(a) - rank(b));
                 list.replaceChildren(...rows.map((c, i) => {
                     const img = h('img', { src: flagSrc(c.code), alt: '' });
                     img.onerror = () => { img.style.visibility = 'hidden'; };
