@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Slack Alarm - 3 Kademeli Toggle
 // @namespace    palentis-slack-alarm
-// @version      3.0
-// @description  Sidebar'da hedef kanal/kişi okunmamış olduğunda alarm çalar. 0: kapalı · I: her yeni mesajda iki kez · II: okunana kadar tekrar. Kademe tüm sekmelerde senkron.
+// @version      3.1
+// @description  Sidebar'da hedef kanal/kişi ya da Threads (başlık yanıtı) okunmamış olduğunda alarm çalar. 0: kapalı · I: her yeni mesajda iki kez · II: okunana kadar tekrar. Kademe tüm sekmelerde senkron.
 // @match        https://app.slack.com/*
 // @noframes
 // @grant        none
@@ -148,6 +148,32 @@
         }
     }
 
+    // ============ THREADS (başlık yanıtları) ============
+    // Takip ettiğin bir başlığa yanıt gelince sidebar'daki "Threads" satırı kalınlaşır / rozet alır.
+    // Kanal listesi seçicileri bu satırı her sürümde yakalamadığı için ayrı aranır.
+    const THREADS = 'Threads';
+    const THREADS_ADLARI = ['threads', 'konular', 'ileti dizileri'];
+    function threadsUnread() {
+        const adaylar = new Set(document.querySelectorAll('[data-qa="threads"], [data-qa*="threads_"], a[href*="/threads"]'));
+        const kok = document.querySelector(SIDEBAR_SELECTOR) || document;
+        for (const el of kok.querySelectorAll('a, button, [role="treeitem"], [data-qa="virtual-list-item"]')) {
+            if (el.children.length > 12) continue;
+            if (THREADS_ADLARI.includes(normalize(el.textContent).replace(/\d+$/, '').trim())) adaylar.add(el);
+        }
+        if (adaylar.size === 0) return null;
+        for (const el of adaylar) {
+            const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+            if (/unread|okunmamış|new|yeni/.test(aria)) return true;
+            if (el.querySelector('[data-qa*="badge"], [data-qa*="unread"], .c-mention_badge, .p-channel_sidebar__badge')) return true;
+            for (const t of [el, ...el.querySelectorAll('span, div')]) {
+                if (!t.textContent || !THREADS_ADLARI.some((a) => normalize(t.textContent).startsWith(a))) continue;
+                const w = parseInt(window.getComputedStyle(t).fontWeight, 10);
+                if (w >= 700) return true;
+            }
+        }
+        return false;
+    }
+
     // ============ YARDIMCI: bir isim elementi unread mi? ============
     function unreadMi(isimEl) {
         const stil = window.getComputedStyle(isimEl);
@@ -263,9 +289,13 @@
             }
         }
 
+        // Threads: bulunamazsa durum değişmez (sessiz kalır, "belirsiz" sayılmaz).
+        const t = threadsUnread();
+        if (t !== null) durum.set(THREADS, { unread: t, kayipSayisi: 0 });
+
         // Kademe düşürüldüğünde eski hedefler durumda kalmasın.
         for (const anahtar of [...durum.keys()]) {
-            if (!hedefler.includes(anahtar)) durum.delete(anahtar);
+            if (anahtar !== THREADS && !hedefler.includes(anahtar)) durum.delete(anahtar);
         }
 
         tekrarTimeriGuncelle();
