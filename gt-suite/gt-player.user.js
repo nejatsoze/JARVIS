@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.35
+// @version      1.0.36
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -2214,6 +2214,123 @@ GT.define({
             const flag = $('[data-gt-st].flag-icon');
             if (flag && flag.title !== 'Ülkeyi değiştir') flag.title = 'Ülkeyi değiştir';
         }, { lazy: true });
+    },
+});
+
+/* ════════════════════════════════════════════════════════════
+   9 · İŞLEMLER KARTI — bonus tablosunun altında
+   Kaynak: /ics/player-transactions/page (Transaction History sayfasının isteği).
+   Sunucuya sadece seçili türler sorulur (oyun işlemleri hiç inmez).
+   ════════════════════════════════════════════════════════════ */
+const TX_TYPES = {
+    DEPOSIT:    ['Yatırım', 'dep'],
+    WITHDRAWAL: ['Çekim', 'wd'],
+    WD_CANCEL:  ['Çekim iptali', 'adj'],
+    WD_REJECT:  ['Çekim reddi', 'adj'],
+    CRE_BONUS:  ['Bonus verildi', 'bon'],
+    MAN_ADJUST: ['Manuel düzeltme', 'man'],
+};
+const TX_PERIODS = [['Bugün', 1], ['3 gün', 3], ['7 gün', 7], ['30 gün', 30]];
+
+css('gt-player-tx', `
+#gt-tx{display:block; box-sizing:border-box; margin:10px 0; background:#fff; border:1px solid #e4e7ec; border-radius:14px;
+  box-shadow:0 1px 2px rgba(16,24,40,.04); font-family:var(--gt-font); color:var(--gt-text, #343a43); font-size:12.5px}
+#gt-tx .hd{display:flex; align-items:center; gap:10px; padding:12px 16px}
+#gt-tx .hd h3{margin:0; font-size:14px; font-weight:600}
+#gt-tx .hd .sub{font-size:11px; color:#98a2b3}
+#gt-tx .hd .sp{flex:1}
+#gt-tx .lnk{font-weight:600; font-size:12px; color:#2563eb; cursor:pointer; text-decoration:none}
+#gt-tx .lnk:hover{text-decoration:underline}
+#gt-tx table{width:100%; border-collapse:collapse}
+#gt-tx th{background:#f8f9fb; color:#667085; font-size:11px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; text-align:left;
+  padding:8px 16px; border-top:1px solid #eceef1; border-bottom:1px solid #eceef1}
+#gt-tx td{padding:8px 16px; border-bottom:1px solid #f0f2f5; white-space:nowrap}
+#gt-tx tbody tr:last-child td{border-bottom:0}
+#gt-tx tbody tr:hover td{background:#fafbfc}
+#gt-tx .num{text-align:right; font-variant-numeric:tabular-nums}
+#gt-tx .d{color:#98a2b3; font-size:11px; margin-right:6px}
+#gt-tx .t{color:#667085; font-variant-numeric:tabular-nums}
+#gt-tx .pill{display:inline-flex; align-items:center; gap:6px; height:22px; padding:0 9px; border-radius:999px; font-size:11.5px; font-weight:600;
+  background:#f2f4f7; color:#475467}
+#gt-tx .pill::before{content:''; width:6px; height:6px; border-radius:50%; background:currentColor; opacity:.8}
+#gt-tx .dep{background:#ecfdf3; color:#067647} #gt-tx .wd{background:#fef3f2; color:#b42318}
+#gt-tx .bon{background:#fef6e0; color:#8a6100} #gt-tx .adj{background:#eef4ff; color:#3538cd} #gt-tx .man{background:#f4f3ff; color:#5925dc}
+#gt-tx .code{color:#c0c5cc; font-size:10.5px; margin-left:6px}
+#gt-tx .pos{color:#067647; font-weight:600} #gt-tx .neg{color:#b42318; font-weight:600}
+#gt-tx .empty{padding:16px; color:#98a2b3; text-align:center}
+#gt-tx .foot{display:flex; justify-content:space-between; padding:10px 16px; color:#98a2b3; font-size:11.5px; border-top:1px solid #f0f2f5}
+`);
+
+GT.define({
+    id: 'player-transactions',
+    match: at.playerDetail,
+    key: () => api.partyId(),
+    source: 'player',
+    setup(ctx) {
+        const pid = api.partyId();
+        const KEY = 'gt.tx.days';
+        let days = +(localStorage.getItem(KEY) || 7);
+        if (!TX_PERIODS.some(([, d]) => d === days)) days = 7;
+        const pad = (n) => String(n).padStart(2, '0');
+        const day = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+        const money = (n) => (n < 0 ? '−' : '') + Math.abs(+n || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+        async function load(n) {
+            const list = await api.json(api.ics('player-transactions/page', {
+                partyid: pid, startDate: `${day(1 - n)} 0:0:0.000`, endDate: `${day(0)} 23:59:0.000`,
+                pageSize: 500, pageNum: 1, tranTypes: Object.keys(TX_TYPES).join(', '), currency: 'TRY',
+            }), { ttl: 30000 });
+            const rows = (Array.isArray(list) ? list : Object.values(list || {}).find(Array.isArray) || [])
+                .filter(r => TX_TYPES[r.tranType]);
+            return rows.sort((a, b) => (b.datetime ?? 0) - (a.datetime ?? 0));
+        }
+
+        function row(r) {
+            const [name, cls] = TX_TYPES[r.tranType];
+            const amt = (+r.credit || 0) - (+r.debit || 0) || +r.amount || 0;
+            const [date, time] = String(r.datetimeStr || '').split(' ');
+            return h('tr', {},
+                h('td', {}, h('span', { class: 'd' }, (date || '').slice(0, 5)), h('span', { class: 't' }, time || '')),
+                h('td', {}, h('span', { class: `pill ${cls}` }, name), h('span', { class: 'code' }, r.tranType)),
+                h('td', { class: `num ${amt < 0 ? 'neg' : 'pos'}` }, `${amt > 0 ? '+' : ''}${money(amt)}`),
+                h('td', { class: 'num' }, money(r.balanceReal)),
+                h('td', { class: 'num' }, money(r.balancePlayableBonus)),
+                h('td', { class: 'num' }, h('b', {}, money(r.balance))));
+        }
+
+        ctx.mount('active-queued-optedin-bonus', 'gt-tx', () => {
+            const body = h('tbody', {});
+            const foot = h('span', {});
+            const sub = h('span', { class: 'sub' });
+            const group = h('span', { class: 'gt-group' });
+            const buttons = TX_PERIODS.map(([label, n]) => {
+                const b = GT.ui.button({ label, small: true, onClick: () => { days = n; localStorage.setItem(KEY, String(n)); refresh(); } });
+                group.append(b);
+                return [b, n];
+            });
+            const all = h('a', { class: 'lnk', onclick: (e) => { e.preventDefault(); GT.navigateSPA(`/core/app/core/players/${pid}/transaction-history`); } }, 'Tümünü gör →');
+            const card = h('div', {},
+                h('div', { class: 'hd' }, h('h3', {}, 'İşlemler'), sub, h('span', { class: 'sp' }), group, all),
+                h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Tarih'), h('th', {}, 'Tür'), h('th', { class: 'num' }, 'Tutar'),
+                    h('th', { class: 'num' }, 'Gerçek bakiye'), h('th', { class: 'num' }, 'Bonus bakiye'), h('th', { class: 'num' }, 'Toplam bakiye'))), body),
+                h('div', { class: 'foot' }, foot, h('span', {}, 'Tutarlar TRY · Yatırım, çekim, çekim iptali/reddi, bonus, manuel düzeltme')));
+
+            async function refresh() {
+                for (const [b, n] of buttons) b.classList.toggle('is-active', n === days);
+                body.replaceChildren(h('tr', {}, h('td', { class: 'empty', colspan: 6 }, 'Yükleniyor…')));
+                try {
+                    const rows = await load(days);
+                    body.replaceChildren(...(rows.length ? rows.map(row) : [h('tr', {}, h('td', { class: 'empty', colspan: 6 }, 'Bu dönemde işlem yok.'))]));
+                    foot.textContent = `${rows.length} işlem`;
+                    sub.textContent = `güncellendi ${new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`;
+                } catch (e) {
+                    oops('[İşlemler]', e);
+                    body.replaceChildren(h('tr', {}, h('td', { class: 'empty', colspan: 6 }, `Yüklenemedi: ${e.message}`)));
+                }
+            }
+            refresh();
+            return card;
+        }, 'after');
     },
 });
 
