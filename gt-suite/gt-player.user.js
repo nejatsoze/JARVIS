@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.34
+// @version      1.0.35
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -2077,6 +2077,143 @@ GT.define({
             }
             lastBox.style.setProperty('--gt-dy', `${want}px`);
         }
+    },
+});
+
+/* ════════════════════════════════════════════════════════════
+   8 · BAYRAK → ÜLKE DEĞİŞTİR (Full Profile açmadan)
+   Kayıt sitenin kendi isteğiyle: PUT /ics/players/{id}/full-profile.
+   Gövde = sunucudan TAZE çekilen profil + yeni country; iban / sourceOfFunds /
+   nationalRegNumberType sitenin kendi kaydındaki gibi null (bunlar ayrı kalemle
+   düzenleniyor). E-posta/telefon maskeli gider — site de böyle gönderiyor (doğrulandı).
+   Kayıttan sonra profil tekrar çekilir: ülke dışında bir alan değiştiyse uyarı.
+   Ülke listesi tarayıcının Intl.DisplayNames'inden (site listesi gömülü, istek yok).
+   ════════════════════════════════════════════════════════════ */
+const COUNTRIES = (() => {
+    let names;
+    try { names = new Intl.DisplayNames(['tr'], { type: 'region', fallback: 'none' }); } catch { return []; }
+    const SKIP = new Set(['EU', 'EZ', 'UN', 'QO', 'XA', 'XB', 'ZZ', 'AC', 'CP', 'DG', 'EA', 'IC', 'TA']);
+    const out = [];
+    for (let a = 65; a <= 90; a++) for (let b = 65; b <= 90; b++) {
+        const code = String.fromCharCode(a, b);
+        if (SKIP.has(code)) continue;
+        const name = names.of(code);
+        if (name && name !== code) out.push({ code, name });
+    }
+    return out.sort((x, y) => x.name.localeCompare(y.name, 'tr'));
+})();
+
+css('gt-player-country', `
+[data-gt-st].flag-icon{cursor:pointer}
+[data-gt-st].flag-icon:hover img{box-shadow:0 0 0 2px rgba(82,90,102,.25) !important}
+#gt-country{position:fixed; z-index:100000; width:260px; padding:5px; background:#fff; border:1px solid #e4e7ec; border-radius:12px;
+  box-shadow:0 12px 24px -6px rgba(16,24,40,.16), 0 4px 8px -4px rgba(16,24,40,.08); font-family:var(--gt-font); color:var(--gt-text, #343a43)}
+#gt-country .q{box-sizing:border-box; width:100%; height:30px; margin:0 0 4px; padding:0 10px 0 30px; border:1px solid #e4e7ec; border-radius:8px;
+  font:500 12.5px var(--gt-font); color:var(--gt-text, #343a43); background:#f8f9fb ${SEARCH_ICON} no-repeat 10px 50% / 13px 13px; outline:none}
+#gt-country .q:focus{background-color:#fff; border-color:var(--gt-strong, #525a66); box-shadow:0 0 0 3px rgba(82,90,102,.12)}
+#gt-country .list{max-height:280px; overflow:auto}
+#gt-country .opt{display:flex; align-items:center; gap:9px; height:32px; padding:0 9px; border-radius:7px; font-size:12.5px; font-weight:500; cursor:pointer}
+#gt-country .opt:hover, #gt-country .opt.hl{background:#f5f6f8}
+#gt-country .opt img{width:16px; height:16px; border-radius:50%; object-fit:cover; box-shadow:0 0 0 1px rgba(16,24,40,.08); flex:none}
+#gt-country .opt .c{margin-left:auto; font-size:11px; color:#98a2b3; font-variant-numeric:tabular-nums}
+#gt-country .opt.cur{font-weight:600}
+#gt-country .opt.cur .c{color:var(--gt-text, #343a43)}
+#gt-country .opt.cur::after{content:''; width:6px; height:6px; border-radius:50%; background:#f59e0b; margin-left:6px}
+#gt-country .msg{padding:10px 9px; font-size:12.5px; font-weight:600}
+#gt-country .msg.ok{color:#067647} #gt-country .msg.err{color:#b42318} #gt-country .msg.busy{color:#667085}
+`);
+
+GT.define({
+    id: 'player-country',
+    match: at.playerDetail,
+    key: () => api.partyId(),
+    source: 'player',
+    setup(ctx) {
+        const pid = api.partyId();
+        const url = () => api.ics(`players/${pid}/full-profile`);
+        const flagSrc = (code) => `assets/flags/${code.toLowerCase()}.svg`;
+        let pop = null;
+
+        const close = () => { pop?.remove(); pop = null; };
+        ctx.onDestroy(close);
+
+        async function save(code, msg) {
+            const fresh = await api.json(url(), { ttl: 0 });
+            if (!fresh || typeof fresh !== 'object' || !('country' in fresh)) throw new Error('profil okunamadı');
+            if (fresh.country === code) return { same: true };
+            const body = { ...fresh, country: code, iban: null, sourceOfFunds: null, nationalRegNumberType: null };
+            const t = api.token();
+            const res = await fetch(url(), {
+                method: 'PUT', credentials: 'include', body: JSON.stringify(body),
+                headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+            });
+            if (!res.ok) throw new Error(`kayıt başarısız (HTTP ${res.status})`);
+            msg('Kaydedildi, kontrol ediliyor…');
+            const after = await api.json(url(), { ttl: 0 });
+            const changed = Object.keys(fresh).filter(k => k !== 'country' && JSON.stringify(fresh[k]) !== JSON.stringify(after?.[k]));
+            GT.flight.log('ülke', `${fresh.country} → ${code}${changed.length ? ' · DEĞİŞEN: ' + changed.join(',') : ''}`);
+            if (after?.country !== code) throw new Error('kayıt sonrası ülke değişmemiş görünüyor');
+            return { from: fresh.country, changed };
+        }
+
+        function open(flag) {
+            if (pop) return close();
+            const cur = (flag.querySelector('img')?.getAttribute('src') || '').match(/flags\/([a-z]{2})\./i)?.[1]?.toUpperCase() || '';
+            const q = h('input', { class: 'q', placeholder: 'Ülke ara', autocomplete: 'off' });
+            const list = h('div', { class: 'list' });
+            pop = h('div', { id: 'gt-country' }, q, list);
+            const r = flag.getBoundingClientRect();
+            Object.assign(pop.style, { left: `${Math.max(8, r.left)}px`, top: `${r.bottom + 6}px` });
+            document.body.append(pop);
+            GT.ensureStyles?.(document);
+
+            const say = (text, kind) => list.replaceChildren(h('div', { class: `msg ${kind}` }, text));
+            const pick = async (c) => {
+                if (c.code === cur) return close();
+                if (!confirm(`Oyuncunun ülkesi ${cur || '?'} → ${c.code} (${c.name}) olarak kaydedilecek.\n\nOnaylıyor musun?`)) return;
+                q.disabled = true; say('Kaydediliyor…', 'busy');
+                try {
+                    const r2 = await save(c.code, (t) => say(t, 'busy'));
+                    if (r2.same) { say('Ülke zaten bu.', 'ok'); }
+                    else if (r2.changed.length) { say(`Ülke kaydedildi ama başka alan da değişti: ${r2.changed.join(', ')}`, 'err'); return; }
+                    else say(`Kaydedildi: ${c.name}`, 'ok');
+                    $('[data-gt-st].refresh-icon')?.click();   // sitenin kendi yenilemesi: başlık ve bayrak güncellenir
+                    setTimeout(close, 1200);
+                } catch (e) { oops('[Ülke]', e); say(`Hata: ${e.message}`, 'err'); q.disabled = false; }
+            };
+            const render = () => {
+                const term = q.value.trim().toLocaleLowerCase('tr');
+                const rows = COUNTRIES.filter(c => !term || c.name.toLocaleLowerCase('tr').includes(term) || c.code.toLowerCase() === term);
+                rows.sort((a, b) => (b.code === cur) - (a.code === cur));
+                list.replaceChildren(...rows.map((c, i) => {
+                    const img = h('img', { src: flagSrc(c.code), alt: '' });
+                    img.onerror = () => { img.style.visibility = 'hidden'; };
+                    const row = h('div', { class: `opt${c.code === cur ? ' cur' : ''}${i === 0 && term ? ' hl' : ''}` }, img, h('span', {}, c.name), h('span', { class: 'c' }, c.code));
+                    row.addEventListener('click', () => pick(c));
+                    return row;
+                }));
+                list._first = rows[0];
+            };
+            q.addEventListener('input', render);
+            q.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') close();
+                if (e.key === 'Enter' && q.value.trim() && list._first) { e.preventDefault(); pick(list._first); }
+            });
+            render();
+            q.focus();
+        }
+
+        ctx.on(document, 'click', (e) => {
+            const flag = e.target.closest?.('[data-gt-st].flag-icon');
+            if (flag) { e.preventDefault(); e.stopPropagation(); open(flag); return; }
+            if (pop && e.isTrusted && !pop.contains(e.target)) close();   // kodla yapılan tıklama (yenile) kapatmasın
+        }, { capture: true });
+        ctx.on(document, 'keydown', (e) => { if (e.key === 'Escape' && pop) close(); });
+
+        ctx.tick(() => {
+            const flag = $('[data-gt-st].flag-icon');
+            if (flag && flag.title !== 'Ülkeyi değiştir') flag.title = 'Ülkeyi değiştir';
+        }, { lazy: true });
     },
 });
 
