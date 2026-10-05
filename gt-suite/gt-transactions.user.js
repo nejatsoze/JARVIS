@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Transactions — işlem geçmişi
 // @namespace    palentis.gt
-// @version      1.1.2
+// @version      1.1.3
 // @description  Transaction History sayfası: 1. Aşama / 2. Aşama / CRE filtre otomasyonu (Alt+X / Alt+D / Alt+C), "Show Transactions From" yanına bir gün geri (<<) butonu, listenin başı/sonu arasında gidip gelen kaydırma butonu ve CRE'nin yanında Ratio Checker (sabit oran eşiği + GT Sports/Betby oran rozetleri). GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
@@ -547,7 +547,7 @@ GT.define({
 
             const entries = [];
             let skipped = 0;
-            for (const row of $$('tbody tr', table)) {
+            for (const row of $$('tbody tr:not(.gt-run-hdr)', table)) {
                 const cells = row.querySelectorAll('td');
                 if (cells.length < 9) { skipped++; continue; }
                 const typeRaw = txt(cells[RATIO_COL.type]).toUpperCase();
@@ -609,7 +609,7 @@ GT.define({
 
             const maxIdx = Math.max(RATIO_COL.type, RATIO_COL.debit, RATIO_COL.credit, RATIO_COL.tranId, productIdx, instanceIdx, gameIdIdx);
             const entries = [];
-            for (const row of $$('tbody tr', table)) {
+            for (const row of $$('tbody tr:not(.gt-run-hdr)', table)) {
                 const cells = row.querySelectorAll('td');
                 if (cells.length <= maxIdx) continue;
                 const typeRaw = txt(cells[RATIO_COL.type]).toUpperCase();
@@ -734,11 +734,96 @@ GT.define({
             if (!autoScan) return;
             if (location.href !== lastUrl) { lastUrl = location.href; lastRowCount = 0; schedule(); return; }
             const table = ratioFindTable();
-            const rowCount = table ? $$('tbody tr', table).length : 0;
+            const rowCount = table ? $$('tbody tr:not(.gt-run-hdr)', table).length : 0;
             if (rowCount > 0 && rowCount !== lastRowCount) { lastRowCount = rowCount; schedule(); }
         }, { lazy: true });
 
         ctx.onDestroy(() => { clearTimeout(scanTimer); clearHighlights(); pop.close(); });
+    },
+});
+
+/* ════════════════════════════════════════════════════════════
+   OYUN BLOKLARI — Transaction History'de art arda aynı oyunun işlemleri
+   tek blok: her blok başında özet satırı (oyun · işlem · bahis · kazanç · net),
+   solda oyun rengi şeridi, Game Name renkli. Renkler oyunların listede ilk
+   görünme sırasına göre (ilk 8 oyun kesin farklı). Özet satırları .gt-run-hdr:
+   Ratio Checker bunları saymaz. Angular tabloyu yeniden çizince bloklar yeniden kurulur.
+   ════════════════════════════════════════════════════════════ */
+const RUN_COLORS = ['#2563eb', '#db2777', '#d97706', '#7c3aed', '#059669', '#0891b2', '#65a30d', '#dc2626'];
+
+css('gt-tx-runs', `
+tr.gt-run > td:first-child{box-shadow:inset 4px 0 0 var(--g)}
+tr.gt-run > td.gt-gn{color:color-mix(in srgb, var(--g) 78%, #000) !important; font-weight:600}
+tr.gt-run-hdr > td{background:color-mix(in srgb, var(--g) 8%, #fff) !important; border-top:1px solid color-mix(in srgb, var(--g) 35%, #fff) !important;
+  padding:6px 10px !important; box-shadow:inset 4px 0 0 var(--g); font:600 12px var(--gt-font); color:#475467; text-align:left !important; white-space:nowrap}
+tr.gt-run-hdr b{color:color-mix(in srgb, var(--g) 78%, #000); font-weight:700}
+tr.gt-run-hdr .m{font-weight:500; color:#667085; margin-left:10px}
+tr.gt-run-hdr .neg{color:#b42318} tr.gt-run-hdr .pos{color:#067647}
+`);
+
+GT.define({
+    id: 'tx-game-runs',
+    match: at.txHistory,
+    source: 'transactions',
+    setup(ctx) {
+        let sig = '';
+        const money = (n) => n.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+        function build() {
+            const table = ratioFindTable();
+            if (!table) return;
+            const headers = ratioHeaderCells(table).map(c => txt(c).toUpperCase());
+            const gIdx = headers.findIndex(t => t === 'GAME NAME');
+            if (gIdx === -1) return;
+            let dIdx = headers.findIndex(t => t === 'DEBIT'), cIdx = headers.findIndex(t => t === 'CREDIT');
+            if (dIdx === -1) dIdx = RATIO_COL.debit;
+            if (cIdx === -1) cIdx = RATIO_COL.credit;
+
+            const rows = $$('tbody tr:not(.gt-run-hdr)', table).filter(r => r.cells.length > gIdx);
+            const next = rows.length + '|' + rows.map(r => txt(r.cells[gIdx])).join('\u0001') + '|' + txt(rows[0]?.cells[0]);
+            if (next === sig) return;
+            sig = next;
+
+            for (const old of $$('tbody tr.gt-run-hdr', table)) old.remove();
+            const colors = new Map();
+            const colorOf = (g) => { if (!colors.has(g)) colors.set(g, RUN_COLORS[colors.size % RUN_COLORS.length]); return colors.get(g); };
+
+            let i = 0;
+            while (i < rows.length) {
+                const game = txt(rows[i].cells[gIdx]);
+                let j = i + 1;
+                if (game) while (j < rows.length && txt(rows[j].cells[gIdx]) === game) j++;
+                const run = rows.slice(i, j);
+                if (!game) {
+                    for (const r of run) { r.classList.remove('gt-run'); r.style.removeProperty('--g'); r.cells[gIdx]?.classList.remove('gt-gn'); }
+                    i = j; continue;
+                }
+                const g = colorOf(game);
+                let bet = 0, win = 0;
+                for (const r of run) {
+                    r.classList.add('gt-run');
+                    r.style.setProperty('--g', g);
+                    r.cells[gIdx].classList.add('gt-gn');
+                    bet += Math.abs(parseMoney(txt(r.cells[dIdx])) || 0);
+                    win += Math.abs(parseMoney(txt(r.cells[cIdx])) || 0);
+                }
+                const net = win - bet;
+                const hdr = h('tr', { class: 'gt-run-hdr', style: { '--g': g } },
+                    h('td', { colspan: String(Math.max(...run.map(r => r.cells.length))) },
+                        h('b', {}, game),
+                        h('span', { class: 'm' }, `${run.length} işlem · Bahis ${money(bet)} · Kazanç ${money(win)} · Net `,
+                            h('span', { class: net < 0 ? 'neg' : 'pos' }, `${net > 0 ? '+' : ''}${money(net)}`))));
+                hdr.style.setProperty('--g', g);
+                run[0].before(hdr);
+                i = j;
+            }
+        }
+
+        ctx.tick(build, { lazy: true });
+        ctx.onDestroy(() => {
+            for (const r of $$('tr.gt-run-hdr')) r.remove();
+            for (const r of $$('tr.gt-run')) { r.classList.remove('gt-run'); r.style.removeProperty('--g'); }
+        });
     },
 });
 
