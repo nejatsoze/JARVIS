@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Transactions — işlem geçmişi
 // @namespace    palentis.gt
-// @version      1.1.3
+// @version      1.1.4
 // @description  Transaction History sayfası: 1. Aşama / 2. Aşama / CRE filtre otomasyonu (Alt+X / Alt+D / Alt+C), "Show Transactions From" yanına bir gün geri (<<) butonu, listenin başı/sonu arasında gidip gelen kaydırma butonu ve CRE'nin yanında Ratio Checker (sabit oran eşiği + GT Sports/Betby oran rozetleri). GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
@@ -754,11 +754,27 @@ const RUN_COLORS = ['#2563eb', '#db2777', '#d97706', '#7c3aed', '#059669', '#089
 css('gt-tx-runs', `
 tr.gt-run > td:first-child{box-shadow:inset 4px 0 0 var(--g)}
 tr.gt-run > td.gt-gn{color:color-mix(in srgb, var(--g) 78%, #000) !important; font-weight:600}
-tr.gt-run-hdr > td{background:color-mix(in srgb, var(--g) 8%, #fff) !important; border-top:1px solid color-mix(in srgb, var(--g) 35%, #fff) !important;
-  padding:6px 10px !important; box-shadow:inset 4px 0 0 var(--g); font:600 12px var(--gt-font); color:#475467; text-align:left !important; white-space:nowrap}
-tr.gt-run-hdr b{color:color-mix(in srgb, var(--g) 78%, #000); font-weight:700}
-tr.gt-run-hdr .m{font-weight:500; color:#667085; margin-left:10px}
-tr.gt-run-hdr .neg{color:#b42318} tr.gt-run-hdr .pos{color:#067647}
+tr.gt-run-hdr{cursor:pointer}
+tr.gt-run-hdr > td{background:linear-gradient(90deg, color-mix(in srgb, var(--g) 11%, #fff), color-mix(in srgb, var(--g) 3%, #fff) 70%) !important;
+  border-top:8px solid #fff !important; border-bottom:1px solid color-mix(in srgb, var(--g) 22%, #fff) !important; padding:7px 12px !important;
+  box-shadow:inset 4px 0 0 var(--g); font:500 12px var(--gt-font); color:#475467; text-align:left !important; white-space:nowrap;
+  transition:background-color .12s}
+tr.gt-run-hdr:hover > td{background:color-mix(in srgb, var(--g) 15%, #fff) !important}
+tr.gt-run-hdr .rh{display:flex; align-items:center; gap:8px}
+tr.gt-run-hdr .dot{width:8px; height:8px; border-radius:50%; background:var(--g); box-shadow:0 0 0 3px color-mix(in srgb, var(--g) 18%, transparent); flex:none}
+tr.gt-run-hdr b{color:color-mix(in srgb, var(--g) 80%, #000); font-weight:700; font-size:12.5px; margin-right:4px}
+tr.gt-run-hdr .st{display:inline-flex; align-items:center; gap:4px; height:20px; padding:0 8px; border-radius:999px; background:rgba(255,255,255,.75);
+  border:1px solid color-mix(in srgb, var(--g) 18%, #fff); font-size:11px; color:#475467; font-variant-numeric:tabular-nums}
+tr.gt-run-hdr .st i{font-style:normal; color:#98a2b3}
+tr.gt-run-hdr .net{font-weight:700}
+tr.gt-run-hdr .net.neg{background:#fef3f2; border-color:#fecdca; color:#b42318}
+tr.gt-run-hdr .net.pos{background:#ecfdf3; border-color:#abefc6; color:#067647}
+tr.gt-run-hdr .go{margin-left:auto; display:inline-flex; align-items:center; gap:4px; font-size:11px; font-weight:600; color:color-mix(in srgb, var(--g) 70%, #000);
+  opacity:0; transition:opacity .12s}
+tr.gt-run-hdr:hover .go{opacity:1}
+tr.gt-run-hdr .go svg{width:12px; height:12px}
+tr.gt-run.gt-run-flash > td{animation:gt-run-flash 1.4s ease-out}
+@keyframes gt-run-flash{0%,35%{background:color-mix(in srgb, var(--g) 28%, #fff)}100%{background:transparent}}
 `);
 
 GT.define({
@@ -808,12 +824,21 @@ GT.define({
                     win += Math.abs(parseMoney(txt(r.cells[cIdx])) || 0);
                 }
                 const net = win - bet;
-                const hdr = h('tr', { class: 'gt-run-hdr', style: { '--g': g } },
+                const last = run[run.length - 1];
+                const stat = (label, val, cls = '') => h('span', { class: `st ${cls}` }, label ? h('i', {}, label) : null, val);
+                const hdr = h('tr', { class: 'gt-run-hdr', title: 'Bloğun en alttaki satırına git' },
                     h('td', { colspan: String(Math.max(...run.map(r => r.cells.length))) },
-                        h('b', {}, game),
-                        h('span', { class: 'm' }, `${run.length} işlem · Bahis ${money(bet)} · Kazanç ${money(win)} · Net `,
-                            h('span', { class: net < 0 ? 'neg' : 'pos' }, `${net > 0 ? '+' : ''}${money(net)}`))));
+                        h('div', { class: 'rh' },
+                            h('span', { class: 'dot' }), h('b', {}, game),
+                            stat('', `${run.length} işlem`), stat('Bahis', money(bet)), stat('Kazanç', money(win)),
+                            stat('Net', `${net > 0 ? '+' : ''}${money(net)}`, `net ${net < 0 ? 'neg' : 'pos'}`),
+                            h('span', { class: 'go', html: 'son satır <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg>' }))));
                 hdr.style.setProperty('--g', g);
+                hdr.addEventListener('click', () => {
+                    last.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    last.classList.remove('gt-run-flash'); void last.offsetWidth; last.classList.add('gt-run-flash');
+                    setTimeout(() => last.classList.remove('gt-run-flash'), 1500);
+                });
                 run[0].before(hdr);
                 i = j;
             }
