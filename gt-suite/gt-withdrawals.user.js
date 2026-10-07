@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Withdrawals — çekim masası
 // @namespace    palentis.gt
-// @version      1.0.18
+// @version      1.0.19
 // @description  Çekim sayfalarının tek sahibi: keep-alive, satır tıklama, zaman aşımı otomatik reddi (OTORED), tek tıkla şablonlu red, ONAY butonu, red şablonu kısayolları; oyuncu çekim popup'ında sade liste + işlem detayı ipucu, yatırım geçmişi popup'ında sütun/metin temizliği ve sağlayıcı adları. GT Core üzerine kurulur. Dört ayrı scriptin (Keep-Alive, Full Row Click, OTORED, Auto Process) birleşiğidir — o dördünü kapat.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
@@ -32,6 +32,7 @@ const REASONS = {
     PT:   'Daha önce etkinlik kapsamında çekim yapıldıysa veya etkinlikten 5 kez faydalanılıp yatırım yapılmadıysa, yeni bir yatırım yaparak etkinliklerden tekrar faydalanabilirsiniz.',
     KYC:  'Profilinizdeki "Doğrulama" bölümünden, kimliğinizin veya ehliyetinizin fotoğrafını yükleyerek hesabınızı doğrulayabilirsiniz. Fotoğrafta TC kimlik no, ad, soyad ve doğum tarihi net görünmelidir. Bulanık, eksik veya karanlık fotoğraflar reddedilecektir.',
     HVL1: 'Lütfen Havale 1 yöntemiyle yeniden talep iletiniz.',
+    HVL5: 'Talebinizi Hemen Havale (Havale 5) Ödeme Yöntemi ile yeniden olusturmanizi rica ederiz.',
     FORM: 'Çekim talep formunuz hatalıdır. Chrome tarayıcısı ile giriş yaptığınızdan ve IBAN numarasını yazarken boşluk bırakmadığınızdan emin olunuz.',
 };
 
@@ -426,7 +427,7 @@ GT.define({
     match: inWithdrawalPopup,
     source: 'withdrawals',
     setup(ctx) {
-        const LABELS = ['IP', 'PT', 'KYC', 'HVL1', 'FORM'];
+        const LABELS = ['IP', 'PT', 'KYC', 'HVL1', 'HVL5', 'FORM'];
 
         /** Tutarlı şablonlar: kutucuğa yazılan sayı açıklamaya binlik ayraçlı girer (3500 → 3.500). */
         const AMOUNT = {
