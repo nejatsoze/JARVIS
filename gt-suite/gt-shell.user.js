@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Shell — arayüz iskeleti
 // @namespace    palentis.gt
-// @version      1.0.18
+// @version      1.0.19
 // @description  Her sayfada geçerli arayüz katmanı: varsayılan sayfa yönlendirme, logo yerine hızlı gezinme butonları, kapalı başlayan sidebar, navbar saatleri (GMT+0/+3/+8), alt sekmelerin butonlaştırılması, COMMENTS uyarısı ve bildirim şeritlerinin toast'a dönüşümü. GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
@@ -94,6 +94,30 @@ GT.define({
         ping();
         ctx.interval(ping, 60 * 1000);   // arka planda dakikada bir kısılır; 4 dk'lık aralık için yeterli
         ctx.on(W.document, 'visibilitychange', () => { if (!W.document.hidden) ping(); });
+    },
+});
+
+/* ════════════════════════════════════════════════════════════
+   SEKME ÇUBUĞU KORUMASI
+   overflow:hidden kapsayıcılar normalde kaymaz; scrollIntoView gibi bir çağrı
+   onları kaydırırsa sekme çubuğu ekran dışında kalıyor ve geri getirilemiyordu.
+   Sekme çubuğunun atalarından gizli-taşmalı olanlar kaymışsa yerine alınır.
+   ════════════════════════════════════════════════════════════ */
+GT.define({
+    id: 'shell-tabbar-guard',
+    source: 'shell',
+    setup(ctx) {
+        const fix = () => {
+            const bar = $('.mat-tab-nav-bar');
+            for (let el = bar?.parentElement; el && el !== document.documentElement; el = el.parentElement) {
+                if ((el.scrollTop || el.scrollLeft) && getComputedStyle(el).overflowY === 'hidden') {
+                    GT.flight.log('sekme-koruma', `${el.tagName.toLowerCase()}.${[...el.classList].slice(0, 2).join('.')} ${el.scrollTop}px`);
+                    el.scrollTop = 0; el.scrollLeft = 0;
+                }
+            }
+        };
+        ctx.tick(fix, { lazy: true });
+        ctx.on(W.document, 'scroll', fix, { capture: true, passive: true });
     },
 });
 
@@ -199,7 +223,7 @@ GT.define({
 });
 
 /* ════════════════════════════════════════════════════════════
-   GÖKYÜZÜ — saatler ve geri butonu AYNI hesabı kullanır (renkler hep eş)
+   GÖKYÜZÜ — saat kutularının renk hesabı (gün doğumu/batımına göre)
    ════════════════════════════════════════════════════════════ */
 /** NOAA yaklaşık formülü: gün doğumu / batımı, UTC dakikası. */
 function sunUTC(d, lat, lng) {
@@ -246,110 +270,6 @@ function sky(stops, hf) {
 const phase = (hf, R, S) => (hf >= R + 1 && hf < S - 1.2) ? 'day'
     : ((hf >= R - 1 && hf < R + 1) || (hf >= S - 1.2 && hf < S + 1.2)) ? 'edge' : 'night';
 
-/** İstanbul'un şu anki gökyüzü (gerçek gün doğumu/batımı ile, günde bir hesaplanır). */
-const IST = { tz: 'Europe/Istanbul', lat: 41.008, lng: 28.978 };
-const istFmt = new Intl.DateTimeFormat('en-GB', { timeZone: IST.tz, year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-let istSun = null;
-function istanbulSky(d = new Date()) {
-    const p = Object.fromEntries(istFmt.formatToParts(d).map(x => [x.type, +x.value]));
-    const key = `${p.year}-${p.month}-${p.day}`;
-    if (istSun?.key !== key) {
-        const off = ((p.hour * 60 + p.minute) - (d.getUTCHours() * 60 + d.getUTCMinutes()) + 2160) % 1440 - 720;
-        const { rise, set } = sunUTC(d, IST.lat, IST.lng);
-        const R = (((rise + off) % 1440 + 1440) % 1440) / 60, S = (((set + off) % 1440 + 1440) % 1440) / 60;
-        istSun = { key, R, S, stops: skyStops(R, S) };
-    }
-    const hf = p.hour + p.minute / 60;
-    return { ...sky(istSun.stops, hf), phase: phase(hf, istSun.R, istSun.S) };
-}
-
-/* ════════════════════════════════════════════════════════════
-   GERİ BUTONU — sol alt köşe, İstanbul'un o anki gökyüzü (saatlerle aynı hesap)
-   Panel içi geçmiş GT tarafından tutulur (sessionStorage): etiket nereye
-   dönüleceğini yazar, gidilecek sayfa yoksa buton soluk ve pasif.
-   ════════════════════════════════════════════════════════════ */
-css('gt-shell-back', `
-#gt-back{position:fixed; left:16px; bottom:22px; z-index:2147482000; display:inline-flex; align-items:center; padding:0; border:0; background:none;
-  cursor:pointer; font-family:var(--gt-font)}
-#gt-back .b{position:relative; width:48px; height:48px; border-radius:15px; overflow:hidden; display:flex; align-items:center; justify-content:center;
-  color:#fff; transition:transform .2s cubic-bezier(.2,.8,.2,1), background .8s;
-  box-shadow:0 0 0 1px rgba(255,255,255,.55) inset, 0 6px 16px -6px rgba(16,24,40,.35), 0 1px 2px rgba(16,24,40,.12)}
-#gt-back .b::after{content:''; position:absolute; left:0; right:0; bottom:0; height:9px; background:rgba(255,255,255,.16); border-radius:50% 50% 0 0 / 100% 100% 0 0}
-#gt-back svg{width:24px; height:24px; filter:drop-shadow(0 1px 1px rgba(0,0,0,.18))}
-#gt-back .arr{transition:transform .25s cubic-bezier(.3,.7,.2,1)}
-#gt-back .lbl{margin-left:8px; height:28px; display:inline-flex; align-items:center; gap:6px; padding:0 11px; border-radius:8px; background:#fff;
-  border:1px solid #d9dde3; box-shadow:0 1px 1.5px rgba(16,24,40,.06); font-size:12.5px; font-weight:600; color:var(--gt-text, #343a43); white-space:nowrap;
-  max-width:340px; overflow:hidden; text-overflow:ellipsis; opacity:0; transform:translateX(-6px); pointer-events:none;
-  transition:opacity .2s, transform .25s cubic-bezier(.2,.8,.2,1)}
-#gt-back .lbl i{font-style:normal; font-weight:500; color:#98a2b3; overflow:hidden; text-overflow:ellipsis}
-#gt-back:not(.off):hover .arr, #gt-back:not(.off):focus-visible .arr{transform:translateX(-3px)}
-#gt-back:not(.off):hover .lbl, #gt-back:not(.off):focus-visible .lbl{opacity:1; transform:none}
-#gt-back:not(.off):hover .b{transform:translateY(-1px)}
-#gt-back:not(.off):active .b{transform:scale(.94)}
-#gt-back.off{cursor:default} #gt-back.off .b{opacity:.4; filter:saturate(.6)}
-#gt-back:focus-visible{outline:none} #gt-back:focus-visible .b{box-shadow:0 0 0 2px #fff, 0 0 0 4px #525a66}
-@media (prefers-reduced-motion:reduce){#gt-back *{transition:none !important}}
-`);
-
-GT.define({
-    id: 'shell-back',
-    source: 'shell',
-    setup(ctx) {
-        const KEY = 'gt.back.stack';
-        const read = () => { try { return JSON.parse(sessionStorage.getItem(KEY) || '[]'); } catch { return []; } };
-        const write = (st) => { try { sessionStorage.setItem(KEY, JSON.stringify(st.slice(-30))); } catch { /* yok */ } };
-        const here = () => location.pathname + location.search;
-
-        /** Sayfanın okunur adı: açık sabit sekme, yoksa açık pencere sekmesi, yoksa yoldan. */
-        function title() {
-            const t = $('.mat-tab-nav-bar a.mat-tab-link[data-gt-tab].gt-here .inner-ellipsis-overflow')
-                || $('.mat-tab-nav-bar a.mat-tab-link.mat-tab-label-active .inner-ellipsis-overflow');
-            const v = txt(t);
-            if (v) return v;
-            const pid = location.pathname.match(/players\/(\d+)/)?.[1];
-            if (/transaction-history/.test(location.pathname)) return pid ? `İşlemler ${pid}` : 'İşlemler';
-            if (pid) return `Oyuncu ${pid}`;
-            if (/pendingWithdrawals/i.test(location.pathname)) return 'Pending Withdrawals';
-            if (/players\/search/.test(location.pathname)) return 'Player Search';
-            return '';
-        }
-
-        function onRoute() {
-            const st = read(), cur = here();
-            if (st.length && st[st.length - 1].p === cur) return;
-            if (st.length >= 2 && st[st.length - 2].p === cur) st.pop();       // geri gidildi
-            else st.push({ p: cur, t: '' });
-            write(st);
-            paint();
-        }
-
-        const ARROW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><g class="arr"><path d="M19 12H5.5"/><path d="M11 6l-6 6 6 6"/></g></svg>';
-        const sub = h('i', {});
-        const lbl = h('span', { class: 'lbl' }, 'Geri', sub);
-        const box = h('span', { class: 'b', html: ARROW });
-        const btn = ctx.own(h('button', { id: 'gt-back', type: 'button', 'aria-label': 'Geri' }, box, lbl));
-        btn.addEventListener('click', () => { if (read().length >= 2) history.back(); });
-
-        function paint() {
-            const st = read();
-            const prev = st.length >= 2 ? st[st.length - 2] : null;
-            btn.classList.toggle('off', !prev);
-            sub.textContent = prev?.t ? `· ${prev.t}` : '';
-            btn.title = prev ? `Geri${prev.t ? ': ' + prev.t : ''}` : 'Gidilecek önceki sayfa yok';
-        }
-        function paintSky() { box.style.background = istanbulSky().bg; }
-
-        ctx.tick(() => {
-            if (!btn.isConnected && document.body) document.body.append(btn);
-            // açık sayfanın adı geç yükleniyor: gelince yığına yaz
-            const st = read(), last = st[st.length - 1], t = title();
-            if (last && last.p === here() && t && last.t !== t) { last.t = t; write(st); paint(); }
-        }, { lazy: true });
-        ctx.onRoute(onRoute);
-        ctx.interval(paintSky, 60 * 1000);
-        onRoute(); paintSky(); paint();
-    },
-});
 
 /* ════════════════════════════════════════════════════════════
    4 · NAVBAR SAATLERİ — London / Istanbul / Pattaya / Bali / Tokyo (UTC sırası)

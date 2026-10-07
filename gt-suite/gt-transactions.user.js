@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Transactions — işlem geçmişi
 // @namespace    palentis.gt
-// @version      1.1.4
+// @version      1.1.5
 // @description  Transaction History sayfası: 1. Aşama / 2. Aşama / CRE filtre otomasyonu (Alt+X / Alt+D / Alt+C), "Show Transactions From" yanına bir gün geri (<<) butonu, listenin başı/sonu arasında gidip gelen kaydırma butonu ve CRE'nin yanında Ratio Checker (sabit oran eşiği + GT Sports/Betby oran rozetleri). GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
@@ -783,6 +783,24 @@ GT.define({
     source: 'transactions',
     setup(ctx) {
         let sig = '';
+        /** scrollIntoView YASAK: overflow:hidden ana kapsayıcıyı da kaydırıp üstteki sekme
+         *  çubuğunu ekran dışına itiyordu (geri getirilemiyordu). Sadece satırın en yakın
+         *  GERÇEKTEN kaydırılabilir atası (auto/scroll) kaydırılır; yoksa pencere. */
+        function scrollToRow(row) {
+            let el = row.parentElement;
+            while (el && el !== document.body && el !== document.documentElement) {
+                const oy = getComputedStyle(el).overflowY;
+                if (/auto|scroll|overlay/.test(oy) && el.scrollHeight > el.clientHeight + 2) break;
+                el = el.parentElement;
+            }
+            const r = row.getBoundingClientRect();
+            if (el && el !== document.body && el !== document.documentElement) {
+                const c = el.getBoundingClientRect();
+                el.scrollTo({ top: el.scrollTop + (r.top - c.top) - (el.clientHeight - r.height) / 2, behavior: 'smooth' });
+            } else {
+                window.scrollTo({ top: window.scrollY + r.top - (window.innerHeight - r.height) / 2, behavior: 'smooth' });
+            }
+        }
         const money = (n) => n.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
         function build() {
@@ -835,7 +853,7 @@ GT.define({
                             h('span', { class: 'go', html: 'son satır <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg>' }))));
                 hdr.style.setProperty('--g', g);
                 hdr.addEventListener('click', () => {
-                    last.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    scrollToRow(last);
                     last.classList.remove('gt-run-flash'); void last.offsetWidth; last.classList.add('gt-run-flash');
                     setTimeout(() => last.classList.remove('gt-run-flash'), 1500);
                 });
