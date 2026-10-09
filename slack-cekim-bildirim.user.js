@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Slack Çekim Bildirimi
 // @namespace    palentis.slack-cekim
-// @version      1.0.5
+// @version      1.0.6
 // @description  Pending Withdrawals listesine yeni bir çekim düşünce Party ID, çekim tutarı/yöntemi, son yatırım tutarı/yöntemi ve son yatırımdan bu yana max bakiyeyi Slack kanalına (şu an test kanalı C0C80H6L4CD) senin adınla gönderir; talep reddedilince red sebebini o mesaja thread cevabı olarak ekler. Mesajı açık Slack sekmesi atar; iki sekme Tampermonkey deposu üzerinden haberleşir. Webhook / n8n gerekmez.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -315,27 +315,24 @@ function gtSide() {
     }
 
     /* ── Red sebebi → talebin Slack mesajına thread cevabı ──
-       Kaynaklar: (1) GT Withdrawals'ın hızlı red / OTORED'i başarılı reddin ardından
-       'gt-wd-rejected' olayı yayar (kesin); (2) ProcessWithdrawal formunda "Reject"
-       butonuna basılınca sebep 'rj:<id>' olarak not edilir ve talep bekleyen
-       listeden düşünce gönderilir (onay penceresi iptal edilirse liste değişmez,
-       başka bir butona basılırsa not silinir). */
-    function enqueueReply(pid, reason) {
-        const done = GM_getValue('replied', {});
-        if (done[pid]) return;
-        done[pid] = Date.now();
-        const week = Date.now() - 7 * 864e5;
-        for (const k of Object.keys(done)) if (done[k] < week) delete done[k];
-        GM_setValue('replied', done);
-        enqueue('r-' + pid, `*Red sebebi:* ${esc(reason)}`, { pid, reply: true });
-        log(`red sebebi kuyruğa alındı: ${pid}`);
+       Gruba mesajı atılan her talep izlenir (watch:<id>). Talep bekleyen listeden
+       düşünce — kim işlemiş olursa olsun — durumu sunucudan okunur:
+         · ProcessWithdrawal.action           → "Payment Status Rejected"
+         · ProcessWithdrawal.action&details=1 → red sebebi (GT Withdrawals'taki
+           Details ipucunun okuduğu "KOD: mesaj | … | status=…&message=…" satırı)
+       Reddedildiyse sebep thread cevabı olarak gider; onaylandıysa bir şey gitmez.
+       Sunucuda sebep okunamazsa bu tarayıcıda yakalanan sebep (hızlı red / OTORED
+       olayı ya da formdaki Reject) yedek olarak kullanılır. */
+    const WATCH_TTL = 24 * 3600e3;
+
+    function watch(it) {
+        GM_setValue('watch:' + it.paymentid, { partyId: it.partyId, at: Date.now(), checked: 0 });
     }
 
     window.addEventListener('gt-wd-rejected', (e) => {
         let d; try { d = JSON.parse(e.detail); } catch { return; }
-        if (d?.paymentid && d.reason) enqueueReply(String(d.paymentid), String(d.reason));
+        if (d?.paymentid && d.reason) GM_setValue('rj:' + d.paymentid, { reason: String(d.reason), at: Date.now() });
     });
-
     document.addEventListener('click', (e) => {
         const btn = e.target?.closest?.('input[type="submit"], button');
         const form = btn?.form;
@@ -346,22 +343,86 @@ function gtSide() {
         if (reason) GM_setValue('rj:' + pid, { reason, at: Date.now() });
     }, true);
 
-    /** Notu alınmış red, talep bekleyen listeden düşünce kesinleşir. */
-    function confirmRejects(items) {
-        const pending = new Set(items.map(it => it.paymentid));
-        for (const k of GM_listValues()) {
-            if (!k.startsWith('rj:')) continue;
-            const pid = k.slice(3), v = GM_getValue(k, null);
-            if (!v) continue;
-            if (!pending.has(pid)) { enqueueReply(pid, v.reason); GM_deleteValue(k); }
-            else if (Date.now() - v.at > 30 * 60000) GM_deleteValue(k);
-        }
+    async function page(pid, partyId, details) {
+        const url = `${HOST}/j/ProcessWithdrawal.action?embeddedInNewDashboard=true&paymentid=${encodeURIComponent(pid)}`
+            + `&partyId=${encodeURIComponent(partyId)}${details ? '&details=1' : ''}`;
+        const res = await fetch(url, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const html = await res.text();
+        return { html, doc: new DOMParser().parseFromString(html, 'text/html') };
+    }
+
+    /** "Payment Status Rejected" → "REJECTED" */
+    async function paymentStatus(pid, partyId) {
+        const { doc } = await page(pid, partyId, false);
+        // Hücreler arasında boşluk olmayabilir ("Payment StatusRejected"): yaprak düğümleri boşlukla birleştir
+        const text = [...doc.body.querySelectorAll('*')].filter(el => !el.children.length)
+            .map(el => el.textContent.trim()).filter(Boolean).join(' ');
+        const m = text.match(/Payment Status\s+([A-Za-z_]+)/i);
+        if (!m) warn(`durum satırı bulunamadı: ${pid}`);
+        return m ? m[1].toUpperCase() : null;
+    }
+
+    /** Details sayfasındaki "KOD: mesaj | … | status=…&message=…" satırından insan mesajı. */
+    async function rejectReason(pid, partyId) {
+        const { html, doc } = await page(pid, partyId, true);
+        const has = (t) => /status=\w+/i.test(t) && /message=/i.test(t);
+        let raw = [...doc.querySelectorAll('td')].map(td => td.textContent.trim()).find(has)
+            || [...doc.querySelectorAll('body *')].filter(el => !el.children.length).map(el => el.textContent.trim()).find(has);
+        if (!raw) raw = html.match(/[^<]*status=[^<]*message=[^<\n]*/i)?.[0].replace(/&amp;/g, '&').trim();
+        if (!raw) return null;
+        const parts = raw.split('|').map(p => p.trim()).filter(Boolean);
+        const first = (parts[0] || '').replace(/^\S+:\s*/, '').trim();
+        if (first && !/status=/i.test(first)) return first;
+        const msg = (parts.at(-1) || '').split('&').find(p => /^message=/i.test(p.trim()))?.trim().slice(8);
+        if (!msg) return null;
+        try { return decodeURIComponent(msg.replace(/\+/g, ' ')).trim() || null; } catch { return msg.trim() || null; }
+    }
+
+    async function checkWatched(pid, w) {
+        const status = await paymentStatus(pid, w.partyId);
+        if (!status || /PENDING|PROCESS|NEW|HOLD|WAIT/.test(status)) return false;   // henüz sonuçlanmamış
+        GM_deleteValue('watch:' + pid);
+        const local = GM_getValue('rj:' + pid, null);
+        GM_deleteValue('rj:' + pid);
+        if (!/REJECT/.test(status)) { log(`talep ${pid} sonuçlandı (${status}), red değil`); return true; }
+
+        let reason = null;
+        try { reason = await rejectReason(pid, w.partyId); }
+        catch (e) { warn('red sebebi okunamadı:', pid, e.message); }
+        reason = reason || local?.reason || null;
+        enqueue('r-' + pid, reason ? `*Red sebebi:* ${esc(reason)}` : '*Reddedildi* _(red sebebi okunamadı)_', { pid, reply: true });
+        log(`red cevabı kuyruğa alındı: ${pid}${reason ? '' : ' (sebepsiz)'}`);
+        return true;
+    }
+
+    /** İzlenen talep bekleyen listeden düştüyse durumuna bak (talep başına en fazla 30 sn'de bir). */
+    let checking = false;
+    async function checkGone(items) {
+        if (checking) return;
+        checking = true;
+        try {
+            const pending = new Set(items.map(it => it.paymentid));
+            for (const k of GM_listValues()) {
+                if (!k.startsWith('watch:')) continue;
+                const pid = k.slice(6), w = GM_getValue(k, null);
+                if (!w) continue;
+                if (Date.now() - w.at > WATCH_TTL) { GM_deleteValue(k); continue; }
+                if (pending.has(pid) || Date.now() - (w.checked || 0) < 30000) continue;
+                GM_setValue(k, { ...w, checked: Date.now() });
+                try { await checkWatched(pid, w); }
+                catch (e) { warn('durum okunamadı:', pid, e.message); }
+            }
+            const old = Date.now() - 2 * 3600e3;
+            for (const k of GM_listValues()) if (k.startsWith('rj:') && (GM_getValue(k, null)?.at || 0) < old) GM_deleteValue(k);
+        } finally { checking = false; }
     }
 
     async function notify(it, { test = false } = {}) {
         try {
             const text = await buildMessage(it);
             enqueue(test ? `test-${it.paymentid}-${Date.now()}` : it.paymentid, text, { pid: it.paymentid });
+            watch(it);
             log(`${test ? 'TEST ' : ''}kuyruğa alındı: ${it.paymentid} (party ${it.partyId})\n${text}`);
             return text;
         } catch (e) {
@@ -372,7 +433,7 @@ function gtSide() {
 
     function handle(items) {
         if (!items) return;
-        confirmRejects(items);
+        checkGone(items);
         if (seedIfFirstRun(items)) return;
         const limit = Date.now() - CONFIG.MAX_AGE_MIN * 60000;
         for (const it of items) {
