@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Slack Çekim Bildirimi
 // @namespace    palentis.slack-cekim
-// @version      1.0.6
-// @description  Pending Withdrawals listesine yeni bir çekim düşünce Party ID, çekim tutarı/yöntemi, son yatırım tutarı/yöntemi ve son yatırımdan bu yana max bakiyeyi Slack kanalına (şu an test kanalı C0C80H6L4CD) senin adınla gönderir; talep reddedilince red sebebini o mesaja thread cevabı olarak ekler. Mesajı açık Slack sekmesi atar; iki sekme Tampermonkey deposu üzerinden haberleşir. Webhook / n8n gerekmez.
+// @version      1.0.7
+// @description  Pending Withdrawals listesine yeni bir çekim düşünce Party ID, çekim tutarı/yöntemi, son yatırım tutarı/yöntemi ve son yatırımdan bu yana max bakiyeyi Slack kanalına (şu an test kanalı C0C80H6L4CD) senin adınla gönderir; talep onaylanınca mesaja ✅, reddedilince ❌ tepkisi ve red sebebini thread cevabı olarak ekler. Mesajı açık Slack sekmesi atar; iki sekme Tampermonkey deposu üzerinden haberleşir. Webhook / n8n gerekmez.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
 // @grant        GM_getValue
@@ -385,7 +385,13 @@ function gtSide() {
         GM_deleteValue('watch:' + pid);
         const local = GM_getValue('rj:' + pid, null);
         GM_deleteValue('rj:' + pid);
-        if (!/REJECT/.test(status)) { log(`talep ${pid} sonuçlandı (${status}), red değil`); return true; }
+        if (/APPROV|COMPLET|SUCCESS|PAID|SETTLED|PROCESSED/.test(status)) {
+            enqueue('a-' + pid, '', { pid, react: 'white_check_mark' });
+            log(`talep ${pid} onaylandı (${status}), ✅ kuyruğa alındı`);
+            return true;
+        }
+        if (!/REJECT|DECLIN/.test(status)) { log(`talep ${pid} sonuçlandı (${status}), ne onay ne red — tepki yok`); return true; }
+        enqueue('x-' + pid, '', { pid, react: 'x' });
 
         let reason = null;
         try { reason = await rejectReason(pid, w.partyId); }
@@ -557,14 +563,21 @@ function slackSide() {
     async function send(text, threadTs) {
         const params = { channel: CONFIG.CHANNEL, text, unfurl_links: 'false', unfurl_media: 'false' };
         if (threadTs) params.thread_ts = threadTs;
+        return api('chat.postMessage', params);
+    }
+
+    /** Ana mesaja emoji tepkisi; zaten eklenmişse sorun değil. */
+    const react = (name, ts) => api('reactions.add', { channel: CONFIG.CHANNEL, name, timestamp: ts }, ['already_reacted']);
+
+    async function api(method, params, okErrors = []) {
         for (let i = 0; i < 4; i++) {
-            const r = await call('chat.postMessage', params);
-            if (r.ok) return r;
+            const r = await call(method, params);
+            if (r.ok || okErrors.includes(r.error)) return r;
             if (r.error === 'ratelimited') { await sleep(r.retry); continue; }
             if (/invalid_auth|not_authed|token_revoked/.test(r.error)) { token = null; await resolveToken(); continue; }
             throw new Error(r.error || 'bilinmeyen hata');
         }
-        throw new Error('4 denemede gönderilemedi');
+        throw new Error(`${method}: 4 denemede olmadı`);
     }
 
     async function flush() {
@@ -589,16 +602,22 @@ function slackSide() {
             for (const [k, v] of items) {
                 if (Date.now() - v.at > CONFIG.QUEUE_TTL_H * 3600e3) { GM_deleteValue(k); warn('çok eski, atıldı:', k); continue; }
                 let thread = null;
-                if (v.reply) {
+                if (v.reply || v.react) {
                     thread = GM_getValue('ts:' + v.pid, null);
                     if (!thread || thread.ch !== CONFIG.CHANNEL) {
                         // Ana mesaj henüz hazırlanıyor/kuyrukta olabilir: biraz bekle, gelmezse bırak
                         const parentQueued = GM_listValues().some(q => q === 'q:' + v.pid || q.startsWith(`q:test-${v.pid}-`));
                         if (parentQueued || Date.now() - v.at < 15 * 60000) continue;
-                        GM_deleteValue(k); warn('ana mesajı yok, red cevabı atıldı:', v.pid); continue;
+                        GM_deleteValue(k); warn('ana mesajı yok, atıldı:', k); continue;
                     }
                 }
                 GM_setValue('slackLock', { owner: ME, at: Date.now() });
+                if (v.react) {
+                    await react(v.react, thread.ts);
+                    GM_deleteValue(k);
+                    log(`tepki eklendi :${v.react}:`, v.pid);
+                    continue;
+                }
                 const r = await send(v.text, thread?.ts);
                 if (!v.reply && v.pid && r.ts) GM_setValue('ts:' + v.pid, { ts: r.ts, ch: CONFIG.CHANNEL, at: Date.now() });
                 GM_deleteValue(k);
