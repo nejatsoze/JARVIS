@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Slack Çekim Bildirimi
 // @namespace    palentis.slack-cekim
-// @version      1.0.0
+// @version      1.0.1
 // @description  Pending Withdrawals listesine yeni bir çekim düşünce Party ID, çekim tutarı/yöntemi, son yatırım tutarı/yöntemi ve son yatırımdan bu yana max bakiyeyi Slack kanalına (C0BMBT1A6KX) senin adınla gönderir. Mesajı açık Slack sekmesi atar; iki sekme Tampermonkey deposu üzerinden haberleşir. Webhook / n8n gerekmez.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -143,6 +143,7 @@ function gtSide() {
             if (!paymentid || !partyId) continue;
             out.push({
                 paymentid, partyId,
+                userId: col(row, 'USER ID'),
                 amount: num(col(row, 'AMOUNT')),
                 currency: col(row, 'CURRENCY'),
                 method: col(row, 'METHOD'),
@@ -187,7 +188,17 @@ function gtSide() {
         return m ? Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)) : null;
     };
 
-    /** Son yatırımdan bu yana işlem sonrası toplam bakiyenin en yüksek olduğu işlem. */
+    /** Son PLTFRM_BON işleminin zamanı (yatırımı olmayan oyuncuda max bakiye buradan başlar). */
+    async function lastPlatformBonus(pid) {
+        const rows = asList(await ics('player-transactions/page', {
+            partyid: pid, startDate: `${ymd(dayOffset(-CONFIG.DEPOSIT_DAYS))} 0:0:0.000`, endDate: `${ymd(dayOffset(1))} 23:59:0.000`,
+            pageSize: 500, pageNum: 1, tranTypes: 'PLTFRM_BON', currency: 'TRY',
+        }));
+        const t = rows.filter(r => r.tranType === 'PLTFRM_BON' && r.datetime).map(r => +r.datetime);
+        return t.length ? Math.max(...t) : null;
+    }
+
+    /** Son yatırımdan (yoksa son PLTFRM_BON'dan) bu yana işlem sonrası toplam bakiyenin en yüksek olduğu işlem. */
     async function maxBalanceSince(pid, since) {
         const from = new Date(since); from.setDate(from.getDate() - 1);
         const SLACK_MS = 2 * 60000; // yatırım kaydı ile işlem kaydı saniyeler farkla düşebiliyor
@@ -212,7 +223,8 @@ function gtSide() {
 
     async function buildMessage(it) {
         const lines = ['*Yeni Çekim Talebi!*'];
-        lines.push(`*Party ID:* <${HOST}/core/app/core/players/${it.partyId}/detail|${it.partyId}>`);
+        lines.push(`*Party ID:* <${HOST}/core/app/core/players/${it.partyId}/detail|${it.partyId}>`
+            + (it.userId ? `  |  *User ID:* ${esc(it.userId)}` : ''));
         const wAmt = Number.isFinite(it.amount) ? `${money(it.amount)} ${cur(it.currency)}` : '?';
         lines.push(`*Çekim Miktarı ve Yöntemi:* ${esc(wAmt)}${it.method ? ' - ' + esc(it.method) : ''}`);
 
@@ -222,8 +234,13 @@ function gtSide() {
         if (dep) lines.push(`*Yatırım Miktarı ve Yöntemi:* ${money(dep.amount)} TL${dep.methodName ? ' - ' + esc(dep.methodName) : ''}`);
         else lines.push(`*Yatırım Miktarı ve Yöntemi:* _${dep === undefined ? 'alınamadı' : `son ${CONFIG.DEPOSIT_DAYS} günde tamamlanmış yatırım yok`}_`);
 
+        // Yatırım yoksa başlangıç noktası son platform bonusu (PLTFRM_BON)
+        let since = dep ? depositTime(dep) : null;
+        if (!since && dep === null) {
+            try { since = await lastPlatformBonus(it.partyId); }
+            catch (e) { warn('PLTFRM_BON alınamadı:', e.message); }
+        }
         let max = null;
-        const since = dep ? depositTime(dep) : null;
         if (since) {
             try { max = await maxBalanceSince(it.partyId, since); }
             catch (e) { warn('max bakiye alınamadı:', e.message); }
