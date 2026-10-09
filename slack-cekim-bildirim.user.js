@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Slack Çekim Bildirimi
 // @namespace    palentis.slack-cekim
-// @version      1.0.1
+// @version      1.0.2
 // @description  Pending Withdrawals listesine yeni bir çekim düşünce Party ID, çekim tutarı/yöntemi, son yatırım tutarı/yöntemi ve son yatırımdan bu yana max bakiyeyi Slack kanalına (C0BMBT1A6KX) senin adınla gönderir. Mesajı açık Slack sekmesi atar; iki sekme Tampermonkey deposu üzerinden haberleşir. Webhook / n8n gerekmez.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -227,6 +227,7 @@ function gtSide() {
             + (it.userId ? `  |  *User ID:* ${esc(it.userId)}` : ''));
         const wAmt = Number.isFinite(it.amount) ? `${money(it.amount)} ${cur(it.currency)}` : '?';
         lines.push(`*Çekim Miktarı ve Yöntemi:* ${esc(wAmt)}${it.method ? ' - ' + esc(it.method) : ''}`);
+        const dupes = duplicateCounts(it.partyId);   // yatırım/bakiye ile paralel
 
         let dep = null;
         try { dep = await lastDeposit(it.partyId); }
@@ -248,7 +249,54 @@ function gtSide() {
         lines.push(max
             ? `*Max Bakiye:* ${money(max.bal)} TL${max.id ? ` (\`${max.id}\`)` : ''}`
             : '*Max Bakiye:* _hesaplanamadı_');
+
+        const [ip, name] = await dupes;
+        lines.push(`*Aynı IP'de Yer Alan Oyuncu Sayısı:* ${ip ?? '_alınamadı_'}`);
+        lines.push(`*Aynı Ad-Soyadla Kayıtlı Olan Oyuncu Sayısı:* ${name ?? '_alınamadı_'}`);
         return lines.join('\n');
+    }
+
+    /* ── IP / NAME taraması: GT Player'daki IP rozeti ve NAME butonuyla aynı arama ── */
+    async function duplicateRows(pid, criteria) {
+        const t = token();
+        if (!t) throw new Error('oturum token yok');
+        const url = `${HOST}/j/player/PlayerDuplicates.action?${new URLSearchParams({
+            embeddedInNewDashboard: 'true', cmslanguage: 'en', token: t,
+            partyId: pid, matchingItems: '1', execute: 'Search Duplicates', ...criteria })}`;
+        const res = await fetch(url, { credentials: 'include' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+        const seen = new Set(), out = [];
+        for (const row of doc.querySelectorAll('tbody tr')) {
+            const c = row.querySelectorAll('td');
+            if (c.length < 5) continue;
+            const id = clean(c[2]);
+            if (!/^\d{8}$/.test(id) || seen.has(id)) continue;
+            seen.add(id);
+            out.push({ id, first: clean(c[3]), last: clean(c[4]) });
+        }
+        return out;
+    }
+    /** "İbrahim Çağlar" ile "ibrahim caglar" aynı isim sayılsın. */
+    const normName = (s) => String(s || '').toLocaleLowerCase('tr-TR')
+        .replace(/ı/g, 'i').replace(/ş/g, 's').replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ö/g, 'o').replace(/ç/g, 'c')
+        .normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+
+    /** Oyuncunun kendisi hariç (n-1): aynı IP'deki ve aynı ad-soyadlı hesap sayısı. Hata → null. */
+    async function duplicateCounts(pid) {
+        const me = String(pid);
+        const ip = duplicateRows(pid, { checkIp: 'true' })
+            .then(rows => rows.filter(r => r.id !== me).length)
+            .catch(e => { warn('IP taraması alınamadı:', e.message); return null; });
+        const name = duplicateRows(pid, { checkFirstName: 'true', checkLastName: 'true' })
+            .then(all => {
+                const self = all.find(r => r.id === me);
+                if (!self) return 0;   // kendisi bile listede yoksa eşleşen başka hesap da yok
+                const [f, l] = [normName(self.first), normName(self.last)];
+                return all.filter(r => r.id !== me && normName(r.first) === f && normName(r.last) === l).length;
+            })
+            .catch(e => { warn('NAME taraması alınamadı:', e.message); return null; });
+        return Promise.all([ip, name]);
     }
 
     /** Mesajı kuyruğa koy; Slack sekmesi alıp gönderir. */
