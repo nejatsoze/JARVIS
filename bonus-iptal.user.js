@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.0.1
+// @version      1.0.2
 // @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa oyuncunun Zumabet Hosgeldin Freesin bonusunu iptal eder ve Slack kanalına bildirir. VARSAYILAN DENEME MODU: hiçbir bonusu iptal etmez, sadece kararı Slack'e yazar. Tampermonkey menüsünden Kapalı / Deneme / Canlı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -25,7 +25,7 @@
  *      oyuncunun bonus listesinde (GET /ics/player-bonus/{party}) adı TARGET_PLANS'ta
  *      olan, iptal edilebilir durumda (Active / Queued / Spent Active / Pending) ve
  *      platform bonusundan önceki LOOKBACK_H saat içinde açılmış bonus aranır.
- *      Bulunamazsa (ör. bonus "Spent" — panel de iptal ettirmez) Slack'e not düşülür.
+ *      Bulunamazsa (deneme bonusu değil ya da "Spent") hiçbir mesaj gitmez, sadece Durum/konsola yazılır.
  *   3. Canlı: DELETE /ics/player-bonus/{bonusId} (panelin Cancel butonunun isteği),
  *      ardından listeden durumunun Canceled olduğu doğrulanır ve Slack'e mesaj gider.
  *
@@ -221,7 +221,7 @@ function gtSide() {
             if (tries < CONFIG.FIND_RETRY) { setBook(tx.tranId, { tries }); return; }   // bonus henüz oluşmamış olabilir
             const seen = m.candidates.map(b => `#${b.id} ${b.status}`).join(', ') || 'hiç yok';
             setBook(tx.tranId, { final: true, result: `iptal edilebilir bonus yok (${seen})` });
-            enqueue(tx.tranId + '-none', `${mode() !== 'live' ? ':test_tube: _DENEME_ — ' : ':warning: '}İptal edilebilir ${esc(CONFIG.TARGET_PLANS.join(' / '))} bonusu bulunamadı (bulunan: ${esc(seen)}).\nKazanç: ${money(tx.credit)} TL\nID: ${tx.partyId}`);
+            // Deneme bonusu değil (ya da artık iptal edilemez): Slack'e bir şey gitmez, sadece defter + konsol
             log(`${tx.tranId}: iptal edilebilir bonus bulunamadı`, m.candidates);
             return;
         }
