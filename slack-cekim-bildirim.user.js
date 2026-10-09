@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Slack Çekim Bildirimi
 // @namespace    palentis.slack-cekim
-// @version      1.0.2
+// @version      1.0.3
 // @description  Pending Withdrawals listesine yeni bir çekim düşünce Party ID, çekim tutarı/yöntemi, son yatırım tutarı/yöntemi ve son yatırımdan bu yana max bakiyeyi Slack kanalına (C0BMBT1A6KX) senin adınla gönderir. Mesajı açık Slack sekmesi atar; iki sekme Tampermonkey deposu üzerinden haberleşir. Webhook / n8n gerekmez.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -42,8 +42,8 @@ const CONFIG = {
     POLL_SEC: 60,              // arka plan liste yoklaması; 0 = kapalı (sadece sayfadaki tablo)
     MAX_AGE_MIN: 180,          // bundan eski talepler bildirilmez (tarayıcı uzun süre kapalı kaldıysa yığın gitmesin)
     DEPOSIT_DAYS: 90,          // son yatırım bu kadar gün geriye aranır
-    TX_PAGE_SIZE: 1000,
-    TX_MAX_PAGES: 30,
+    TX_PAGE_SIZE: 500,        // GT Player kartında doğrulanmış boyut
+    TX_MAX_PAGES: 40,
     QUEUE_TTL_H: 24,           // Slack'e bu kadar süre gidemeyen mesaj atılır
 };
 
@@ -188,6 +188,15 @@ function gtSide() {
         return m ? Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)) : null;
     };
 
+    /** player-transactions/page tür listesi olmadan 400 döner; Transaction History sayfasının gönderdiği tam liste. */
+    const ALL_TRAN_TYPES = ['AUTO_CHAR', 'BONUS_REL', 'CANC_BONUS', 'CASH_OUT', 'CHARGE_BCK', 'CHAT_BONUS', 'COMMISSION',
+        'CRE_BONUS', 'DEPOSIT', 'END_GAME', 'EXP_BONUS', 'GAME_ADJ', 'GAME_BET', 'GAME_PLAY', 'GAME_WIN', 'GAME_TAX',
+        'LOYALTY_AD', 'LP_BUY', 'LP_CONVERT', 'MAN_ADJUST', 'MAN_BONUS', 'P_DEPOSIT', 'P_WITHDRAW', 'PAYMNT_FEE',
+        'PRODUC_BON', 'PLTFRM_BON', 'REFUND', 'ROLLBACK', 'STAKE_DEC', 'TIPS', 'TOURN_WIN', 'TRANSF_IN', 'TXFER_IN2',
+        'TRANSF_OUT', 'TXFER_OUT2', 'TRANSF_RB', 'WD_CANCEL', 'WD_REJECT', 'WITHDRAWAL', 'MACHIN_EFT', 'SYSTEM_EFT',
+        'RESERVE', 'RSV_COMMIT', 'RSV_CANCEL', 'FRBET_STK', 'DP_RBACK', 'WD_RBACK', 'CORRECTION', 'DP_FAIL',
+        'DP_CANCEL', 'CASHBACK', 'CRE_CB'].join(', ');
+
     /** Son PLTFRM_BON işleminin zamanı (yatırımı olmayan oyuncuda max bakiye buradan başlar). */
     async function lastPlatformBonus(pid) {
         const rows = asList(await ics('player-transactions/page', {
@@ -206,7 +215,7 @@ function gtSide() {
         for (let page = 1; page <= CONFIG.TX_MAX_PAGES; page++) {
             const rows = asList(await ics('player-transactions/page', {
                 partyid: pid, startDate: `${ymd(from)} 0:0:0.000`, endDate: `${ymd(dayOffset(1))} 23:59:0.000`,
-                pageSize: CONFIG.TX_PAGE_SIZE, pageNum: page, currency: 'TRY',
+                pageSize: CONFIG.TX_PAGE_SIZE, pageNum: page, tranTypes: ALL_TRAN_TYPES, currency: 'TRY',
             }));
             pages = page;
             for (const r of rows) {
