@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Slack Çekim Bildirimi
 // @namespace    palentis.slack-cekim
-// @version      1.0.4
-// @description  Pending Withdrawals listesine yeni bir çekim düşünce Party ID, çekim tutarı/yöntemi, son yatırım tutarı/yöntemi ve son yatırımdan bu yana max bakiyeyi Slack kanalına (şu an test kanalı C0C80H6L4CD) senin adınla gönderir. Mesajı açık Slack sekmesi atar; iki sekme Tampermonkey deposu üzerinden haberleşir. Webhook / n8n gerekmez.
+// @version      1.0.5
+// @description  Pending Withdrawals listesine yeni bir çekim düşünce Party ID, çekim tutarı/yöntemi, son yatırım tutarı/yöntemi ve son yatırımdan bu yana max bakiyeyi Slack kanalına (şu an test kanalı C0C80H6L4CD) senin adınla gönderir; talep reddedilince red sebebini o mesaja thread cevabı olarak ekler. Mesajı açık Slack sekmesi atar; iki sekme Tampermonkey deposu üzerinden haberleşir. Webhook / n8n gerekmez.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
 // @grant        GM_getValue
@@ -308,16 +308,60 @@ function gtSide() {
         return Promise.all([ip, name]);
     }
 
-    /** Mesajı kuyruğa koy; Slack sekmesi alıp gönderir. */
-    function enqueue(key, text) {
-        GM_setValue('q:' + key, { text, at: Date.now() });
+    /** Mesajı kuyruğa koy; Slack sekmesi alıp gönderir. pid: hangi talebin mesajı (red cevabı bu mesaja thread olur). */
+    function enqueue(key, text, extra = {}) {
+        GM_setValue('q:' + key, { text, at: Date.now(), ...extra });
         GM_setValue('ping', Date.now());
+    }
+
+    /* ── Red sebebi → talebin Slack mesajına thread cevabı ──
+       Kaynaklar: (1) GT Withdrawals'ın hızlı red / OTORED'i başarılı reddin ardından
+       'gt-wd-rejected' olayı yayar (kesin); (2) ProcessWithdrawal formunda "Reject"
+       butonuna basılınca sebep 'rj:<id>' olarak not edilir ve talep bekleyen
+       listeden düşünce gönderilir (onay penceresi iptal edilirse liste değişmez,
+       başka bir butona basılırsa not silinir). */
+    function enqueueReply(pid, reason) {
+        const done = GM_getValue('replied', {});
+        if (done[pid]) return;
+        done[pid] = Date.now();
+        const week = Date.now() - 7 * 864e5;
+        for (const k of Object.keys(done)) if (done[k] < week) delete done[k];
+        GM_setValue('replied', done);
+        enqueue('r-' + pid, `*Red sebebi:* ${esc(reason)}`, { pid, reply: true });
+        log(`red sebebi kuyruğa alındı: ${pid}`);
+    }
+
+    window.addEventListener('gt-wd-rejected', (e) => {
+        let d; try { d = JSON.parse(e.detail); } catch { return; }
+        if (d?.paymentid && d.reason) enqueueReply(String(d.paymentid), String(d.reason));
+    });
+
+    document.addEventListener('click', (e) => {
+        const btn = e.target?.closest?.('input[type="submit"], button');
+        const form = btn?.form;
+        const pid = form?.querySelector('[name="paymentid"]')?.value;
+        if (!pid || !form.querySelector('[name="reject_reason"]')) return;
+        if (btn.name !== 'reject') { GM_deleteValue('rj:' + pid); return; }
+        const reason = form.querySelector('[name="reject_reason"]').value.trim();
+        if (reason) GM_setValue('rj:' + pid, { reason, at: Date.now() });
+    }, true);
+
+    /** Notu alınmış red, talep bekleyen listeden düşünce kesinleşir. */
+    function confirmRejects(items) {
+        const pending = new Set(items.map(it => it.paymentid));
+        for (const k of GM_listValues()) {
+            if (!k.startsWith('rj:')) continue;
+            const pid = k.slice(3), v = GM_getValue(k, null);
+            if (!v) continue;
+            if (!pending.has(pid)) { enqueueReply(pid, v.reason); GM_deleteValue(k); }
+            else if (Date.now() - v.at > 30 * 60000) GM_deleteValue(k);
+        }
     }
 
     async function notify(it, { test = false } = {}) {
         try {
             const text = await buildMessage(it);
-            enqueue(test ? `test-${it.paymentid}-${Date.now()}` : it.paymentid, text);
+            enqueue(test ? `test-${it.paymentid}-${Date.now()}` : it.paymentid, text, { pid: it.paymentid });
             log(`${test ? 'TEST ' : ''}kuyruğa alındı: ${it.paymentid} (party ${it.partyId})\n${text}`);
             return text;
         } catch (e) {
@@ -327,7 +371,9 @@ function gtSide() {
     }
 
     function handle(items) {
-        if (!items || seedIfFirstRun(items)) return;
+        if (!items) return;
+        confirmRejects(items);
+        if (seedIfFirstRun(items)) return;
         const limit = Date.now() - CONFIG.MAX_AGE_MIN * 60000;
         for (const it of items) {
             if (!claim(it.paymentid)) continue;
@@ -447,10 +493,12 @@ function slackSide() {
         throw new Error(`hiçbir oturum ${CONFIG.CHANNEL} kanalını göremiyor (kanalın üyesi misin?)`);
     }
 
-    async function send(text) {
+    async function send(text, threadTs) {
+        const params = { channel: CONFIG.CHANNEL, text, unfurl_links: 'false', unfurl_media: 'false' };
+        if (threadTs) params.thread_ts = threadTs;
         for (let i = 0; i < 4; i++) {
-            const r = await call('chat.postMessage', { channel: CONFIG.CHANNEL, text, unfurl_links: 'false', unfurl_media: 'false' });
-            if (r.ok) return;
+            const r = await call('chat.postMessage', params);
+            if (r.ok) return r;
             if (r.error === 'ratelimited') { await sleep(r.retry); continue; }
             if (/invalid_auth|not_authed|token_revoked/.test(r.error)) { token = null; await resolveToken(); continue; }
             throw new Error(r.error || 'bilinmeyen hata');
@@ -472,13 +520,26 @@ function slackSide() {
 
         busy = true;
         try {
+            const week = Date.now() - 7 * 864e5;
+            for (const k of GM_listValues()) if (k.startsWith('ts:') && (GM_getValue(k, null)?.at || 0) < week) GM_deleteValue(k);
             if (!token) await resolveToken();
             const items = keys.map(k => [k, GM_getValue(k, null)]).filter(([, v]) => v)
                 .sort((a, b) => a[1].at - b[1].at);
             for (const [k, v] of items) {
                 if (Date.now() - v.at > CONFIG.QUEUE_TTL_H * 3600e3) { GM_deleteValue(k); warn('çok eski, atıldı:', k); continue; }
+                let thread = null;
+                if (v.reply) {
+                    thread = GM_getValue('ts:' + v.pid, null);
+                    if (!thread || thread.ch !== CONFIG.CHANNEL) {
+                        // Ana mesaj henüz hazırlanıyor/kuyrukta olabilir: biraz bekle, gelmezse bırak
+                        const parentQueued = GM_listValues().some(q => q === 'q:' + v.pid || q.startsWith(`q:test-${v.pid}-`));
+                        if (parentQueued || Date.now() - v.at < 15 * 60000) continue;
+                        GM_deleteValue(k); warn('ana mesajı yok, red cevabı atıldı:', v.pid); continue;
+                    }
+                }
                 GM_setValue('slackLock', { owner: ME, at: Date.now() });
-                await send(v.text);
+                const r = await send(v.text, thread?.ts);
+                if (!v.reply && v.pid && r.ts) GM_setValue('ts:' + v.pid, { ts: r.ts, ch: CONFIG.CHANNEL, at: Date.now() });
                 GM_deleteValue(k);
                 log('gönderildi:', k);
                 status(`son gönderim ${k.slice(2)}`);

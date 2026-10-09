@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Withdrawals — çekim masası
 // @namespace    palentis.gt
-// @version      1.0.19
+// @version      1.0.20
 // @description  Çekim sayfalarının tek sahibi: keep-alive, satır tıklama, zaman aşımı otomatik reddi (OTORED), tek tıkla şablonlu red, ONAY butonu, red şablonu kısayolları; oyuncu çekim popup'ında sade liste + işlem detayı ipucu, yatırım geçmişi popup'ında sütun/metin temizliği ve sağlayıcı adları. GT Core üzerine kurulur. Dört ayrı scriptin (Keep-Alive, Full Row Click, OTORED, Auto Process) birleşiğidir — o dördünü kapat.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
@@ -101,6 +101,10 @@ async function reject(paymentid, partyId, reasonText) {
             body: body.toString(),
         });
         if (!res.ok) throw new Error('POST başarısız (HTTP ' + res.status + ')');
+        // Slack Çekim Bildirimi bu olayla red sebebini talebin Slack mesajına thread olarak atar
+        try {
+            window.dispatchEvent(new CustomEvent('gt-wd-rejected', { detail: JSON.stringify({ paymentid, partyId, reason: reasonText }) }));
+        } catch { /* dinleyen yoksa sorun değil */ }
         return true;
     } finally {
         inFlight.delete(paymentid);
