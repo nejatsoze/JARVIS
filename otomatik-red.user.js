@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Otomatik Red — KYC ve 8 saat kuralı
 // @namespace    palentis.otomatik-red
-// @version      1.0.0
+// @version      1.0.1
 // @description  Pending Withdrawals'a düşen talepleri iki kurala göre değerlendirir: (1) hiç yatırımı olmayan ve KYC'si PASS olmayan üye, (2) son başarılı çekimden bu yana 8 saat dolmamış talep. Kural tutarsa red açıklamasını yazıp talebi reddeder ve Slack kanalına bildirir. VARSAYILAN DENEME MODU: hiçbir şey reddetmez, sadece kararı Slack'e yazar. Tampermonkey menüsünden Kapalı / Deneme / Canlı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -177,22 +177,19 @@ function gtSide() {
 
     /* ── Veri: KYC, yatırım geçmişi, son başarılı çekim ── */
 
-    /** full-profile içinde adı "kyc" geçen ve değeri PASS/OPEN gibi bir durum olan alanı bulur. */
+    /** KYC durumu: /ics/players/{id}/detail → kycStatus (oyuncu sayfasının kendi isteği).
+     *  Yedek: çekim geçmişi sayfasının başlığındaki "Player KYC Status=OPEN". İkisi de okunamazsa null. */
     async function kycStatus(pid) {
-        const data = await ics(`players/${pid}/full-profile`);
-        const hits = [];
-        (function walk(o, path, depth) {
-            if (!o || typeof o !== 'object' || depth > 4) return;
-            for (const [k, v] of Object.entries(o)) {
-                const p = path ? `${path}.${k}` : k;
-                if (typeof v === 'string' && /kyc/i.test(k) && /^[A-Z_]{3,20}$/.test(v.trim().toUpperCase()) && !/date|time|age|system|provider|id$/i.test(k)) hits.push([p, v.trim().toUpperCase()]);
-                else if (v && typeof v === 'object') walk(v, p, depth + 1);
-            }
-        })(data, '', 0);
-        // En olası alan önce: kycStatus > kyc > diğerleri
-        hits.sort((a, b) => score(b[0]) - score(a[0]));
-        function score(p) { const k = p.split('.').pop().toLowerCase(); return k === 'kycstatus' ? 3 : k === 'kyc' ? 2 : /status/.test(k) ? 1 : 0; }
-        return hits.length ? { value: hits[0][1], field: hits[0][0], all: hits } : { value: null, field: null, all: [] };
+        try {
+            const v = (await ics(`players/${pid}/detail`))?.kycStatus;
+            if (typeof v === 'string' && v.trim()) return { value: v.trim().toUpperCase(), field: 'detail.kycStatus' };
+        } catch (e) { warn('detail okunamadı:', e.message); }
+        try {
+            const doc = await legacyDoc('player/PlayerWithdrawals.action', { partyId: pid });
+            const m = clean(doc.body).match(/KYC Status\s*=\s*([A-Z_]+)/i);
+            if (m) return { value: m[1].toUpperCase(), field: 'PlayerWithdrawals "KYC Status="' };
+        } catch (e) { warn('çekim geçmişinden KYC okunamadı:', e.message); }
+        return { value: null, field: null };
     }
 
     /** Hiç tamamlanmış yatırımı var mı? İki kaynak da "yok" demeli; biri okunamazsa null (bilinmiyor). */
