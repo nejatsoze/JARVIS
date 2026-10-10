@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.0.2
-// @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa oyuncunun Zumabet Hosgeldin Freesin bonusunu iptal eder ve Slack kanalına bildirir. VARSAYILAN DENEME MODU: hiçbir bonusu iptal etmez, sadece kararı Slack'e yazar. Tampermonkey menüsünden Kapalı / Deneme / Canlı seçilir.
+// @version      1.1.0
+// @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa oyuncunun Zumabet Hosgeldin Freesin bonusunu iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. VARSAYILAN DENEME MODU: hiçbir bonusu iptal etmez, sadece kararı Slack'e yazar. Tampermonkey menüsünden Kapalı / Deneme / Canlı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
 // @grant        GM_getValue
@@ -28,6 +28,10 @@
  *      Bulunamazsa (deneme bonusu değil ya da "Spent") hiçbir mesaj gitmez, sadece Durum/konsola yazılır.
  *   3. Canlı: DELETE /ics/player-bonus/{bonusId} (panelin Cancel butonunun isteği),
  *      ardından listeden durumunun Canceled olduğu doğrulanır ve Slack'e mesaj gider.
+ *   4. Credit >= LIMIT (25.000) ise ayrıca: GET/PUT /ics/player-lock-provider/{party} ile tüm
+ *      sağlayıcılar kısıtlanır, POST /ics/accounts/adjustments ile "Çekilebilir Deneme Bonusu"
+ *      notuyla 2.000 TL MAN_ADJUST eklenir (staffId oturum JWT'sinden). Çift ödeme kalkanı:
+ *      bot kaydı + son 30 günde aynı tutarda MAN_ADJUST kontrolü.
  *
  * GÜVENLİK
  *   · Varsayılan DENEME: iptal yok, Slack'e "DENEME — iptal edilmedi" notuyla ve
@@ -44,7 +48,9 @@
 const CONFIG = {
     CHANNEL: 'C0C80H6L4CD',
     POLL_SEC: 30,
-    LIMIT: 25000,                         // bu tutarın ALTINDAKİ kazançlarda iptal
+    LIMIT: 25000,                         // altı: iptal + mesaj · üstü (dahil): iptal + tüm sağlayıcı kısıtı + 2.000 TL
+    PAYOUT: 2000,                         // limit üstünde eklenen çekilebilir tutar
+    PAYOUT_NOTE: 'Çekilebilir Deneme Bonusu',
     TARGET_PLANS: ['Zumabet Hosgeldin Freesin'],   // iptal edilecek bonus planı
     LOOKBACK_H: 24,                       // bonus, platform bonusundan en fazla bu kadar saat önce açılmış olmalı
     MATCH_MIN: 5,                         // saat farkı payı (dk)
@@ -52,6 +58,7 @@ const CONFIG = {
 };
 
 const CANCELLABLE = ['ACTIVE', 'QUEUED', 'SPENT ACTIVE', 'PENDING'];   // panelin isCancellableBonus listesi
+const MESSAGE_WIN = (x) => `Deneme Bonusu freespinleri ile bakiyenizi 25.000 TL ve üzerine ulaştırdığınız için 2.000 TL çekilebilir bakiye hesabınıza eklenmiştir. Bonus kazancınız: ${x} TL`;
 const MESSAGE = (x) => `Deneme Bonusu freespinleri ile bakiyenizi 25.000 TL ve üzerine ulaştırabilirseniz 2.000 TL çekim yapabilirsiniz. Bonus kazancınız: ${x} TL olduğu için bonus iptal edilmiştir.`;
 
 const HOST = 'https://core-secundus.gmntc.com';
@@ -88,10 +95,12 @@ function gtSide() {
         return null;
     }
     const need = () => { const t = token(); if (!t) throw new Error('oturum token yok'); return t; };
-    async function ics(path, params = {}, method = 'GET') {
+    async function ics(path, params = {}, method = 'GET', body) {
         const t = need();
         const url = `${HOST}/ics/${path}?${new URLSearchParams({ sessionKey: t, uType: 'staff', ...params })}`;
-        const res = await fetch(url, { method, credentials: 'include', headers: { Accept: 'application/json', Authorization: `Bearer ${t}` } });
+        const headers = { Accept: 'application/json', Authorization: `Bearer ${t}` };
+        if (body !== undefined) headers['Content-Type'] = 'application/json';
+        const res = await fetch(url, { method, credentials: 'include', headers, body: body === undefined ? undefined : JSON.stringify(body) });
         if (!res.ok) throw new Error(`HTTP ${res.status} — ${method} ${path.split('?')[0]}`);
         const text = await res.text();
         try { return JSON.parse(text); } catch { return text; }
@@ -187,6 +196,54 @@ function gtSide() {
         if (b && !/cancel/i.test(b.status)) throw new Error(`iptal sonrası durum hâlâ ${b.status}`);
     }
 
+    /* ── Limit üstü: sağlayıcı kısıtı ve 2.000 TL (panelin kendi istekleri, konsol kaydıyla doğrulandı) ── */
+
+    /** Oturumdaki personel no (JWT içindeki staffid) — düzeltme kaydı bu kişi adına düşer. */
+    function staffId() {
+        try {
+            const b64 = String(need()).split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+            const p = JSON.parse(decodeURIComponent(escape(atob(b64))));
+            const id = Number(p.staffid ?? p.staffId ?? p.id);
+            return Number.isFinite(id) && id > 0 ? id : null;
+        } catch { return null; }
+    }
+
+    /** Tüm sağlayıcıları kısıtla: GET kilit kaydı (kısıtlı + açık), PUT ile hepsini kısıtlı yap, sonra doğrula. */
+    async function lockAllProviders(pid) {
+        const cur = await ics(`player-lock-provider/${pid}`);
+        const all = [...(cur?.lockedProviders || []), ...(cur?.nonLockedProviders || [])]
+            .map(p => ({ providerId: p.providerId, providerName: p.providerName }))
+            .filter((p, i, a) => p.providerId != null && a.findIndex(q => q.providerId === p.providerId) === i);
+        if (!all.length) throw new Error('sağlayıcı listesi boş geldi');
+        if (!(cur.nonLockedProviders || []).length) return { count: all.length, already: true };
+        await ics(`player-lock-provider/${pid}`, {}, 'PUT', { lockedProviders: all });
+        const after = await ics(`player-lock-provider/${pid}`);
+        if ((after?.nonLockedProviders || []).length) throw new Error(`kısıt sonrası ${after.nonLockedProviders.length} sağlayıcı hâlâ açık`);
+        return { count: all.length, already: false };
+    }
+
+    /** Bu oyuncuya son 30 günde aynı tutarda manuel düzeltme yapılmış mı? (çift ödeme kalkanı) */
+    async function alreadyPaid(pid) {
+        const pad2 = (n) => String(n).padStart(2, '0');
+        const ymd = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+        const from = new Date(Date.now() - 30 * 864e5), to = new Date(Date.now() + 864e5);
+        const rows = asList(await ics('player-transactions/page', {
+            partyid: pid, startDate: `${ymd(from)} 0:0:0.000`, endDate: `${ymd(to)} 23:59:0.000`,
+            pageSize: 200, pageNum: 1, tranTypes: 'MAN_ADJUST', currency: 'TRY',
+        }));
+        return rows.some(r => r.tranType === 'MAN_ADJUST' && Math.abs((+r.credit || +r.amount || 0) - CONFIG.PAYOUT) < 0.01);
+    }
+
+    async function addPayout(pid) {
+        const sid = staffId();
+        if (!sid) throw new Error('personel no (staffid) oturumdan okunamadı');
+        const r = await ics('accounts/adjustments', {}, 'POST', {
+            partyId: Number(pid), staffId: sid, tranType: 'MAN_ADJUST', amount: CONFIG.PAYOUT.toFixed(2),
+            comment: CONFIG.PAYOUT_NOTE, tranTag: 0, tranMethod: null, subType: null, triggerBonus: null,
+        });
+        if (r && typeof r === 'object' && r.status && !/^(OK|SUCCESS)$/i.test(r.status)) throw new Error(`panel yanıtı: ${r.status}${r.message ? ' — ' + r.message : ''}`);
+    }
+
     /* ── Slack ── */
     function enqueue(key, text) {
         GM_setValue('q:' + key, { text, at: Date.now() });
@@ -206,7 +263,8 @@ function gtSide() {
     async function handle(tx) {
         const entry = book()[tx.tranId];
         if (entry?.final) return;
-        if (!(tx.credit < CONFIG.LIMIT)) { setBook(tx.tranId, { final: true, result: `limit üstü (${tx.credit})` }); return; }
+        if (!Number.isFinite(tx.credit)) { setBook(tx.tranId, { final: true, result: 'tutar okunamadı' }); return; }
+        const over = tx.credit >= CONFIG.LIMIT;   // limit üstü: iptal + kısıt + 2.000 TL
 
         const list = await playerBonuses(tx.partyId);
         const m = matchBonus(list, tx);
@@ -228,6 +286,7 @@ function gtSide() {
 
         const x = money(tx.credit);
         const info = `${m.pick.planName} #${m.pick.id}`;
+        if (over) return payoutFlow(tx, m.pick, x, info);
         if (mode() !== 'live') {
             enqueue(tx.tranId, `:test_tube: _DENEME — iptal edilmedi (bulunan bonus: ${esc(info)})_\n${MESSAGE(x)}\nID: ${tx.partyId}`);
             setBook(tx.tranId, { final: true, result: `deneme: ${info}` });
@@ -243,6 +302,53 @@ function gtSide() {
             setBook(tx.tranId, { final: true, result: `iptal başarısız: ${e.message}` });
             enqueue(tx.tranId + '-err', `:warning: Bonus iptal edilemedi — ${esc(e.message)}\nID: ${tx.partyId}\nBonus: ${esc(info)}`);
             warn(`${tx.tranId}: iptal başarısız`, e);
+        }
+    }
+
+    /** Limit üstü akış. Sıra: çift ödeme kontrolü → bonus iptali → tüm sağlayıcı kısıtı → 2.000 TL.
+     *  Bir adım başarısız olursa sonrakiler yapılmaz, Slack'e hangi adımların yapıldığı yazılır. */
+    async function payoutFlow(tx, bonus, x, info) {
+        const pid = tx.partyId;
+        const paidBook = GM_getValue('paid', {});
+        if (mode() !== 'live') {
+            let prov = '?';
+            try { const c = await ics(`player-lock-provider/${pid}`); prov = `${(c.nonLockedProviders || []).length} açık / ${(c.lockedProviders || []).length + (c.nonLockedProviders || []).length} toplam`; } catch { /* yok say */ }
+            enqueue(tx.tranId, `:test_tube: _DENEME — uygulanmadı: bonus iptali (${esc(info)}), tüm sağlayıcı kısıtı (${prov}), +${money(CONFIG.PAYOUT)} TL "${esc(CONFIG.PAYOUT_NOTE)}"_
+${MESSAGE_WIN(x)}
+ID: ${pid}`);
+            setBook(tx.tranId, { final: true, result: `deneme (limit üstü): ${info}` });
+            log(`${tx.tranId}: DENEME limit üstü → ${info}, kazanç ${x}`);
+            return;
+        }
+
+        const done = [];
+        try {
+            if (paidBook[pid]) throw new Error('bu oyuncuya daha önce ödeme yapılmış (bot kaydı)');
+            if (await alreadyPaid(pid)) throw new Error(`son 30 günde ${money(CONFIG.PAYOUT)} TL manuel düzeltme zaten var`);
+
+            await cancelBonus(pid, bonus.id);
+            done.push('bonus iptal');
+
+            const lock = await lockAllProviders(pid);
+            done.push(lock.already ? 'sağlayıcılar zaten kısıtlı' : `${lock.count} sağlayıcı kısıtlandı`);
+
+            // Kayıt POST'tan ÖNCE: istek gidip yanıt kaybolsa bile ikinci kez ödeme yapılmaz
+            paidBook[pid] = Date.now();
+            GM_setValue('paid', paidBook);
+            await addPayout(pid);
+            done.push(`+${money(CONFIG.PAYOUT)} TL eklendi`);
+
+            enqueue(tx.tranId, `${MESSAGE_WIN(x)}
+ID: ${pid}`);
+            setBook(tx.tranId, { final: true, result: `limit üstü: ${done.join(', ')}` });
+            log(`${tx.tranId}: limit üstü tamam → ${done.join(', ')}`);
+        } catch (e) {
+            setBook(tx.tranId, { final: true, result: `limit üstü yarım kaldı (${done.join(', ') || 'hiçbir adım'}): ${e.message}` });
+            enqueue(tx.tranId + '-err', `:warning: Deneme bonusu (limit üstü) işlemi tamamlanamadı — ${esc(e.message)}
+Yapılanlar: ${esc(done.join(', ') || 'hiçbiri')}
+Kazanç: ${x} TL
+ID: ${pid}`);
+            warn(`${tx.tranId}: limit üstü akış durdu`, done, e);
         }
     }
 
@@ -295,7 +401,8 @@ function gtSide() {
             const m = matchBonus(await playerBonuses(tx.partyId), tx);
             alert([
                 `Transaction ${tx.tranId} · Party ${tx.partyId} · ${tx.at} · ${money(tx.credit)} TL`,
-                tx.credit < CONFIG.LIMIT ? 'Limit altı → iptal adayı' : 'Limit üstü → dokunulmaz',
+                tx.credit < CONFIG.LIMIT ? 'Limit altı → bonus iptali + mesaj' : `Limit üstü → bonus iptali + tüm sağlayıcı kısıtı + ${money(CONFIG.PAYOUT)} TL`,
+                `Personel no (oturum): ${staffId() ?? 'OKUNAMADI'}`,
                 `Eşleşen bonus: ${m.pick ? `${m.pick.planName} #${m.pick.id} (${m.pick.status})` : m.already ? 'zaten iptal edilmiş' : m.ambiguous ? 'birden fazla!' : 'yok'}`,
                 `Son ${CONFIG.LOOKBACK_H} saatteki ${CONFIG.TARGET_PLANS.join('/')} bonusları: ${m.candidates.map(b => `${b.planName} #${b.id} ${b.status}`).join(', ') || '—'}`,
                 '', 'İptal edilmedi, Slack\'e yazılmadı.',
