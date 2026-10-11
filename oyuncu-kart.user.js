@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Oyuncu Kartı — Party ID yazılınca Slack thread'ine
 // @namespace    palentis.oyuncu-kart
-// @version      1.0.2
-// @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar. Panel linki yok (kartı kullananların paneli yok). 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
+// @version      1.0.3
+// @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar (satır satır). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
 // @grant        GM_getValue
@@ -113,6 +113,16 @@ function gtSide() {
         if (min < 1440) return `${Math.floor(min / 60)} sa ${min % 60} dk önce`;
         const d = Math.floor(min / 1440);
         return d < 60 ? `${d} gün önce` : `${Math.floor(d / 30)} ay önce`;
+    }
+    const AYLAR = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
+    /** Bloklardaki tüm metinlerde kelime başlarını büyütür (tr: i→İ). Kesme işaretinden sonrası (IP'de) küçük kalır. */
+    function titleCase(node) {
+        if (Array.isArray(node)) { node.forEach(titleCase); return; }
+        if (!node || typeof node !== 'object') return;
+        for (const [k, v] of Object.entries(node)) {
+            if (k === 'text' && typeof v === 'string') node[k] = v.replace(/(^|[\s(·\/*_`-])(\p{Ll})/gu, (m, a, c) => a + c.toLocaleUpperCase('tr-TR'));
+            else if (typeof v === 'object') titleCase(v);
+        }
     }
     function memberFor(ms) {
         if (!Number.isFinite(ms)) return '';
@@ -276,14 +286,15 @@ function gtSide() {
             const hasMoney = gm.some(g => g.bet || g.win);
             const lines = gm.map(g => {
                 const name = g.name.length > 20 ? g.name.slice(0, 19) + '…' : g.name;
-                return hasMoney ? `${name.padEnd(21)}bahis ${pad(int(g.bet), 9)}  ${pad(signed(g.win - g.bet), 9)}` : `${name.padEnd(21)}${g.n} oturum`;
+                return hasMoney ? `${name.padEnd(21)}bahis ${pad(int(g.bet), 9)}  ${pad(signed(g.win - g.bet), 9)}` : name;
             });
             blocks.push({ type: 'divider' }, { type: 'section', text: { type: 'mrkdwn', text: `*Son 7 gün oyunlar*\n\`\`\`${lines.join('\n')}\`\`\`` } });
         }
-        const ctx = [];
-        if (bon?.length) ctx.push(`Son bonuslar: ${bon.slice(0, 3).map(b => { const d = new Date(b.at + 3 * 3600e3); return `${p2(d.getUTCDate())}.${p2(d.getUTCMonth() + 1)} ${esc(b.name)}${b.amount ? ` ${int(b.amount)} TL` : ''}`; }).join(' · ')}`);
-        ctx.push('🔄 tepkisi koyarsan kart güncel verilerle yenilenir');   // kartı kullananların paneli yok: link verilmez
-        blocks.push({ type: 'context', elements: ctx.map(t => ({ type: 'mrkdwn', text: t })) });
+        if (bon?.length) {
+            const lines = bon.slice(0, 3).map(b => { const d = new Date(b.at + 3 * 3600e3); return `${p2(d.getUTCDate())} ${AYLAR[d.getUTCMonth()]} · ${esc(b.name)}${b.amount ? ` ${int(b.amount)} TL` : ''}`; });
+            blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `Son bonuslar:\n${lines.join('\n')}` }] });
+        }
+        titleCase(blocks);   // kartın tamamında her kelimenin baş harfi büyük
 
         GM_setValue('lastRaw', { pid, at: Date.now(), ...raw });
         return { text: `👤 ${id?.name || pid} · ${pid}`, blocks };
