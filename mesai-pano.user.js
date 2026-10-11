@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mesai Panosu — canlı giriş / mola / çıkış tablosu
 // @namespace    palentis.mesai-pano
-// @version      1.0.0
-// @description  C08PZGND15G kanalındaki giriş, mola (m1 10, m2 30, m10, m30, ym, Mola) ve çıkış mesajlarını okuyup haftalık vardiya programıyla birleştirir; C0C87GMFWSZ'deki tek bir mesajı dakikada bir hareketli tablo (GIF) olarak günceller. Haftalık program Tampermonkey menüsünden tablo yapıştırılarak girilir.
+// @version      1.1.0
+// @description  C08PZGND15G kanalındaki giriş, mola (m1 10, m2 30, m10, m30, ym, Mola) ve çıkış mesajlarını okuyup haftalık vardiya programıyla birleştirir; C0C87GMFWSZ'deki tek bir mesajı dakikada bir tablo resmi (PNG, 2x) olarak günceller; resim thread'e değil doğrudan mesajın içine konur. Haftalık program Tampermonkey menüsünden tablo yapıştırılarak girilir.
 // @match        https://app.slack.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -10,7 +10,6 @@
 // @grant        GM_registerMenuCommand
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
-// @require      https://cdn.jsdelivr.net/npm/omggif@1.0.10/omggif.js
 // @connect      files.slack.com
 // @connect      slack.com
 // @run-at       document-idle
@@ -28,8 +27,10 @@
  *   Yanıtta "mola" geçerse (ör. "+kmola") dönüş + yeni süresiz mola; sonraki yanıt dönüş.
  *   Vardiyalar gece yarısını geçtiği için durum takvim gününe değil son "Giriş"e göredir.
  *
- * PANO (C0C87GMFWSZ): tek mesaj, içinde image bloğu. Her güncellemede GIF önce panonun
- * thread'ine yüklenir (kanala düşmez), mesajdaki resim yenisiyle değiştirilir, eskisi silinir.
+ * PANO (C0C87GMFWSZ): tek mesaj, içinde image bloğu. Her güncellemede PNG kanala/thread'e
+ * paylaşılmadan yüklenir; Slack'in genel dosya bağlantısı (files.sharedPublicURL) alınıp
+ * mesajdaki resim onunla değiştirilir, eski dosya silinir. Çalışma alanı genel bağlantıya
+ * izin vermiyorsa dosya kimliğiyle (slack_file) gösterilir.
  *
  * PROGRAM: menü → "Haftalık programı yapıştır". Excel / Sheets'ten tablo hücreleri kopyalanıp
  * yapıştırılır (ekip satırları, gün başlıkları, "OFF", "14:00 - 02:00").
@@ -209,7 +210,8 @@ const getSchedules = () => GM_getValue('schedules', []);
 const DAY_RE = /^(pazartesi|sali|carsamba|persembe|cuma|cumartesi|pazar)$/;
 
 function parseSchedule(text, fallbackWeekStart) {
-    const rows = text.replace(/\r/g, '').split('\n').map(l => l.split('\t').map(c => c.trim()));
+    const split = (l) => (l.includes('\t') ? l.split('\t') : l.includes('|') ? l.split('|') : l.split(/\s{2,}/));
+    const rows = text.replace(/\r/g, '').split('\n').map(l => split(l).map(c => c.trim()));
     let weekStart = null, dayCols = null;
     const teams = [];
     let team = null;
@@ -351,10 +353,8 @@ function layout(model) {
     return { lines, height: TITLE + lines.length * RH + 2 };
 }
 
-/** frame: 0..FRAMES-1 — yalnızca atan halkalar karelere göre değişir. */
-function drawFrame(g, model, lay, frame, FRAMES) {
+function drawBoard(g, model, lay) {
     const Wd = CONFIG.WIDTH, Hd = lay.height;
-    const phase = frame / FRAMES;
     g.fillStyle = '#fff'; g.fillRect(0, 0, Wd, Hd);
     g.textBaseline = 'middle';
     const txt = (s, x, y, font, color, align = 'left', maxW) => {
@@ -364,10 +364,9 @@ function drawFrame(g, model, lay, frame, FRAMES) {
         g.fillText(t, x, y);
         return g.measureText(t).width;
     };
-    const pulse = (cx, cy, color) => {
-        const r = 4 + phase * 9, a = 0.85 * (1 - phase);
-        g.save(); g.globalAlpha = a; g.strokeStyle = color; g.lineWidth = 2;
-        g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke(); g.restore();
+    const pulse = (cx, cy, color) => {   // statik "canlı" noktası: dolu nokta + açık halka
+        g.save(); g.globalAlpha = 0.35; g.strokeStyle = color; g.lineWidth = 2;
+        g.beginPath(); g.arc(cx, cy, 8, 0, Math.PI * 2); g.stroke(); g.restore();
         g.fillStyle = color; g.beginPath(); g.arc(cx, cy, 4.5, 0, Math.PI * 2); g.fill();
     };
     // başlık bandı
@@ -430,47 +429,15 @@ function drawFrame(g, model, lay, frame, FRAMES) {
     g.lineWidth = 2; g.strokeStyle = COL.line; g.strokeRect(1, 1, Wd - 2, Hd - 2);
 }
 
-/** Kareleri çiz, 256 renge indir, hareketli GIF üret (omggif). */
-function renderGif(model) {
-    const FRAMES = 10, DELAY = 13;   // 1,3 sn döngü
-    const lay = layout(model);
-    const Wd = CONFIG.WIDTH, Hd = lay.height;
+/** Tabloyu 2x çözünürlükte PNG olarak çiz. */
+function renderPng(model) {
+    const S = 2, lay = layout(model);
     const cv = document.createElement('canvas');
-    cv.width = Wd; cv.height = Hd;
-    const g = cv.getContext('2d', { willReadFrequently: true });
-    const frames = [];
-    const hist = new Map();
-    for (let f = 0; f < FRAMES; f++) {
-        drawFrame(g, model, lay, f, FRAMES);
-        const d = g.getImageData(0, 0, Wd, Hd).data;
-        frames.push(d);
-        for (let i = 0; i < d.length; i += 4) {
-            const k = ((d[i] >> 3) << 10) | ((d[i + 1] >> 3) << 5) | (d[i + 2] >> 3);
-            hist.set(k, (hist.get(k) || 0) + 1);
-        }
-    }
-    // palet: en sık 256 renk (5 bit kutular)
-    const top = [...hist].sort((a, b) => b[1] - a[1]).slice(0, 256).map(([k]) => k);
-    while (top.length < 256) top.push(0);
-    const pal = top.map(k => (((k >> 10) & 31) << 19) | (((k >> 5) & 31) << 11) | ((k & 31) << 3));
-    const palRGB = pal.map(c => [(c >> 16) & 255, (c >> 8) & 255, c & 255]);
-    const idx = new Map(top.map((k, i) => [k, i]));
-    const near = (k) => {
-        if (idx.has(k)) return idx.get(k);
-        const r = ((k >> 10) & 31) << 3, gg = ((k >> 5) & 31) << 3, b = (k & 31) << 3;
-        let best = 0, bd = Infinity;
-        for (let i = 0; i < 256; i++) { const p = palRGB[i], dd = (p[0] - r) ** 2 + (p[1] - gg) ** 2 + (p[2] - b) ** 2; if (dd < bd) { bd = dd; best = i; } }
-        idx.set(k, best);
-        return best;
-    };
-    const buf = new Uint8Array(Wd * Hd * FRAMES + 1024 * 64);
-    const gw = new GifWriter(buf, Wd, Hd, { palette: pal, loop: 0 });
-    const ip = new Uint8Array(Wd * Hd);
-    for (const d of frames) {
-        for (let i = 0, j = 0; i < d.length; i += 4, j++) ip[j] = near(((d[i] >> 3) << 10) | ((d[i + 1] >> 3) << 5) | (d[i + 2] >> 3));
-        gw.addFrame(0, 0, Wd, Hd, ip, { delay: DELAY, disposal: 1 });
-    }
-    return new Blob([buf.slice(0, gw.end())], { type: 'image/gif' });
+    cv.width = CONFIG.WIDTH * S; cv.height = lay.height * S;
+    const g = cv.getContext('2d');
+    g.scale(S, S);
+    drawBoard(g, model, lay);
+    return new Promise((res, rej) => cv.toBlob(b => (b ? res(b) : rej(new Error('resim üretilemedi'))), 'image/png'));
 }
 
 /* ════════════════ pano mesajı ════════════════ */
@@ -481,11 +448,20 @@ function putBytes(url, blob) {
         onerror: () => reject(new Error('yükleme ağ hatası')), ontimeout: () => reject(new Error('yükleme zaman aşımı')),
     }));
 }
-async function uploadToThread(blob, name, threadTs) {
+/** Resmi hiçbir kanala/thread'e paylaşmadan yükle; mümkünse genel bağlantısıyla image bloğu kur. */
+async function uploadImage(blob, name, alt) {
     const up = await api('files.getUploadURLExternal', { filename: name, length: String(blob.size) });
     await putBytes(up.upload_url, blob);
-    await api('files.completeUploadExternal', { files: JSON.stringify([{ id: up.file_id, title: name }]), channel_id: CONFIG.BOARD, thread_ts: threadTs });
-    return up.file_id;
+    const done = await api('files.completeUploadExternal', { files: JSON.stringify([{ id: up.file_id, title: name }]) });
+    const file = done.files?.[0] || {};
+    try {
+        const r = await api('files.sharedPublicURL', { file: up.file_id }, ['already_public']);
+        const f = r.file || file;
+        const secret = String(f.permalink_public || '').split('-').pop();
+        const url = f.url_private || file.url_private;
+        if (url && secret) return { id: up.file_id, mode: 'genel bağlantı', block: { type: 'image', image_url: `${url}?pub_secret=${secret}`, alt_text: alt } };
+    } catch (e) { warn('genel bağlantı alınamadı, dosya kimliğiyle gösterilecek:', e.message); }
+    return { id: up.file_id, mode: 'dosya kimliği', block: { type: 'image', slack_file: { id: up.file_id }, alt_text: alt } };
 }
 const status = (msg) => GM_setValue('status', { msg, at: Date.now() });
 
@@ -501,7 +477,7 @@ async function refresh(force = false) {
     busy = true;
     try {
         const model = await buildModel();
-        const gif = renderGif(model);
+        const png = await renderPng(model);
         let board = GM_getValue('board', null);
         if (!board || board.ch !== CONFIG.BOARD) {
             const r = await api('chat.postMessage', { channel: CONFIG.BOARD, text: '👥 Mesai Durumu (canlı pano hazırlanıyor…)' });
@@ -509,13 +485,14 @@ async function refresh(force = false) {
             GM_setValue('board', board);
             log('pano mesajı oluşturuldu, sabitleyebilirsin:', r.ts);
         }
-        const fileId = await uploadToThread(gif, `mesai-${hm(model.now).replace(':', '')}.gif`, board.ts);
-        const blocks = [{ type: 'image', slack_file: { id: fileId }, alt_text: `Mesai durumu · ${model.day} · ${hm(model.now)}` }];
+        const img = await uploadImage(png, `mesai-${hm(model.now).replace(':', '')}.png`, `Mesai durumu · ${model.day} · ${hm(model.now)}`);
+        const fileId = img.id;
+        const blocks = [img.block];
         const u = await api('chat.update', { channel: CONFIG.BOARD, ts: board.ts, text: `👥 Mesai Durumu · ${model.day} · ${hm(model.now)}`, blocks: JSON.stringify(blocks) }, ['message_not_found']);
         if (!u.ok) { GM_deleteValue('board'); throw new Error('pano mesajı silinmiş, bir sonraki turda yenisi oluşturulacak'); }
         if (board.file && board.file !== fileId) api('files.delete', { file: board.file }, ['file_not_found', 'file_deleted']).catch(e => warn('eski resim silinemedi:', e.message));
         GM_setValue('board', { ...board, file: fileId });
-        status(`güncellendi ${hm(model.now)} · ${(gif.size / 1024).toFixed(0)} KB`);
+        status(`güncellendi ${hm(model.now)} · ${(png.size / 1024).toFixed(0)} KB · ${img.mode}`);
     } catch (e) {
         warn('pano güncellenemedi:', e.message);
         status(`HATA: ${e.message}`);
@@ -619,5 +596,5 @@ setTimeout(() => refresh(false), 5000);
 log('hazır.');
 
 // Yalnızca test ortamı önceden işaret koyduysa iç fonksiyonları verir; gerçek sayfada hiçbir şey yapmaz.
-if (window.__MP_TEST__) Object.assign(window.__MP_TEST__, { classify, sessions, parseSchedule, shiftFor, buildModel, renderGif, refresh });
+if (window.__MP_TEST__) Object.assign(window.__MP_TEST__, { classify, sessions, parseSchedule, shiftFor, buildModel, renderPng, refresh });
 })();
