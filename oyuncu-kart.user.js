@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Oyuncu Kartı — Party ID yazılınca Slack thread'ine
 // @namespace    palentis.oyuncu-kart
-// @version      1.0.8
+// @version      1.0.9
 // @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar (satır satır). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -334,10 +334,20 @@ function gtSide() {
             rest.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `Son bonuslar:\n${lines.join('\n')}` }] });
         }
         if (rest.length) attachments.push({ color: COLORS.rest, blocks: rest });
-        titleCase(blocks); titleCase(attachments);   // kartın tamamında her kelimenin baş harfi büyük
+
+        // Yedek: Slack ek kutuları kabul etmezse aynı içerik düz bloklarla (renksiz, kısa satırlar)
+        const line = (t, v) => `${t}: ${v.replace(/\n/g, ' · ')}`;
+        const mf = attachments.find(a => a.fields).fields;
+        const flat = [...blocks];
+        if (flags.length) flat.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `⚠️ *Dikkat:* ${flags.join(' · ')}` }] });
+        flat.push({ type: 'divider' }, { type: 'section', text: { type: 'mrkdwn', text: [
+            `${line(`*${mf[0].title}*`, mf[0].value)}  ·  ${line(`*${mf[1].title}*`, mf[1].value)}`,
+            line(`*${mf[2].title}*`, mf[2].value), line(`*${mf[3].title}*`, mf[3].value)].join('\n') } });
+        if (rest.length) flat.push({ type: 'divider' }, ...rest);
+        titleCase(blocks); titleCase(attachments); titleCase(flat);   // kartın tamamında her kelimenin baş harfi büyük
 
         GM_setValue('lastRaw', { pid, at: Date.now(), ...raw });
-        return { text: `👤 ${id?.name || pid} · ${pid}`, blocks, attachments };
+        return { text: `👤 ${id?.name || pid} · ${pid}`, blocks, attachments, flat };
     }
 
     /* ── istek kuyruğu ── */
@@ -491,11 +501,26 @@ function slackSide() {
                 const v = GM_getValue(k, null);
                 GM_deleteValue(k);
                 if (!v) continue;
+                const useAtt = v.attachments && GM_getValue('attOk', null) !== false;   // ek kutular bir kez reddedildiyse hep düz gönder
+                const body = (ts) => ({ channel: CONFIG.CHANNEL, ...(ts ? { ts } : { thread_ts: v.thread, unfurl_links: 'false' }), text: v.text,
+                    ...(v.blocks ? { blocks: JSON.stringify(useAtt ? v.blocks : (v.flat || v.blocks)) } : {}), attachments: JSON.stringify(useAtt ? v.attachments : []) });
+                /** Slack ek kutuları sessizce düşürdüyse kartı düz haliyle güncelle ve bunu hatırla. */
+                const checkAtt = async (r, ts) => {
+                    if (!useAtt || !r?.ok) return;
+                    const n = r.message?.attachments?.length || 0;
+                    GM_setValue('attDiag', { at: Date.now(), sent: v.attachments.length, got: n });
+                    if (n) { GM_setValue('attOk', true); return; }
+                    warn('Slack ek kutuları kabul etmedi, düz karta geçiliyor');
+                    GM_setValue('attOk', false);
+                    if (v.flat) await api('chat.update', { channel: CONFIG.CHANNEL, ts, text: v.text, blocks: JSON.stringify(v.flat), attachments: '[]' }, ['message_not_found', 'cant_update_message']);
+                };
                 if (v.update) {
-                    await api('chat.update', { channel: CONFIG.CHANNEL, ts: v.update, text: v.text, blocks: JSON.stringify(v.blocks), attachments: JSON.stringify(v.attachments || []) }, ['message_not_found', 'cant_update_message']);
+                    const r = await api('chat.update', body(v.update), ['message_not_found', 'cant_update_message']);
+                    await checkAtt(r, v.update);
                     status(`kart yenilendi ${v.text}`);
                 } else {
-                    const r = await api('chat.postMessage', { channel: CONFIG.CHANNEL, thread_ts: v.thread, text: v.text, unfurl_links: 'false', ...(v.blocks ? { blocks: JSON.stringify(v.blocks) } : {}), ...(v.attachments ? { attachments: JSON.stringify(v.attachments) } : {}) });
+                    const r = await api('chat.postMessage', body(null));
+                    await checkAtt(r, r.ts);
                     if (v.blocks) {
                         const cards = GM_getValue('cards', {});
                         cards[r.ts] = { pid: (v.text.match(CONFIG.ID_RE) || [])[0], thread: v.thread, at: Date.now(), seen: 0 };
@@ -523,6 +548,11 @@ function slackSide() {
         const on = GM_getValue('enabled', true) === false;
         GM_setValue('enabled', on);
         alert(`Oyuncu kartı ${on ? 'AÇIK' : 'KAPALI'}.`);
+    });
+    GM_registerMenuCommand('Renkli kutuları yeniden dene', () => {
+        const d = GM_getValue('attDiag', null);
+        GM_deleteValue('attOk');
+        alert(`Son deneme: ${d ? `${d.sent} kutu gönderildi, Slack ${d.got} kutu kaydetti (${new Date(d.at).toLocaleTimeString('tr-TR')})` : 'yok'}\nSonraki kart yine renkli kutularla denenecek.`);
     });
     GM_registerMenuCommand('Durum', () => {
         const s = GM_getValue('slackStatus', null);
