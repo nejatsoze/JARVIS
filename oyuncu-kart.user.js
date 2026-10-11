@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Oyuncu Kartı — Party ID yazılınca Slack thread'ine
 // @namespace    palentis.oyuncu-kart
-// @version      1.0.6
+// @version      1.0.7
 // @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar (satır satır). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -252,7 +252,8 @@ function gtSide() {
         raw.gameKeys = list[0] && Object.keys(list[0]).join(', ');
         const by = new Map();
         for (const g of list) {
-            const name = g.gameName || g.game || '—';
+            const raw0 = String(g.gameName || g.game || '—').trim();
+            const name = /^(single|combo)$/i.test(raw0) ? 'Spor Bahsi' : raw0;   // spor kuponları tek satırda toplanır
             const bet = Number(pick(g, ['totalBet', 'bet', 'bets', 'betAmount', 'stake', 'totalBets', 'turnover'])) || 0;
             const win = Number(pick(g, ['totalWin', 'win', 'wins', 'winAmount', 'totalWins', 'payout'])) || 0;
             const e = by.get(name) || { name, bet: 0, win: 0, n: 0 };
@@ -294,21 +295,13 @@ function gtSide() {
             { type: 'section', text: { type: 'mrkdwn', text: sub || '–' } },
         ];
         if (flags.length) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `⚠️ *Dikkat:* ${flags.join(' · ')}` } });
-        // 2 sütun: Slack'in yan yana kutuları dar thread panelinde alt alta düşüyor, kod kutusu her ekranda hizalı kalır
-        const cut = (t, n = 18) => (t = String(t || '')).length > n ? t.slice(0, n - 1) + '…' : t;
-        const two = (l, r) => `${cut(l).padEnd(19)}${cut(r)}`.trimEnd();
-        const dAt = dep?.at ? ago(Date.now() - dep.at) : '', wAt = wd?.last?.at ? ago(Date.now() - wd.last.at) : '';
-        const money = [
-            two('Bakiye', 'Bekleyen çekim'),
-            two(bal == null ? '–' : tl(bal), wd ? (wd.pending ? tl(wd.pending) : 'yok') : '–'),
-            '',
-            two('Son yatırım', 'Son başarılı çekim'),
-            two(dep ? tl(dep.amount) : 'yok', wd?.last ? tl(wd.last.amount) : (wd ? 'yok' : '–')),
-        ];
-        const dM = dep?.method ? esc(shortMethod(dep.method)) : '', wM = wd?.last?.method ? esc(shortMethod(wd.last.method)) : '';
-        if (dM || wM) money.push(two(dM, wM));
-        if (dAt || wAt) money.push(two(dAt, wAt));
-        blocks.push({ type: 'divider' }, { type: 'section', text: { type: 'mrkdwn', text: `\`\`\`${money.join('\n')}\`\`\`` } });
+        const field = (label, main, extra) => ({ type: 'mrkdwn', text: `*${label}*\n${main}${extra ? `\n${extra}` : ''}` });
+        blocks.push({ type: 'divider' }, { type: 'section', fields: [
+            field('💳 Bakiye', bal == null ? '–' : tl(bal)),
+            field('⏳ Bekleyen çekim', wd ? (wd.pending ? tl(wd.pending) : 'yok') : '–'),
+            field('💰 Son yatırım', dep ? `${tl(dep.amount)}${dep.method ? ` · _${esc(shortMethod(dep.method))}_` : ''}` : '_yok_', dep?.at ? ago(Date.now() - dep.at) : ''),
+            field('💸 Son başarılı çekim', wd?.last ? `${tl(wd.last.amount)}${wd.last.method ? ` · _${esc(shortMethod(wd.last.method))}_` : ''}` : (wd ? '_yok_' : '–'), wd?.last?.at ? ago(Date.now() - wd.last.at) : ''),
+        ] });
 
         if (fin) {
             const rowsDef = [['Bugün', 'TODAY'], ['Bu hafta', 'WTD'], ['Bu ay', 'MTD'], ['Bu yıl', 'YTD'], ['Tüm zaman', 'LTD']];
