@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Oyuncu Kartı — Party ID yazılınca Slack thread'ine
 // @namespace    palentis.oyuncu-kart
-// @version      1.0.3
+// @version      1.0.4
 // @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar (satır satır). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -386,14 +386,25 @@ function slackSide() {
     }
 
     const everyone = () => GM_getValue('everyone', true);   // varsayılan: kanaldaki herkes
-    const request = (key, pid, thread, update) => { GM_setValue('req:' + key, { pid, thread, update, at: Date.now() }); GM_setValue('reqPing', Date.now()); };
+    const request = (key, pid, thread, update) => {
+        if (!update) {   // aynı mesajdaki aynı ID'ye bir kez kart
+            const done = GM_getValue('done', {}), now = Date.now();
+            if (done[key]) return;
+            for (const k in done) if (now - done[k] > 24 * 3600e3) delete done[k];
+            done[key] = now; GM_setValue('done', done);
+        }
+        GM_setValue('req:' + key, { pid, thread, update, at: Date.now() }); GM_setValue('reqPing', Date.now());
+    };
 
     /** Yeni mesajlarda ID ara; kartlarda 🔄 tepkisi ara. */
+    let scanning = false;
+    const isLeader = () => { const l = GM_getValue('slackLeader', null); return !l || l.owner === ME || Date.now() - l.at >= 60000; };
     async function scan() {
-        if (GM_getValue('enabled', true) === false) return;
+        if (scanning || GM_getValue('enabled', true) === false) return;
         const lead = GM_getValue('slackLeader', null);
         if (lead && lead.owner !== ME && Date.now() - lead.at < 60000) return;
         GM_setValue('slackLeader', { owner: ME, at: Date.now() });
+        scanning = true;
         try {
             if (!token) await resolveToken();
             let last = GM_getValue('lastTs', null);
@@ -412,6 +423,7 @@ function slackSide() {
             await checkRefresh();
             status('izleniyor');
         } catch (e) { warn('tarama hatası:', e.message); status(`HATA: ${e.message}`); }
+        finally { scanning = false; }
     }
 
     /** Son 12 saatteki kartlarda 🔄 sayısı arttıysa kartı yenile (dakikada bir). */
@@ -431,6 +443,7 @@ function slackSide() {
 
     async function flush() {
         if (busy) { again = true; return; }
+        if (!isLeader()) return;   // birden çok Slack sekmesi açıksa yalnızca lider gönderir (çift cevap olmasın)
         busy = true; again = false;
         try {
             const keys = GM_listValues().filter(k => k.startsWith('q:'));
