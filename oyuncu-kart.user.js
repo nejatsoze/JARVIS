@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Oyuncu Kartı — Party ID yazılınca Slack thread'ine
 // @namespace    palentis.oyuncu-kart
-// @version      1.0.7
+// @version      1.0.8
 // @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar (satır satır). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -120,7 +120,7 @@ function gtSide() {
         if (Array.isArray(node)) { node.forEach(titleCase); return; }
         if (!node || typeof node !== 'object') return;
         for (const [k, v] of Object.entries(node)) {
-            if (k === 'text' && typeof v === 'string') node[k] = v.replace(/(^|[\s(·\/*_`-])(\p{Ll})/gu, (m, a, c) => a + c.toLocaleUpperCase('tr-TR'));
+            if ((k === 'text' || k === 'title' || k === 'value') && typeof v === 'string') node[k] = v.replace(/(^|[\s(·\/*_`-])(\p{Ll})/gu, (m, a, c) => a + c.toLocaleUpperCase('tr-TR'));
             else if (typeof v === 'object') titleCase(v);
         }
     }
@@ -294,27 +294,29 @@ function gtSide() {
             { type: 'header', text: { type: 'plain_text', text: `👤 ${id?.name || 'İsim alınamadı'} · ${pid}`, emoji: true } },
             { type: 'section', text: { type: 'mrkdwn', text: sub || '–' } },
         ];
-        if (flags.length) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `⚠️ *Dikkat:* ${flags.join(' · ')}` } });
-        const field = (label, main, extra) => ({ type: 'mrkdwn', text: `*${label}*\n${main}${extra ? `\n${extra}` : ''}` });
-        blocks.push({ type: 'divider' }, { type: 'section', fields: [
-            field('💳 Bakiye', bal == null ? '–' : tl(bal)),
-            field('⏳ Bekleyen çekim', wd ? (wd.pending ? tl(wd.pending) : 'yok') : '–'),
-            field('💰 Son yatırım', dep ? `${tl(dep.amount)}${dep.method ? ` · _${esc(shortMethod(dep.method))}_` : ''}` : '_yok_', dep?.at ? ago(Date.now() - dep.at) : ''),
-            field('💸 Son başarılı çekim', wd?.last ? `${tl(wd.last.amount)}${wd.last.method ? ` · _${esc(shortMethod(wd.last.method))}_` : ''}` : (wd ? '_yok_' : '–'), wd?.last?.at ? ago(Date.now() - wd.last.at) : ''),
+        // Renkli çizgili ek kutular (cevapta da 2 sütun kalan eski tip alanlar): dikkat kırmızı, bakiye mavi, finans ve sonrası yeşil
+        const COLORS = { warn: '#e01e5a', money: '#7fa7d9', rest: '#2eb67d' };
+        const attachments = [];
+        if (flags.length) attachments.push({ color: COLORS.warn, blocks: [{ type: 'context', elements: [{ type: 'mrkdwn', text: `⚠️ *Dikkat:* ${flags.join(' · ')}` }] }] });
+        const fld = (title, main, extra) => ({ title, value: `${main}${extra ? `\n${extra}` : ''}`, short: true });
+        attachments.push({ color: COLORS.money, mrkdwn_in: ['fields'], fields: [
+            fld('💳 Bakiye', bal == null ? '–' : tl(bal)),
+            fld('⏳ Bekleyen çekim', wd ? (wd.pending ? tl(wd.pending) : 'yok') : '–'),
+            fld('💰 Son yatırım', dep ? `${tl(dep.amount)}${dep.method ? ` · _${esc(shortMethod(dep.method))}_` : ''}` : '_yok_', dep?.at ? ago(Date.now() - dep.at) : ''),
+            fld('💸 Son başarılı çekim', wd?.last ? `${tl(wd.last.amount)}${wd.last.method ? ` · _${esc(shortMethod(wd.last.method))}_` : ''}` : (wd ? '_yok_' : '–'), wd?.last?.at ? ago(Date.now() - wd.last.at) : ''),
         ] });
+        const rest = [];   // finans, oyunlar, bonuslar → yeşil kutu
 
         if (fin) {
             const rowsDef = [['Bugün', 'TODAY'], ['Bu hafta', 'WTD'], ['Bu ay', 'MTD'], ['Bu yıl', 'YTD'], ['Tüm zaman', 'LTD']];
             const pad = (s, n) => String(s).padStart(n);
             const lines = [`${''.padEnd(10)}${pad('Yatırım', 10)}${pad('Çekim', 10)}${pad('Net', 10)}`];
             for (const [label, key] of rowsDef) {
-                const r = fin[key];
-                if (!r) { lines.push(`${label.padEnd(10)}${pad('–', 10)}${pad('–', 10)}${pad('–', 10)}`); continue; }
+                const r = fin[key] || { dep: 0, wd: 0 };   // o dönemde işlem yoksa 0
                 const net = r.dep - r.wd;
                 lines.push(`${label.padEnd(10)}${pad(int(r.dep), 10)}${pad(int(r.wd), 10)}${pad(signed(net), 10)}${net < 0 ? ' ▼' : ''}`);
             }
-            blocks.push({ type: 'divider' },
-                { type: 'section', text: { type: 'mrkdwn', text: `*Finans (TL)*\n\`\`\`${lines.join('\n')}\`\`\`` } },
+            rest.push({ type: 'section', text: { type: 'mrkdwn', text: `*Finans (TL)*\n\`\`\`${lines.join('\n')}\`\`\`` } },
                 { type: 'context', elements: [{ type: 'mrkdwn', text: 'Net = yatırım − çekim · ▼ oyuncu lehine (site eksi)' }] });
         }
         if (gm?.length) {
@@ -324,16 +326,18 @@ function gtSide() {
                 const name = g.name.length > 20 ? g.name.slice(0, 19) + '…' : g.name;
                 return hasMoney ? `${name.padEnd(21)}bahis ${pad(int(g.bet), 9)}  ${pad(signed(g.win - g.bet), 9)}` : name;
             });
-            blocks.push({ type: 'divider' }, { type: 'section', text: { type: 'mrkdwn', text: `*Son 7 gün oyunlar*\n\`\`\`${lines.join('\n')}\`\`\`` } });
+            if (rest.length) rest.push({ type: 'divider' });
+            rest.push({ type: 'section', text: { type: 'mrkdwn', text: `*Son 7 gün oyunlar*\n\`\`\`${lines.join('\n')}\`\`\`` } });
         }
         if (bon?.length) {
             const lines = bon.slice(0, 3).map(b => { const d = new Date(b.at + 3 * 3600e3); return `${p2(d.getUTCDate())} ${AYLAR[d.getUTCMonth()]} · ${esc(b.name)}${b.amount ? ` ${int(b.amount)} TL` : ''}`; });
-            blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `Son bonuslar:\n${lines.join('\n')}` }] });
+            rest.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `Son bonuslar:\n${lines.join('\n')}` }] });
         }
-        titleCase(blocks);   // kartın tamamında her kelimenin baş harfi büyük
+        if (rest.length) attachments.push({ color: COLORS.rest, blocks: rest });
+        titleCase(blocks); titleCase(attachments);   // kartın tamamında her kelimenin baş harfi büyük
 
         GM_setValue('lastRaw', { pid, at: Date.now(), ...raw });
-        return { text: `👤 ${id?.name || pid} · ${pid}`, blocks };
+        return { text: `👤 ${id?.name || pid} · ${pid}`, blocks, attachments };
     }
 
     /* ── istek kuyruğu ── */
@@ -488,10 +492,10 @@ function slackSide() {
                 GM_deleteValue(k);
                 if (!v) continue;
                 if (v.update) {
-                    await api('chat.update', { channel: CONFIG.CHANNEL, ts: v.update, text: v.text, blocks: JSON.stringify(v.blocks) }, ['message_not_found', 'cant_update_message']);
+                    await api('chat.update', { channel: CONFIG.CHANNEL, ts: v.update, text: v.text, blocks: JSON.stringify(v.blocks), attachments: JSON.stringify(v.attachments || []) }, ['message_not_found', 'cant_update_message']);
                     status(`kart yenilendi ${v.text}`);
                 } else {
-                    const r = await api('chat.postMessage', { channel: CONFIG.CHANNEL, thread_ts: v.thread, text: v.text, unfurl_links: 'false', ...(v.blocks ? { blocks: JSON.stringify(v.blocks) } : {}) });
+                    const r = await api('chat.postMessage', { channel: CONFIG.CHANNEL, thread_ts: v.thread, text: v.text, unfurl_links: 'false', ...(v.blocks ? { blocks: JSON.stringify(v.blocks) } : {}), ...(v.attachments ? { attachments: JSON.stringify(v.attachments) } : {}) });
                     if (v.blocks) {
                         const cards = GM_getValue('cards', {});
                         cards[r.ts] = { pid: (v.text.match(CONFIG.ID_RE) || [])[0], thread: v.thread, at: Date.now(), seen: 0 };
