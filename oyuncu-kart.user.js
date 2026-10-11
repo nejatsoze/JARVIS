@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Oyuncu Kartı — Party ID yazılınca Slack thread'ine
 // @namespace    palentis.oyuncu-kart
-// @version      1.0.1
-// @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
+// @version      1.0.2
+// @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar. Panel linki yok (kartı kullananların paneli yok). 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
 // @grant        GM_getValue
@@ -230,7 +230,6 @@ function gtSide() {
             settle(withdrawals(pid)), settle(balance(pid)), settle(bonuses(pid)), settle(games(pid)), settle(sameIp(pid)),
         ]);
         if (!id?.name && !fin && !dep) throw new Error(`${pid} için panelden veri okunamadı (oyuncu yok ya da oturum düştü)`);
-        const link = `${HOST}/core/app/core/players/${pid}/detail`;
 
         // ⚠️ dikkat satırı
         const flags = [];
@@ -248,7 +247,7 @@ function gtSide() {
         const field = (label, main, extra) => ({ type: 'mrkdwn', text: `*${label}*\n${main}${extra ? `\n${extra}` : ''}` });
         const blocks = [
             { type: 'header', text: { type: 'plain_text', text: `👤 ${id?.name || 'İsim alınamadı'} · ${pid}`, emoji: true } },
-            { type: 'section', text: { type: 'mrkdwn', text: `<${link}|Oyuncu sayfası> · ${sub || '–'}` } },
+            { type: 'section', text: { type: 'mrkdwn', text: sub || '–' } },
         ];
         if (flags.length) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `⚠️ *Dikkat:* ${flags.join(' · ')}` } });
         blocks.push({ type: 'divider' }, { type: 'section', fields: [
@@ -283,7 +282,7 @@ function gtSide() {
         }
         const ctx = [];
         if (bon?.length) ctx.push(`Son bonuslar: ${bon.slice(0, 3).map(b => { const d = new Date(b.at + 3 * 3600e3); return `${p2(d.getUTCDate())}.${p2(d.getUTCMonth() + 1)} ${esc(b.name)}${b.amount ? ` ${int(b.amount)} TL` : ''}`; }).join(' · ')}`);
-        ctx.push(`<${link}|Oyuncu> · <${HOST}/core/app/core/players/${pid}/transaction-history|İşlemler> · <${HOST}/core/app/core/players/${pid}/detail/(popup:player-withdrawals)|Çekimler> · 🔄 tepkisi koyarsan kart yenilenir`);
+        ctx.push('🔄 tepkisi koyarsan kart güncel verilerle yenilenir');   // kartı kullananların paneli yok: link verilmez
         blocks.push({ type: 'context', elements: ctx.map(t => ({ type: 'mrkdwn', text: t })) });
 
         GM_setValue('lastRaw', { pid, at: Date.now(), ...raw });
