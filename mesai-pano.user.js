@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mesai Panosu — canlı giriş / mola / çıkış tablosu
 // @namespace    palentis.mesai-pano
-// @version      1.1.2
+// @version      1.1.1
 // @description  C08PZGND15G kanalındaki giriş, mola (m1 10, m2 30, m10, m30, ym, Mola) ve çıkış mesajlarını okuyup haftalık vardiya programıyla birleştirir; C0C87GMFWSZ'deki tek bir mesajı dakikada bir tablo resmi (PNG, 2x) olarak günceller; resim thread'e değil doğrudan mesajın içine konur. Haftalık program Tampermonkey menüsünden tablo yapıştırılarak girilir.
 // @match        https://app.slack.com/*
 // @grant        GM_getValue
@@ -338,10 +338,7 @@ async function buildModel() {
             if (hit) { used.add(hit.id); exact.set(p, hit.s); }
         }
         for (const t of current.teams) {
-            // o gün programda hücresi boş ve hiç hareketi olmayan kişi (ör. işten ayrılan) panoda görünmez
-            const rows = t.people.map(p => row(p.name, exact.has(p) ? exact.get(p) : findSession(p.name)))
-                .filter(r => r.shift || r.status !== 'none' || r.inAt || r.outAt);
-            if (rows.length) groups.push({ team: t.name, rows });
+            groups.push({ team: t.name, rows: t.people.map(p => row(p.name, exact.has(p) ? exact.get(p) : findSession(p.name))) });
         }
     }
     const others = people.filter(p => !used.has(p.id)).map(p => row(p.name, p.s)).filter(r => r.status !== 'none');
