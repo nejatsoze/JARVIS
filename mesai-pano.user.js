@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mesai Panosu — canlı giriş / mola / çıkış tablosu
 // @namespace    palentis.mesai-pano
-// @version      1.1.0
+// @version      1.1.1
 // @description  C08PZGND15G kanalındaki giriş, mola (m1 10, m2 30, m10, m30, ym, Mola) ve çıkış mesajlarını okuyup haftalık vardiya programıyla birleştirir; C0C87GMFWSZ'deki tek bir mesajı dakikada bir tablo resmi (PNG, 2x) olarak günceller; resim thread'e değil doğrudan mesajın içine konur. Haftalık program Tampermonkey menüsünden tablo yapıştırılarak girilir.
 // @match        https://app.slack.com/*
 // @grant        GM_getValue
@@ -282,10 +282,22 @@ async function buildModel() {
     // Slack id → ad
     const nameOf = new Map();
     for (const id of sess.keys()) nameOf.set(id, await userName(id));
-    const sessByName = new Map([...sess].map(([id, s]) => [fold(nameOf.get(id)), s]));
+    const people = [...sess].map(([id, s]) => ({ id, name: nameOf.get(id), key: fold(nameOf.get(id)), s }));
 
-    const row = (name) => {
-        const s = sessByName.get(fold(name));
+    /** Program adı ↔ Slack adı: birebir > Slack adı program adıyla başlıyor ("Melisa Call" ~ "Melisa") > ilk kelime. */
+    const used = new Set();
+    const findSession = (schedName) => {
+        const k = fold(schedName), first = k.split(' ')[0];
+        const free = people.filter(p => !used.has(p.id));
+        const hit = free.find(p => p.key === k)
+            || free.find(p => p.key.startsWith(k + ' ') || k.startsWith(p.key + ' '))
+            || (() => { const c = free.filter(p => p.key.split(' ')[0] === first); return c.length === 1 ? c[0] : null; })();
+        if (hit) used.add(hit.id);
+        return hit?.s || null;
+    };
+
+    const row = (name, s = undefined) => {
+        if (s === undefined) s = findSession(name);
         const shift = shiftFor(name, sched, now);
         const r = { name, shift: shift?.text || '', status: 'none', label: '', inAt: '', outAt: '', breaks: '' };
         const recent = s && (s.state !== 'out' || (s.out && now - s.out < 14 * 3600e3));
@@ -318,15 +330,18 @@ async function buildModel() {
     };
 
     const groups = [];
-    const seen = new Set();
     if (current) {
+        // önce birebir eşleşenler sahiplensin, sonra esnek eşleşme: sırayı korumak için iki geçiş
+        const exact = new Map();
+        for (const t of current.teams) for (const p of t.people) {
+            const hit = people.find(q => !used.has(q.id) && q.key === fold(p.name));
+            if (hit) { used.add(hit.id); exact.set(p, hit.s); }
+        }
         for (const t of current.teams) {
-            groups.push({ team: t.name, rows: t.people.map(p => { seen.add(fold(p.name)); return row(p.name); }) });
+            groups.push({ team: t.name, rows: t.people.map(p => row(p.name, exact.has(p) ? exact.get(p) : findSession(p.name))) });
         }
     }
-    const others = [...sessByName.keys()].filter(n => !seen.has(n))
-        .map(n => row([...nameOf.values()].find(x => fold(x) === n) || n))
-        .filter(r => r.status !== 'none');
+    const others = people.filter(p => !used.has(p.id)).map(p => row(p.name, p.s)).filter(r => r.status !== 'none');
     if (others.length) groups.push({ team: current ? 'Programda yok' : '', rows: others });
     return { now, day: dayLabel(now), groups, hasSchedule: !!current };
 }
@@ -505,73 +520,81 @@ function nextMonday() {
     const dow = new Date(today + TR).getUTCDay();             // 0 = Pazar
     return today + ((8 - dow) % 7 || 7) * DAY;
 }
+/** Slack'in güvenlik politikası <style> etiketlerini engelleyebiliyor: stiller doğrudan elemanlara (CSSOM) verilir. */
+function el(tag, style = {}, props = {}, ...kids) {
+    const e = document.createElement(tag);
+    Object.assign(e.style, style);
+    for (const [k, v] of Object.entries(props)) { if (k.startsWith('on')) e.addEventListener(k.slice(2), v); else e[k] = v; }
+    e.append(...kids.filter(k => k != null));
+    return e;
+}
 function openScheduleDialog() {
     document.getElementById('mp-dlg')?.remove();
-    const wrap = document.createElement('div');
-    wrap.id = 'mp-dlg';
-    wrap.innerHTML = `
-<style>
-#mp-dlg{position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;font:14px "Segoe UI",Roboto,sans-serif;color:#343a43}
-#mp-dlg .box{width:min(860px,94vw);max-height:90vh;overflow:auto;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 20px 50px rgba(0,0,0,.25)}
-#mp-dlg h3{margin:0 0 6px;font-size:17px}
-#mp-dlg p{margin:0 0 10px;color:#667085;font-size:13px;line-height:1.5}
-#mp-dlg textarea{width:100%;height:150px;box-sizing:border-box;border:1px solid #d9dde3;border-radius:8px;padding:8px;font:12px Menlo,Consolas,monospace}
-#mp-dlg .row{display:flex;gap:10px;align-items:center;margin:10px 0;flex-wrap:wrap}
-#mp-dlg input[type=date]{border:1px solid #d9dde3;border-radius:8px;padding:5px 8px}
-#mp-dlg button{border:1px solid #d9dde3;background:#fff;border-radius:8px;padding:6px 14px;font-weight:600;cursor:pointer}
-#mp-dlg button.pri{background:#1aa34a;border-color:#1aa34a;color:#fff}
-#mp-dlg table{border-collapse:collapse;width:100%;font-size:12px;margin-top:6px}
-#mp-dlg td,#mp-dlg th{border:1px solid #d9dde3;padding:3px 6px;text-align:center}
-#mp-dlg td:first-child{text-align:left;font-weight:600}
-#mp-dlg .tm{background:#d9ead3;text-align:left !important;font-weight:700}
-#mp-dlg .off{background:#ff0000;color:#fff}
-#mp-dlg .warn{color:#b42318;font-weight:600}
-</style>
-<div class="box">
-  <h3>Haftalık programı yapıştır</h3>
-  <p>Program tablosunu Excel / Google Sheets'te başlık satırı dahil seç, kopyala (Ctrl+C) ve aşağıya yapıştır (Ctrl+V). "OFF", "14:00 - 02:00" ve ekip satırları (Admin, Finans, Canlı, Call) okunur.</p>
-  <textarea id="mp-in" placeholder="Buraya yapıştır…"></textarea>
-  <div class="row">Haftanın Pazartesi'si: <input type="date" id="mp-ws"> <span id="mp-hint" style="color:#8a919c;font-size:12px"></span></div>
-  <div id="mp-prev"></div>
-  <div class="row" style="justify-content:flex-end"><button id="mp-cancel">Vazgeç</button><button id="mp-save" class="pri" disabled>Kaydet</button></div>
-</div>`;
-    document.body.append(wrap);
-    const $ = (s) => wrap.querySelector(s);
     const toInput = (ms) => { const d = new Date(ms + TR); return `${d.getUTCFullYear()}-${p2(d.getUTCMonth() + 1)}-${p2(d.getUTCDate())}`; };
     const fromInput = (v) => { const [y, m, d] = v.split('-').map(Number); return Date.UTC(y, m - 1, d) - TR; };
-    $('#mp-ws').value = toInput(nextMonday());
+    const btn = (label, primary, onclick) => el('button', {
+        border: `1px solid ${primary ? '#1aa34a' : '#d9dde3'}`, background: primary ? '#1aa34a' : '#fff', color: primary ? '#fff' : '#343a43',
+        borderRadius: '8px', padding: '7px 16px', fontWeight: '700', fontSize: '14px', cursor: 'pointer',
+    }, { type: 'button', textContent: label, onclick });
+
+    const area = el('textarea', { width: '100%', height: '160px', boxSizing: 'border-box', border: '1px solid #d9dde3', borderRadius: '8px', padding: '8px', font: '12px Menlo,Consolas,monospace', color: '#343a43', background: '#fff' }, { placeholder: 'Buraya yapıştır…' });
+    const date = el('input', { border: '1px solid #d9dde3', borderRadius: '8px', padding: '5px 8px', color: '#343a43', background: '#fff' }, { type: 'date', value: toInput(nextMonday()) });
+    const hint = el('span', { color: '#8a919c', fontSize: '12px' });
+    const prev = el('div', { marginTop: '8px' });
+    const msg = el('div', { fontSize: '13px', margin: '8px 0', color: '#667085' }, { textContent: 'Yapıştırınca okunan tablo burada görünecek.' });
     let parsed = null;
-    const render = () => {
-        const text = $('#mp-in').value;
-        if (!text.trim()) { $('#mp-prev').innerHTML = ''; $('#mp-save').disabled = true; return; }
-        parsed = parseSchedule(text, fromInput($('#mp-ws').value));
-        if (parsed.weekStart && text.match(/program/i)) { $('#mp-ws').value = toInput(parsed.weekStart); $('#mp-hint').textContent = 'tablodaki tarihten okundu'; }
-        const ws = fromInput($('#mp-ws').value);
-        parsed.weekStart = ws;
-        const people = parsed.teams.reduce((n, t) => n + t.people.length, 0);
-        const days = Array.from({ length: 7 }, (_, i) => dayLabel(ws + i * DAY));
-        let html = `<table><tr><th></th>${days.map(d => `<th>${d}</th>`).join('')}</tr>`;
-        for (const t of parsed.teams) {
-            if (t.name) html += `<tr><td class="tm" colspan="8">${t.name}</td></tr>`;
-            for (const p of t.people) html += `<tr><td>${p.name}</td>${p.days.map(d => (d === 'OFF' ? '<td class="off">OFF</td>' : `<td>${d || '<span class="warn">?</span>'}</td>`)).join('')}</tr>`;
-        }
-        html += '</table>';
-        $('#mp-prev').innerHTML = people ? `<p><b>${people} kişi</b>, ${parsed.teams.length} ekip okundu. Kontrol et; "?" okunamayan hücre.</p>${html}` : '<p class="warn">Tablo okunamadı. Başlık satırı dahil hücreleri kopyaladığından emin ol.</p>';
-        $('#mp-save').disabled = !people;
-    };
-    $('#mp-in').addEventListener('input', render);
-    $('#mp-ws').addEventListener('change', render);
-    $('#mp-cancel').addEventListener('click', () => wrap.remove());
-    $('#mp-save').addEventListener('click', () => {
+    const save = btn('Kaydet', true, () => {
         if (!parsed) return;
-        const list = getSchedules().filter(s => s.weekStart !== parsed.weekStart && s.weekStart > Date.now() - 21 * DAY);
+        const list = getSchedules().filter(x => x.weekStart !== parsed.weekStart && x.weekStart > Date.now() - 21 * DAY);
         list.push(parsed);
-        list.sort((a, b) => a.weekStart - b.weekStart);
+        list.sort((x, y) => x.weekStart - y.weekStart);
         GM_setValue('schedules', list);
         wrap.remove();
         alert(`Program kaydedildi: ${dayLabel(parsed.weekStart)} haftası.`);
         refresh(true);
     });
+    save.disabled = true; save.style.opacity = '0.5';
+
+    const render = () => {
+        const text = area.value;
+        prev.replaceChildren();
+        parsed = null;
+        if (!text.trim()) { msg.textContent = 'Yapıştırınca okunan tablo burada görünecek.'; save.disabled = true; save.style.opacity = '0.5'; return; }
+        const r = parseSchedule(text, fromInput(date.value));
+        if (/program/i.test(text) && r.weekStart) { date.value = toInput(r.weekStart); hint.textContent = 'tablodaki tarihten okundu'; }
+        r.weekStart = fromInput(date.value);
+        const count = r.teams.reduce((n, t) => n + t.people.length, 0);
+        if (!count) { msg.textContent = 'Tablo okunamadı. Başlık satırı dahil hücreleri kopyaladığından emin ol.'; msg.style.color = '#b42318'; save.disabled = true; save.style.opacity = '0.5'; return; }
+        parsed = r;
+        msg.style.color = '#343a43';
+        msg.textContent = `${count} kişi, ${r.teams.length} ekip okundu (${dayLabel(r.weekStart)} haftası). Kontrol et ve Kaydet'e bas. "?" okunamayan hücre.`;
+        const cell = (t, extra = {}) => el('td', { border: '1px solid #d9dde3', padding: '3px 6px', textAlign: 'center', fontSize: '12px', ...extra }, { textContent: t });
+        const table = el('table', { borderCollapse: 'collapse', width: '100%' });
+        table.append(el('tr', {}, {}, cell(''), ...Array.from({ length: 7 }, (_, i) => cell(dayLabel(r.weekStart + i * DAY), { fontWeight: '700', background: '#d3dfe4' }))));
+        for (const t of r.teams) {
+            if (t.name) { const td = cell(t.name, { textAlign: 'left', fontWeight: '700', background: '#d9ead3' }); td.colSpan = 8; table.append(el('tr', {}, {}, td)); }
+            for (const pp of t.people) table.append(el('tr', {}, {}, cell(pp.name, { textAlign: 'left', fontWeight: '600' }),
+                ...pp.days.map(d => (d === 'OFF' ? cell('OFF', { background: '#ff0000', color: '#fff' }) : cell(d || '?', d ? {} : { color: '#b42318', fontWeight: '700' })))));
+        }
+        prev.append(table);
+        save.disabled = false; save.style.opacity = '1';
+    };
+    area.addEventListener('input', render);
+    area.addEventListener('paste', () => setTimeout(render, 0));
+    area.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save.click(); } }, true);
+    date.addEventListener('change', render);
+
+    const box = el('div', { width: 'min(880px,94vw)', maxHeight: '90vh', overflow: 'auto', background: '#fff', borderRadius: '12px', padding: '18px 20px', boxShadow: '0 20px 50px rgba(0,0,0,.3)', boxSizing: 'border-box' }, {},
+        el('div', { fontSize: '17px', fontWeight: '800', marginBottom: '6px', color: '#343a43' }, { textContent: 'Haftalık programı yapıştır' }),
+        el('div', { fontSize: '13px', color: '#667085', marginBottom: '10px', lineHeight: '1.5' }, { textContent: 'Program tablosunu (başlık satırı dahil) kopyala ve aşağıya yapıştır. Excel / Sheets hücreleri ya da "|" ile ayrılmış satırlar olabilir. Okunan tablo aşağıda görünür; doğruysa Kaydet (ya da Ctrl+Enter).' }),
+        area,
+        el('div', { display: 'flex', gap: '10px', alignItems: 'center', margin: '10px 0', fontSize: '13px', color: '#343a43', flexWrap: 'wrap' }, {}, 'Haftanın Pazartesi\'si:', date, hint),
+        msg, prev,
+        el('div', { display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '12px' }, {}, btn('Vazgeç', false, () => wrap.remove()), save));
+    const wrap = el('div', { position: 'fixed', inset: '0', zIndex: '2147483647', background: 'rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: '"Segoe UI",Roboto,sans-serif' }, { id: 'mp-dlg' }, box);
+    wrap.addEventListener('keydown', (e) => e.stopPropagation(), true);   // Slack kısayolları araya girmesin
+    document.body.append(wrap);
+    area.focus();
 }
 
 /* ════════════════ menü ve zamanlayıcı ════════════════ */
@@ -596,5 +619,5 @@ setTimeout(() => refresh(false), 5000);
 log('hazır.');
 
 // Yalnızca test ortamı önceden işaret koyduysa iç fonksiyonları verir; gerçek sayfada hiçbir şey yapmaz.
-if (window.__MP_TEST__) Object.assign(window.__MP_TEST__, { classify, sessions, parseSchedule, shiftFor, buildModel, renderPng, refresh });
+if (window.__MP_TEST__) Object.assign(window.__MP_TEST__, { classify, sessions, parseSchedule, shiftFor, buildModel, renderPng, refresh, openScheduleDialog });
 })();
