@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Finansal Rapor — 3 saatte bir Slack'e
 // @namespace    palentis.finans-rapor
-// @version      1.0.0
+// @version      1.1.0
 // @description  Panelin Overview rapor servisinden (reports-secundus) yatırım, çekim, net, GGR, NGR, oyun, oyuncu ve bekleyen çekim verilerini alıp TR saatiyle 00 (gün kapanışı), 06, 09, 12, 15, 18, 21'de Slack kanalına kart olarak gönderir. Tutarlar €, dolar karşılığı anlık kurla. Herhangi bir GT sekmesinin açık olması yeterli.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -134,46 +134,38 @@ function gtSide() {
         const title = close ? `🌙 Gün Kapanışı · ${trDate(day)}`
             : `📊 Finansal Rapor · ${trDate(day)} · ${String(slotHour ?? now.getUTCHours()).padStart(2, '0')}:00`;
         const T = (o) => o?.TODAY;
-        const f = (label, v, extra = '') => ({ type: 'mrkdwn', text: `*${label}*\n${eur(v)}${Number(v) < 0 ? ' 🔻' : ''}${extra}` });
+        const e0 = (n) => `${sign(n)}${Math.abs(Math.round(Number(n) || 0)).toLocaleString('tr-TR')} €`;
+        const d0 = (n) => (fx ? `  \`${sign(n)}${Math.abs(Math.round((Number(n) || 0) * fx.rate)).toLocaleString('tr-TR')} $\`` : '');
+        const box = (label, v, extra = '') => ({ type: 'mrkdwn', text: `*${label}*\n${e0(v)}${Number(v) < 0 ? ' 🔻' : ''}${d0(v)}${extra}` });
 
         const blocks = [
             { type: 'header', text: { type: 'plain_text', text: title, emoji: true } },
-            { type: 'context', elements: [{ type: 'mrkdwn', text: fx ? `1 € = ${fx.rate.toLocaleString('tr-TR', { minimumFractionDigits: 4, maximumFractionDigits: 4 })} $ (${fx.live ? 'anlık' : 'günlük kur'})` : 'Kur alınamadı — $ karşılıkları gösterilmiyor' }] },
+            { type: 'context', elements: [{ type: 'mrkdwn', text: fx ? `1 € = ${fx.rate.toLocaleString('tr-TR', { minimumFractionDigits: 4, maximumFractionDigits: 4 })} $${fx.live ? '' : ' (günlük kur)'}` : 'Kur alınamadı, $ karşılıkları gösterilmiyor' }] },
             { type: 'divider' },
             { type: 'section', text: { type: 'mrkdwn', text: `*${close ? 'Günün sonucu' : 'Bugün'}*` } },
             { type: 'section', fields: [
-                f('💰 Yatırım', T(funds.deposits)),
-                f('💸 Çekim', T(funds.withdrawals)),
-                f('⚖️ Net', T(funds.net)),
-                f('🎰 GGR', T(activity.ggr), ` _(${pct(T(activity.ggrpercent))})_`),
-                f('💎 NGR', T(activity.ngr)),
-                { type: 'mrkdwn', text: `*🎲 Oyun*\n${int(T(activity.bets))} € bahis · ${int(T(activity.wins))} € kazanç\n${int(T(activity.games))} oyun` },
+                box('💰 Yatırım', T(funds.deposits)),
+                box('💸 Çekim', T(funds.withdrawals)),
+                box('⚖️ Net', T(funds.net)),
+                box('🎰 GGR', T(activity.ggr), `\n_NGR ${e0(T(activity.ngr))} · ${pct(T(activity.ggrpercent))}_`),
             ] },
         ];
-        if (fx) blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text:
-            `💵 Yatırım ${usd(T(funds.deposits), fx.rate)} · Çekim ${usd(T(funds.withdrawals), fx.rate)} · Net ${usd(T(funds.net), fx.rate)} · GGR ${usd(T(activity.ggr), fx.rate)} · NGR ${usd(T(activity.ngr), fx.rate)}` }] });
 
-        if (users || payments) {
-            const fields = [];
-            if (users) {
-                fields.push({ type: 'mrkdwn', text: `*🆕 Yeni kayıt*\n${int(T(users.registrations))}\n_dün ${int(users.registrations?.YESTERDAY)}_` });
-                fields.push({ type: 'mrkdwn', text: `*🥇 İlk yatırım (FTD)*\n${int(T(users.firstDepositors))}\n_dönüşüm ${pct(T(users.conversionRate))}_` });
-                fields.push({ type: 'mrkdwn', text: `*🟢 Aktif oyuncu*\n${int(T(users.uniqueActiveUsers))}\n_dün ${int(users.uniqueActiveUsers?.YESTERDAY)}_` });
-            }
-            if (payments && payments.pendingWithdrawal != null) {
-                fields.push({ type: 'mrkdwn', text: `*⏳ Bekleyen çekim*\n${eur(payments.pendingWithdrawal)}${fx ? `\n_${usd(payments.pendingWithdrawal, fx.rate)}_` : ''}` });
-            }
-            blocks.push({ type: 'divider' }, { type: 'section', text: { type: 'mrkdwn', text: '*Oyuncular ve kasa*' } }, { type: 'section', fields });
+        const people = [];
+        if (users) {
+            people.push(`${int(T(users.registrations))} kayıt`, `${int(T(users.firstDepositors))} ilk yatırım`, `${int(T(users.uniqueActiveUsers))} aktif oyuncu`);
         }
+        if (payments && payments.pendingWithdrawal != null) people.push(`⏳ ${e0(payments.pendingWithdrawal)} bekleyen çekim`);
+        if (people.length) blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `👥 ${people.join(' · ')}` }] });
 
         const rows = [['Yatırım', funds.deposits], ['Çekim', funds.withdrawals], ['Net', funds.net], ['GGR', activity.ggr], ['NGR', activity.ngr]];
-        const table = [`${'(€)'.padEnd(9)}${pad('Dün', 9)}${pad('Hafta', 10)}${pad('Ay', 10)}${pad('Geçen ay*', 11)}${pad('Δ', 7)}`]
-            .concat(rows.map(([n, r]) => `${n.padEnd(9)}${pad(int(r?.YESTERDAY), 9)}${pad(int(r?.WTD), 10)}${pad(int(r?.MTD), 10)}${pad(int(r?.SPLM), 11)}${pad(delta(r?.MTD_TO_SPLM_PERCENT), 7)}`))
+        const table = [`${'(€)'.padEnd(9)}${pad('Dün', 9)}${pad('Hafta', 10)}${pad('Ay', 10)}${pad('Δ', 7)}`]
+            .concat(rows.map(([n, r]) => `${n.padEnd(9)}${pad(int(r?.YESTERDAY), 9)}${pad(int(r?.WTD), 10)}${pad(int(r?.MTD), 10)}${pad(delta(r?.MTD_TO_SPLM_PERCENT), 7)}`))
             .join('\n');
         blocks.push(
             { type: 'divider' },
             { type: 'section', text: { type: 'mrkdwn', text: `*Dönemler*\n\`\`\`${table}\`\`\`` } },
-            { type: 'context', elements: [{ type: 'mrkdwn', text: '* geçen ayın aynı günlerine kadar · Δ: bu ay ile geçen ayın aynı dönemi' }] },
+            { type: 'context', elements: [{ type: 'mrkdwn', text: 'Δ: bu ay, geçen ayın aynı dönemine göre' }] },
         );
         const text = `${title} — Yatırım ${eur(T(funds.deposits))} · Çekim ${eur(T(funds.withdrawals))} · Net ${eur(T(funds.net))}`;
         return { text, blocks };
