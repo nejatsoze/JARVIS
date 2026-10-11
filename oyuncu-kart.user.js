@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Oyuncu Kartı — Party ID yazılınca Slack thread'ine
 // @namespace    palentis.oyuncu-kart
-// @version      1.0.0
+// @version      1.0.1
 // @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -20,8 +20,7 @@
  * AKIŞ
  *   Slack sekmesi: kanalı 15 sn'de bir okur; Slack istemcisinden yazılmış (client_msg_id olan,
  *   yani bot/API mesajı olmayan) mesajlardaki 8 haneli ID'leri bulur → GM deposuna 'req:' yazar.
- *   Varsayılan: yalnızca SENİN yazdığın mesajlar (diğer sistem çalışırken çakışmasın); menüden
- *   "herkes" yapılabilir.
+ *   Varsayılan: kanaldaki herkesin yazdığı mesajlar; menüden "sadece ben" yapılabilir.
  *   GT sekmesi: 'req:' kayıtlarını alır, panelden veriyi okur, kartı (Block Kit) 'q:' olarak yazar.
  *   Slack sekmesi kartı thread'e gönderir (ya da 🔄 ile istenen kartı chat.update ile yeniler).
  */
@@ -376,7 +375,7 @@ function slackSide() {
         throw new Error(`${method}: 4 denemede olmadı`);
     }
 
-    const everyone = () => GM_getValue('everyone', false);
+    const everyone = () => GM_getValue('everyone', true);   // varsayılan: kanaldaki herkes
     const request = (key, pid, thread, update) => { GM_setValue('req:' + key, { pid, thread, update, at: Date.now() }); GM_setValue('reqPing', Date.now()); };
 
     /** Yeni mesajlarda ID ara; kartlarda 🔄 tepkisi ara. */
