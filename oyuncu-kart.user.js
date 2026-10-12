@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Oyuncu Kartı — Party ID yazılınca Slack thread'ine
 // @namespace    palentis.oyuncu-kart
-// @version      1.2.4
-// @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar, son giriş cihazı. Kart resim olarak çizilir (koyu başlık, kırmızı dikkat bandı, mavi 4 sütun para şeridi, yeşil finans). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
+// @version      1.3.0
+// @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince ya da mesaj "info ad@mail.com" ise (mail ile arama) o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar, son giriş cihazı. Kart resim olarak çizilir (koyu başlık, kırmızı dikkat bandı, mavi 4 sütun para şeridi, yeşil finans). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
 // @grant        GM_getValue
@@ -39,6 +39,7 @@ const CONFIG = {
     REFRESH_REACTION: 'arrows_counterclockwise',
     ID_RE: /(?<![\d])1\d{7}(?![\d])/g,
     MAX_IDS: 3,
+    EMAIL_RE: /^\s*info\s+([^\s@<>|]+@[^\s@<>|]+\.[a-z]{2,})/i,   // "info ad@alan.com" → mail ile oyuncu kartı
 };
 
 const HOST = 'https://core-secundus.gmntc.com';
@@ -244,6 +245,18 @@ function gtSide() {
         }
         return [...by.values()].sort((a, b) => b.bet - a.bet || b.n - a.n).slice(0, 3);
     }
+    /** Mail adresinden Party ID (panelin oyuncu aramasıyla aynı istek: alan 2 = e-posta, operatör 2 = eşittir). */
+    async function pidByEmail(email) {
+        const r = await ics('players/search-page', { fieldId: '2', operatorId: '2', value: email, pageSize: '25', pageNum: '1' });
+        const list = asList(r);
+        raw.searchKeys = list[0] && Object.keys(list[0]).join(', ');
+        const idOf = (x) => String(pick(x, ['partyId', 'partyID', 'party_id', 'playerId', 'userId', 'id']) ?? '');
+        const hit = list.find(x => String(pick(x, ['email', 'emailAddress', 'mail']) || '').toLowerCase() === email.toLowerCase()) || list[0];
+        const pid = hit && idOf(hit);
+        if (!pid || !/^\d{6,}$/.test(pid)) throw new Error('bu mail adresiyle oyuncu bulunamadı');
+        if (list.length > 1) warn(`${email}: ${list.length} sonuç, ilk eşleşen alındı (${pid})`);
+        return pid;
+    }
     /** Son başarılı girişin tarayıcı + işletim sistemi (GT Player'daki giriş kayıtlarıyla aynı kaynak). */
     async function lastDevice(pid) {
         const list = asList(await ics(`players/${pid}/login-logs/more`, { startDate: ymd(dayOffset(-29)), endDate: ymd(dayOffset(1)) }));
@@ -333,12 +346,16 @@ function gtSide() {
                 GM_deleteValue(k);
                 if (!req || Date.now() - req.at > 30 * 60000) continue;
                 try {
+                    if (!req.pid && req.email) {
+                        req.pid = await pidByEmail(req.email);
+                        tr(`mail ${req.email} → ${req.pid}`);
+                    }
                     const card = await buildCard(req.pid);
                     tr(`kart verisi hazır ${req.pid} (${card.card ? 'resim verisi' : 'eski biçim'})`);
                     GM_setValue('q:' + k.slice(4), { ...card, ver: VER, thread: req.thread, update: req.update || null, at: Date.now() });
                 } catch (e) {
-                    warn('kart hazırlanamadı', req.pid, e.message);
-                    if (!req.update) GM_setValue('q:' + k.slice(4), { text: `⚠️ ${req.pid} için kart hazırlanamadı: ${e.message}`, thread: req.thread, at: Date.now() });
+                    warn('kart hazırlanamadı', req.pid || req.email, e.message);
+                    if (!req.update) GM_setValue('q:' + k.slice(4), { text: `⚠️ ${req.pid || req.email} için kart hazırlanamadı: ${e.message}`, thread: req.thread, at: Date.now() });
                 }
                 GM_setValue('ping', Date.now());
             }
@@ -404,14 +421,14 @@ function slackSide() {
     }
 
     const everyone = () => GM_getValue('everyone', true);   // varsayılan: kanaldaki herkes
-    const request = (key, pid, thread, update) => {
+    const request = (key, pid, thread, update, email) => {
         if (!update) {   // aynı mesajdaki aynı ID'ye bir kez kart
             const done = GM_getValue('done', {}), now = Date.now();
             if (done[key]) return;
             for (const k in done) if (now - done[k] > 24 * 3600e3) delete done[k];
             done[key] = now; GM_setValue('done', done);
         }
-        GM_setValue('req:' + key, { pid, thread, update, at: Date.now() }); GM_setValue('reqPing', Date.now());
+        GM_setValue('req:' + key, { pid, email: email || null, thread, update, at: Date.now() }); GM_setValue('reqPing', Date.now());
     };
 
     /** Yeni mesajlarda ID ara; kartlarda 🔄 tepkisi ara. */
@@ -433,7 +450,10 @@ function slackSide() {
                 last = m.ts;
                 if (!m.client_msg_id || m.subtype || m.bot_id) continue;           // yalnızca insanların yazdığı mesajlar
                 if (!everyone() && m.user !== me) continue;
-                const ids = [...new Set((m.text || '').match(CONFIG.ID_RE) || [])].slice(0, CONFIG.MAX_IDS);
+                const text = (m.text || '').replace(/<mailto:([^|>]+)\|[^>]*>/g, '$1');   // Slack mailleri <mailto:x|x> diye saklar
+                const em = text.match(CONFIG.EMAIL_RE)?.[1]?.toLowerCase();
+                if (em) { request(`${m.ts}-${em}`, null, m.ts, null, em); log('istek (mail):', em, 'mesaj', m.ts); continue; }
+                const ids = [...new Set(text.replace(/\S+@\S+/g, ' ').match(CONFIG.ID_RE) || [])].slice(0, CONFIG.MAX_IDS);   // mail içindeki rakamlar ID sayılmaz
                 ids.forEach(pid => request(`${m.ts}-${pid}`, pid, m.ts, null));
                 if (ids.length) log('istek:', ids.join(', '), 'mesaj', m.ts);
             }
