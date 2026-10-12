@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dekont Aktar — Slack'ten Megapay / Hemen Pay Telegram grubuna
 // @namespace    palentis.dekont-aktar
-// @version      1.2.4
+// @version      1.2.5
 // @description  C0BMBT1A6KX kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesaja oyuncu bilgileriyle (Party ID, ad soyad) ve [Megapay] [Hemen Pay] butonlarıyla cevap verir. Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -387,6 +387,7 @@ function slackSide() {
             const msgs = (r.messages || []).sort((a, b) => parseFloat(a.ts) - parseFloat(b.ts));
             for (const m of msgs) {
                 last = m.ts;
+                if (Date.now() / 1000 - parseFloat(m.ts) > 30 * 60) continue;   // sekme uzun süre kapalı kaldıysa eski mesajlara toplu cevap verilmez
                 const what = `${(m.text || '').slice(0, 40).replace(/\s+/g, ' ')}${m.files?.length ? ` [+${m.files.length} dosya]` : ''}`;
                 if (m.bot_id || (m.subtype && m.subtype !== 'file_share')) { tr(`atlandı (${m.subtype || 'bot'}): ${what}`); continue; }   // insan mesajları (görselli olanlar dahil)
                 const t = trigger(m.text);
