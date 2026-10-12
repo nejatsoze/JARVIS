@@ -1,13 +1,12 @@
 // ==UserScript==
-// @name         GamingTec — AI ÖZET (Yüksek Oranlı Kazanç Dedektörü)
+// @name         GamingTec — AI ÖZET (Yüksek Oranlı Kazanç Dedektörü + Genel Özet)
 // @namespace    gamingtec-ai-ozet
-// @version      6.0.0
-// @description  Aynı Game Tran ID'ye ait BET/WIN/iptal hareketlerini tek turda birleştirir, Win/Bet oranı eşiği aşan turları canlı filtrelenebilir, sürüklenebilir ve tema uyumlu bir panelde gösterir. Sayfalar arası biriktirme, sanal liste, CSV dışa aktarma.
+// @version      6.8.0
+// @description  Aynı Game Tran ID'ye ait BET/WIN/iptal hareketlerini tek turda birleştirir, Win/Bet oranı eşiği aşan turları canlı filtrelenebilir bir panelde gösterir. Sayfalar arası biriktirme, sanal liste, CSV dışa aktarma. Paylaşımlı GT.observe() bus'ına (varsa) abone olarak SPA navigasyonunda güvenilir şekilde yeniden bağlanır. "Genel Özet": en sık oyun, toplam çevrim (vurgulu), toplam kazanç, net; eşi olmayan (bahissiz) kazanç varsa tam genişlikte nabız gibi vuran bir uyarı. "Şüpheli turlar": en yüksek oran ve en sık oyun. AI ÖZET butonu "Show Loyalty" yanına yerleşir, mor geçişli; açıldığında sayfadaki "Go" butonuna otomatik tıklayıp taze veri ister, her "Go" aramasında önceki oturumdan kalan veri temizlenir. Panel sağa sabitlenmiş, tam yükseklikte dar bir sidebar.
 // @author       —
-// @match        https://core-secundus.gmntc.com/core/app/core/players/*
+// @match        https://core-secundus.gmntc.com/*
 // @grant        none
 // @run-at       document-start
-// @noframes
 // ==/UserScript==
 
 (function () {
@@ -16,7 +15,7 @@
   // ============================================================
   // 0. SABİTLER
   // ============================================================
-  const VERSION = '6.0.0';
+  const VERSION = '6.8.0';
   const PREFIX = '[AI ÖZET]';
   const EVENT_NAME = '__gtAiOzetResponse';
   const TARGETS = ['/ics/player-transactions/page'];
@@ -34,11 +33,11 @@
     minWin: 0,
     includeNoBet: true,      // bet'i olmayan (freespin/jackpot) kazançları da göster
     accumulate: true,        // sayfalar arasında veriyi biriktir
-    excludedProducts: ['pragmatic', 'betby'],
+    excludedProducts: [],
     sortMode: 'time-asc',
     theme: 'auto',           // auto | light | dark
     filtersOpen: false,
-    panel: { x: null, y: null, w: 640, h: 560 },
+    panel: { w: 380 },
   });
 
   const log = (...a) => console.log(PREFIX, ...a);
@@ -250,6 +249,7 @@
     rows: new Map(),      // rowKey -> ham satır
     groups: new Map(),    // gameTranId -> tur
     result: null,
+    overview: null,       // eşik/filtreden bağımsız genel toplamlar
     currency: '',
     lastUpdate: 0,
     responses: 0,
@@ -311,11 +311,7 @@
         g.bet += getDebit(row);
       } else if (kind === 'WIN') {
         g.win += getCredit(row);
-      } else { // VOID: credit -> bet iadesi, debit -> kazanç geri alımı
-        const credit = getCredit(row);
-        const debit = getDebit(row);
-        if (credit) g.bet -= credit;
-        if (debit) g.win -= debit;
+      } else { // VOID: sadece işaretle, tutardan düşme
         g.voided = true;
       }
     }
@@ -327,6 +323,34 @@
     }
     store.groups = groups;
     return groups;
+  }
+
+  /**
+   * Genel özet: eşik, min bet/win veya hariç tutulan sağlayıcı filtrelerinden
+   * ETKİLENMEZ — yakalanan TÜM turlar üzerinden ham gerçek toplamları gösterir.
+   * Sadece grup verisi değişince (rebuild) yeniden hesaplanır.
+   */
+  function computeOverview() {
+    let rounds = 0, totalBetAll = 0, totalWinAll = 0;
+    let unpairedCount = 0, unpairedSum = 0;   // WIN var, BET yok (bahissiz kazanç)
+    const byGameAll = new Map();
+
+    for (const g of store.groups.values()) {
+      rounds++;
+      totalBetAll += g.bet;
+      totalWinAll += g.win;
+      if (g.win > 0 && g.bet <= 0) { unpairedCount++; unpairedSum += g.win; }
+      if (g.gameName) byGameAll.set(g.gameName, (byGameAll.get(g.gameName) || 0) + 1);
+    }
+
+    let topGameAll = '', topCountAll = 0;
+    for (const [name, count] of byGameAll) if (count > topCountAll) { topCountAll = count; topGameAll = name; }
+
+    store.overview = {
+      rounds, totalBetAll, totalWinAll, netAll: totalWinAll - totalBetAll,
+      unpairedCount, unpairedSum, topGameAll, topCountAll,
+    };
+    return store.overview;
   }
 
   /** Hafif adım: eşik/filtre değişiminde sadece bu çalışır. */
@@ -397,6 +421,7 @@
   const rebuild = debounce(() => {
     const t0 = performance.now();
     buildGroups();
+    computeOverview();
     evaluate();
     syncUI();
     log(
@@ -451,25 +476,32 @@
       const origSend = XHR.prototype.send;
       XHR.prototype.open = function (method, url) {
         this.__gtUrl = String(url || '');
-        this.__gtDone = false;
+        this.__gtCaptured = false;
         return origOpen.apply(this, arguments);
       };
+      function tryCaptureXhr(xhr) {
+        if (!isTarget(xhr.__gtUrl || '') || xhr.__gtCaptured) return;
+        let text = '';
+        try {
+          const rt = xhr.responseType;
+          if (!rt || rt === 'text') text = xhr.responseText || '';
+          else if (xhr.response != null) {
+            text = typeof xhr.response === 'string' ? xhr.response : JSON.stringify(xhr.response);
+          }
+        } catch (e) { return; }
+        if (!text || text.length < 2) return;
+        try { JSON.parse(text); } catch (e2) { return; }
+        xhr.__gtCaptured = true;
+        publish(text);
+      }
       XHR.prototype.send = function () {
         const xhr = this;
-        if (isTarget(xhr.__gtUrl)) {
-          // Sadece readyState 4: yarım kalmış gövdeyi ayrıştırmaya çalışmayız.
-          xhr.addEventListener('loadend', function () {
-            if (xhr.__gtDone || xhr.readyState !== 4 || xhr.status < 200 || xhr.status >= 300) return;
-            xhr.__gtDone = true;
-            let text = '';
-            try {
-              const rt = xhr.responseType;
-              if (!rt || rt === 'text') text = xhr.responseText || '';
-              else if (rt === 'json' && xhr.response) text = JSON.stringify(xhr.response);
-            } catch (e) { return; }
-            publish(text);
-          }, { once: true });
-        }
+        xhr.addEventListener('readystatechange', () => {
+          if (xhr.readyState === 3 || xhr.readyState === 4) tryCaptureXhr(xhr);
+        });
+        xhr.addEventListener('progress', () => tryCaptureXhr(xhr));
+        xhr.addEventListener('load', () => tryCaptureXhr(xhr));
+        xhr.addEventListener('loadend', () => tryCaptureXhr(xhr));
         return origSend.apply(this, arguments);
       };
     }
@@ -528,6 +560,41 @@
     return true;
   }
 
+  /**
+   * Sayfadaki "Go" arama butonu. AI ÖZET açıldığında buna otomatik
+   * tıklayarak taze veri isteği tetikleriz; kullanıcı elle tıkladığında da
+   * (panel açık ya da kapalı fark etmez) önceki aramadan kalan veriyi
+   * temizleriz — böylece farklı aramalar/oturumlar birbirine karışmaz.
+   */
+  function findGoButton() {
+    const candidates = Array.from(document.querySelectorAll('button, input[type="submit"], a'));
+    return candidates.find((el) => {
+      const label = (el.value || el.textContent || '').trim();
+      return /^go$/i.test(label);
+    }) || null;
+  }
+
+  function triggerDataFetch() {
+    const btn = findGoButton();
+    if (!btn) {
+      warn('"Go" butonu bulunamadı — veri, tabloyu elle yenileyene/sayfalayana kadar gelmeyecek.');
+      return false;
+    }
+    log('Taze veri için sayfadaki "Go" butonuna otomatik tıklanıyor.');
+    btn.click();
+    return true;
+  }
+
+  document.addEventListener('click', (e) => {
+    const el = e.target && e.target.closest && e.target.closest('button, input[type="submit"], a');
+    if (!el || el.id === 'gtz-fab' || el.closest('#gtz-fab') || el.closest('#gtz-panel')) return;
+    const label = (el.value || el.textContent || '').trim();
+    if (/^go$/i.test(label)) {
+      clearData();
+      log('"Go" tıklandı — önceki aramadan kalan veri temizlendi, yeni sonuçlar bekleniyor.');
+    }
+  }, true);
+
   window.addEventListener(EVENT_NAME, (e) => {
     try { handleResponse(String(e.detail || '')); } catch (err) { fail('Cevap işlenemedi:', err); }
   }, false);
@@ -544,22 +611,28 @@
   @keyframes gtzFlash { 0%,100% { background-color: transparent; } 15%,60% { background-color: rgba(255,69,58,.22); } }
   @keyframes gtzFadeUp { from { opacity:0; transform: translate(-50%, 12px);} to { opacity:1; transform: translate(-50%, 0);} }
 
-  /* ---------- FAB ---------- */
+  /* ---------- FAB ("Show Loyalty" yanına yerleşen, mor geçişli AI butonu) ---------- */
+  @keyframes gtzGradientShift { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
   #gtz-fab {
-    position: fixed; right: 18px; bottom: 18px; z-index: 2147483647;
-    display: inline-flex; align-items: center; gap: 7px;
-    padding: 11px 18px; border: 0; border-radius: 999px;
-    background: linear-gradient(135deg, #0a84ff, #5b5bd6);
-    color: #fff; font-size: 13px; font-weight: 600; line-height: 1; cursor: pointer;
-    box-shadow: 0 6px 20px rgba(10,132,255,.35);
-    transition: transform .16s cubic-bezier(.2,.8,.2,1), box-shadow .16s ease;
+    position: relative; display: inline-flex; align-items: center; gap: 8px;
+    margin-left: 10px; vertical-align: middle;
+    padding: 10px 22px; border: 0; border-radius: 999px;
+    background: linear-gradient(120deg, #6d28d9 0%, #a855f7 45%, #ec4899 100%);
+    background-size: 220% 220%;
+    color: #fff; font-size: 14px; font-weight: 800; line-height: 1; letter-spacing: .2px; cursor: pointer;
+    box-shadow: 0 4px 16px rgba(168,85,247,.5), 0 0 0 1px rgba(255,255,255,.10) inset;
+    user-select: none;
+    transition: filter .15s ease, transform .15s ease, box-shadow .15s ease;
+    animation: gtzGradientShift 6s ease infinite;
   }
-  #gtz-fab:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(10,132,255,.45); }
+  #gtz-fab:hover { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 7px 22px rgba(168,85,247,.6), 0 0 0 1px rgba(255,255,255,.14) inset; }
   #gtz-fab:active { transform: translateY(0); }
+  #gtz-fab .gtz-emoji { font-size: 16px; filter: drop-shadow(0 0 5px rgba(255,255,255,.65)); }
   #gtz-fab .gtz-badge {
-    position: absolute; top: -7px; right: -7px; min-width: 21px; height: 21px; padding: 0 6px;
+    position: absolute; top: -8px; right: -8px; min-width: 20px; height: 20px; padding: 0 6px;
     display: flex; align-items: center; justify-content: center;
     border-radius: 999px; background: #ff453a; color: #fff; font-size: 11px; font-weight: 700;
+    box-shadow: 0 0 0 2px #fff;
   }
   #gtz-fab.gtz-hot .gtz-badge { animation: gtzPulse 1.9s infinite; }
 
@@ -579,8 +652,7 @@
   }
   #gtz-panel button { font-family: inherit; color: inherit; }
 
-  .gtz-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); cursor: grab; user-select: none; flex: 0 0 auto; }
-  .gtz-head:active { cursor: grabbing; }
+  .gtz-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); user-select: none; flex: 0 0 auto; }
   .gtz-head-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .gtz-logo { width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #0a84ff, #5b5bd6); font-size: 15px; }
   .gtz-title { font-size: 14px; font-weight: 700; letter-spacing: .2px; }
@@ -591,19 +663,28 @@
   .gtz-icon:hover { background: var(--surface2); color: var(--text); }
   .gtz-icon.gtz-on { color: var(--blue); }
 
-  .gtz-stats { display: flex; gap: 6px; padding: 10px 14px; overflow-x: auto; scrollbar-width: none; flex: 0 0 auto; }
-  .gtz-stats::-webkit-scrollbar { display: none; }
-  .gtz-stat { flex: 0 0 auto; padding: 6px 10px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); }
-  .gtz-stat b { display: block; font-size: 12.5px; font-weight: 700; white-space: nowrap; }
+  .gtz-section-label { padding: 8px 14px 0; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--sub); }
+  .gtz-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding: 6px 14px 10px; flex: 0 0 auto; }
+  .gtz-stats[hidden], .gtz-section-label[hidden] { display: none; }
+  .gtz-stat { padding: 8px 10px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); min-width: 0; }
+  .gtz-stat b { display: block; font-size: 12.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .gtz-stat span { font-size: 10px; color: var(--sub); text-transform: uppercase; letter-spacing: .4px; }
   .gtz-stat.red b { color: var(--red); } .gtz-stat.green b { color: var(--green); } .gtz-stat.blue b { color: var(--blue); }
+  .gtz-stat.highlight { background: rgba(10,132,255,.08); border-color: var(--blue); }
+  .gtz-stat.highlight b { font-size: 15px; font-weight: 800; color: var(--blue); }
+  .gtz-stat.alert { grid-column: 1 / -1; background: rgba(255,59,48,.10); border-color: var(--red); animation: gtzStatAlert 1.6s ease-in-out infinite; }
+  .gtz-stat.alert b { font-size: 14px; }
+  @keyframes gtzStatAlert {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255,59,48,.45); }
+    50% { box-shadow: 0 0 0 7px rgba(255,59,48,0); }
+  }
 
   .gtz-controls { padding: 0 14px 10px; display: flex; flex-direction: column; gap: 8px; flex: 0 0 auto; border-bottom: 1px solid var(--border); }
   .gtz-row { display: flex; align-items: center; gap: 8px; }
   .gtz-search { flex: 1; display: flex; align-items: center; gap: 6px; padding: 0 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
   .gtz-search input { flex: 1; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; font-size: 12.5px; padding: 7px 0; min-width: 0; }
   .gtz-search input::placeholder { color: var(--sub); }
-  .gtz-select { border: 1px solid var(--border); background: var(--surface); color: inherit; font: inherit; font-size: 12px; border-radius: 10px; padding: 7px 8px; cursor: pointer; }
+  .gtz-select { flex: 1; min-width: 0; border: 1px solid var(--border); background: var(--surface); color: inherit; font: inherit; font-size: 12px; border-radius: 10px; padding: 7px 8px; cursor: pointer; }
   .gtz-thr { display: flex; align-items: center; gap: 9px; }
   .gtz-thr label { font-size: 11px; color: var(--sub); white-space: nowrap; }
   .gtz-thr input[type="range"] { flex: 1; accent-color: var(--blue); min-width: 0; }
@@ -648,8 +729,9 @@
   .gtz-btn.primary { border-color: transparent; background: var(--blue); color: #fff; }
   .gtz-btn.primary:hover { background: #0a74e0; }
 
-  .gtz-grip { position: absolute; right: 2px; bottom: 2px; width: 16px; height: 16px; cursor: nwse-resize; opacity: .45; }
-  .gtz-grip::after { content: ""; position: absolute; right: 3px; bottom: 3px; width: 8px; height: 8px; border-right: 2px solid var(--sub); border-bottom: 2px solid var(--sub); border-radius: 0 0 3px 0; }
+  .gtz-grip { position: absolute; left: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+  .gtz-grip::after { content: ""; position: absolute; left: 2px; top: 50%; width: 2px; height: 28px; transform: translateY(-50%); border-radius: 2px; background: var(--border); }
+  .gtz-grip:hover::after { background: var(--sub); }
 
   #gtz-toast {
     position: fixed; left: 50%; bottom: 90px; transform: translate(-50%, 0); z-index: 2147483647;
@@ -817,10 +899,15 @@
         '<button class="gtz-icon" data-ref="close" title="Kapat (Esc)">✕</button>' +
       '</div>' +
     '</header>' +
+    '<div class="gtz-section-label" data-ref="overviewLabel">Genel özet</div>' +
+    '<div class="gtz-stats" data-ref="statsOverview"></div>' +
+    '<div class="gtz-section-label" data-ref="flaggedLabel">Şüpheli turlar</div>' +
     '<div class="gtz-stats" data-ref="stats"></div>' +
     '<div class="gtz-controls">' +
       '<div class="gtz-row">' +
         '<div class="gtz-search"><span>🔎</span><input data-ref="search" type="search" placeholder="Oyun, sağlayıcı veya Tran ID ara…"></div>' +
+      '</div>' +
+      '<div class="gtz-row">' +
         '<select class="gtz-select" data-ref="sort">' +
           '<option value="time-asc">Zaman ↑</option>' +
           '<option value="time-desc">Zaman ↓</option>' +
@@ -853,19 +940,28 @@
     '<div class="gtz-grip" data-ref="grip"></div>';
 
   // ---------- FAB ----------
+  /** Eski Fast Check butonunun kullandığı aynı yerleştirme noktası. */
+  function findAnchorContainer() {
+    const labels = Array.from(document.querySelectorAll('label'));
+    const label = labels.find((l) => l.textContent.trim() === 'Show Loyalty');
+    if (!label) return null;
+    return label.closest('div');
+  }
+
   function mountFab() {
-    if (!document.body || ui.fab) return;
+    if (ui.fab) return;
+    const anchor = findAnchorContainer();
+    if (!anchor || !anchor.parentElement) return; // henüz DOM'da değil — sonraki taramada tekrar denenecek
     mountStyles();
-    const fab = document.createElement('button');
+    const fab = document.createElement('div');
     fab.id = 'gtz-fab';
-    fab.type = 'button';
-    fab.title = 'AI ÖZET  (Alt+A)';
-    fab.innerHTML = '<span>🤖</span><span>AI ÖZET</span>';
+    fab.title = 'AI ÖZET  (Alt+A) — tespiti başlatmak için tıkla';
+    fab.innerHTML = '<span class="gtz-emoji">✨</span><span>AI ÖZET</span>';
     fab.addEventListener('click', togglePanel);
-    document.body.appendChild(fab);
+    anchor.parentElement.insertBefore(fab, anchor.nextSibling);
     ui.fab = fab;
     syncFab();
-    log(`v${VERSION} hazır — eşik ${settings.ratioThreshold}x, Alt+A ile aç/kapat.`);
+    log(`v${VERSION} hazır — "Show Loyalty" yanına yerleşti. Tıklayınca "Go" otomatik tetiklenir.`);
   }
 
   function syncFab() {
@@ -899,17 +995,14 @@
     ui.panel = panel;
     ui.refs = refs;
 
-    // Boyut & konum
+    // Sidebar boyutu & konumu: sağa yaslı, üstten/alttan küçük boşluklu, tam yükseklik.
     const p = settings.panel;
-    panel.style.width = Math.max(380, Math.min(p.w || 640, window.innerWidth - 24)) + 'px';
-    panel.style.height = Math.max(320, Math.min(p.h || 560, window.innerHeight - 24)) + 'px';
-    if (p.x == null || p.y == null) {
-      panel.style.left = Math.max(12, window.innerWidth - (p.w || 640) - 18) + 'px';
-      panel.style.top = Math.max(12, window.innerHeight - (p.h || 560) - 84) + 'px';
-    } else {
-      panel.style.left = p.x + 'px';
-      panel.style.top = p.y + 'px';
-    }
+    const width = Math.max(300, Math.min(p.w || 380, window.innerWidth - 24));
+    panel.style.width = width + 'px';
+    panel.style.right = '12px';
+    panel.style.top = '12px';
+    panel.style.bottom = '12px';
+    panel.style.left = 'auto';
 
     // Kontrollerin ilk değerleri
     refs.search.value = ui.searchTerm;
@@ -926,7 +1019,7 @@
 
     wirePanel(refs, panel);
     document.body.appendChild(panel);
-    clampPanel();
+    clampPanelWidth();
     syncUI(true);
     return panel;
   }
@@ -1019,14 +1112,15 @@
       if (item) gotoTransaction(item);
     });
 
-    enableDrag(panel, refs.head);
-    enableResize(panel, refs.grip);
+    enableWidthResize(panel, refs.grip);
   }
 
   function openPanel() {
     if (ui.panel) return;
+    clearData();  // önceki oturumdan kalan veriyi temizle (zaten "Go" tıklamasıyla temizlenmiş olabilir)
     buildPanel();
     ui.refs.search.focus({ preventScroll: true });
+    triggerDataFetch(); // panel açılır açılmaz taze veri iste
   }
   function closePanel() {
     if (!ui.panel) return;
@@ -1042,6 +1136,7 @@
     store.rows.clear();
     store.groups.clear();
     store.result = null;
+    store.overview = null;
     store.responses = 0;
     syncUI(true);
   }
@@ -1051,6 +1146,7 @@
     syncFab();
     if (!ui.panel) return;
     syncHeader();
+    syncStatsOverview();
     syncStats();
     renderList(!!resetScroll);
     syncFooter();
@@ -1068,6 +1164,7 @@
     d.className = 'gtz-stat' + (tone ? ' ' + tone : '');
     const b = document.createElement('b');
     b.textContent = value;
+    b.title = value;
     const s = document.createElement('span');
     s.textContent = label;
     d.appendChild(b);
@@ -1075,17 +1172,40 @@
     return d;
   }
 
-  function syncStats() {
-    const box = ui.refs.stats;
+  /** Genel özet: en sık oyun · toplam çevrim / toplam kazanç · net / (varsa) bahissiz kazanç uyarısı. */
+  function syncStatsOverview() {
+    const box = ui.refs.statsOverview;
+    const label = ui.refs.overviewLabel;
     box.textContent = '';
-    const r = store.result;
-    if (!r || !r.flagged.length) { box.hidden = true; return; }
+    const o = store.overview;
+    if (!o || !o.rounds) {
+      box.hidden = true;
+      if (label) label.hidden = true;
+      return;
+    }
+    if (label) label.hidden = false;
     box.hidden = false;
     const frag = document.createDocumentFragment();
-    frag.appendChild(statChip('şüpheli tur', nfInt.format(r.flagged.length), 'blue'));
-    frag.appendChild(statChip('toplam kazanç', fmtMoney(r.totalWin, store.currency), 'red'));
-    frag.appendChild(statChip('toplam bet', fmtMoney(r.totalBet, store.currency)));
-    frag.appendChild(statChip('net', fmtMoney(r.net, store.currency), r.net >= 0 ? 'green' : ''));
+    if (o.topGameAll) frag.appendChild(statChip('en sık oyun', `${o.topGameAll} (${o.topCountAll})`));
+    frag.appendChild(statChip('toplam çevrim', fmtMoney(o.totalBetAll, store.currency), 'highlight'));
+    frag.appendChild(statChip('toplam kazanç', fmtMoney(o.totalWinAll, store.currency), 'green'));
+    frag.appendChild(statChip('net', fmtMoney(o.netAll, store.currency), o.netAll >= 0 ? 'green' : 'red'));
+    if (o.unpairedCount) {
+      frag.appendChild(statChip('🚨 eşi olmayan kazanç', `${nfInt.format(o.unpairedCount)} · ${fmtMoney(o.unpairedSum, store.currency)}`, 'red alert'));
+    }
+    box.appendChild(frag);
+  }
+
+  /** Şüpheli turlar: yalnız en yüksek oran ve en sık oyun. */
+  function syncStats() {
+    const box = ui.refs.stats;
+    const flaggedLabel = ui.refs.flaggedLabel;
+    box.textContent = '';
+    const r = store.result;
+    if (!r || !r.flagged.length) { box.hidden = true; if (flaggedLabel) flaggedLabel.hidden = !r; return; }
+    if (flaggedLabel) flaggedLabel.hidden = false;
+    box.hidden = false;
+    const frag = document.createDocumentFragment();
     frag.appendChild(statChip('en yüksek oran', fmtRatio(r.maxRatio)));
     if (r.topGame) frag.appendChild(statChip('en sık oyun', `${r.topGame} (${r.topCount})`));
     box.appendChild(frag);
@@ -1163,7 +1283,7 @@
       const empty = document.createElement('div');
       empty.className = 'gtz-empty';
       empty.textContent = !store.result
-        ? 'Henüz veri yakalanmadı.\nİşlem (transactions) listesini yükleyin ya da filtreleyin.'
+        ? 'Veri isteniyor…\n"Go" otomatik tetiklendi, sonuç gelince burada görünecek. Gelmezse tabloyu elle bir sayfala/filtrele.'
         : ui.searchTerm
           ? 'Bu aramayla eşleşen tur yok.'
           : 'Bu eşikte şüpheli tur bulunamadı.';
@@ -1176,68 +1296,37 @@
     if (!resetScroll) list.scrollTop = Math.min(prevScroll, Math.max(0, list.scrollHeight - list.clientHeight));
   }
 
-  // ---------- Sürükle / boyutlandır ----------
-  function clampPanel() {
+  // ---------- Genişlik sınırlama / tutamaç (sidebar sağa sabit, sadece genişlik değişir) ----------
+  function clampPanelWidth() {
     if (!ui.panel) return;
-    const r = ui.panel.getBoundingClientRect();
-    const x = Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - r.width - 8));
-    const y = Math.min(Math.max(8, r.top), Math.max(8, window.innerHeight - r.height - 8));
-    ui.panel.style.left = x + 'px';
-    ui.panel.style.top = y + 'px';
-    settings.panel.x = x;
-    settings.panel.y = y;
+    const maxW = window.innerWidth - 24;
+    const w = Math.max(300, Math.min(settings.panel.w || 380, maxW));
+    ui.panel.style.width = w + 'px';
+    settings.panel.w = w;
   }
 
-  function enableDrag(panel, handle) {
-    let startX = 0, startY = 0, baseX = 0, baseY = 0, active = false;
-    const move = rafThrottle((cx, cy) => {
+  function enableWidthResize(panel, grip) {
+    let startX = 0, baseW = 0, active = false;
+    const move = rafThrottle((cx) => {
       if (!active) return;
-      const w = panel.offsetWidth, h = panel.offsetHeight;
-      const x = Math.min(Math.max(8 - w * 0.5, baseX + cx - startX), window.innerWidth - w * 0.5);
-      const y = Math.min(Math.max(0, baseY + cy - startY), window.innerHeight - 40);
-      panel.style.left = x + 'px';
-      panel.style.top = y + 'px';
-      settings.panel.x = x;
-      settings.panel.y = y;
-    });
-    handle.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0 || e.target.closest('button')) return;
-      const rect = panel.getBoundingClientRect();
-      active = true; startX = e.clientX; startY = e.clientY; baseX = rect.left; baseY = rect.top;
-      handle.setPointerCapture(e.pointerId);
-      e.preventDefault();
-    });
-    handle.addEventListener('pointermove', (e) => { if (active) move(e.clientX, e.clientY); });
-    const stop = () => { if (!active) return; active = false; persist(); };
-    handle.addEventListener('pointerup', stop);
-    handle.addEventListener('pointercancel', stop);
-  }
-
-  function enableResize(panel, grip) {
-    let startX = 0, startY = 0, baseW = 0, baseH = 0, active = false;
-    const move = rafThrottle((cx, cy) => {
-      if (!active) return;
-      const w = Math.min(Math.max(380, baseW + cx - startX), window.innerWidth - 16);
-      const h = Math.min(Math.max(320, baseH + cy - startY), window.innerHeight - 16);
+      const delta = startX - cx; // sola çekince büyür, sağa çekince küçülür
+      const w = Math.min(Math.max(300, baseW + delta), window.innerWidth - 24);
       panel.style.width = w + 'px';
-      panel.style.height = h + 'px';
       settings.panel.w = w;
-      settings.panel.h = h;
     });
     grip.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
-      active = true; startX = e.clientX; startY = e.clientY;
-      baseW = panel.offsetWidth; baseH = panel.offsetHeight;
+      active = true; startX = e.clientX; baseW = panel.offsetWidth;
       grip.setPointerCapture(e.pointerId);
       e.preventDefault();
     });
-    grip.addEventListener('pointermove', (e) => { if (active) move(e.clientX, e.clientY); });
+    grip.addEventListener('pointermove', (e) => { if (active) move(e.clientX); });
     const stop = () => { if (!active) return; active = false; persist(); };
     grip.addEventListener('pointerup', stop);
     grip.addEventListener('pointercancel', stop);
   }
 
-  window.addEventListener('resize', debounce(() => { if (ui.panel) { clampPanel(); persist(); } }, 200), { passive: true });
+  window.addEventListener('resize', debounce(() => { if (ui.panel) { clampPanelWidth(); persist(); } }, 200), { passive: true });
 
   // ---------- Klavye ----------
   document.addEventListener('keydown', (e) => {
@@ -1259,7 +1348,69 @@
   }, true);
 
   // ============================================================
-  // 11. GENEL API (konsoldan hata ayıklama)
+  // 11. SPA NAVİGASYON DESTEĞİ (F5 gerektirmeden yeniden bağlanma)
+  // ============================================================
+  // core-secundus.gmntc.com bir Angular SPA: oyuncu detayları arasında
+  // geçiş pushState/replaceState ile yapılıyor, gerçek sayfa yüklemesi
+  // olmuyor. Angular DOM'u yeniden çizince #gtz-fab silinebiliyor ve
+  // script'in tek seferlik "başlat" mantığı bir daha tetiklenmediği için
+  // buton geri gelmiyordu. Bu bölüm paylaşılan bir "rota değişti / DOM
+  // değişti" sinyaline abone olup FAB'ı gerektiğinde kendisi yeniden
+  // monte ediyor — elle F5'e basmaya gerek kalmıyor.
+
+  function ensureMounted() {
+    if (!document.body) return;
+    if (!document.getElementById('gtz-fab')) {
+      // Eski referans artık DOM'da yok; mountFab'ın yeniden oluşturmasına izin ver.
+      ui.fab = null;
+      mountFab();
+    }
+  }
+
+  // Paylaşımlı GT.observe() bus'ı — Fast Check'in de kullandığı, kanıtlanmış
+  // güvenilir navigasyon sinyali. Mevcutsa buna abone oluyoruz; kendi
+  // pushState/MutationObserver/interval yedeklerimiz de ayrıca çalışmaya
+  // devam ediyor (GT henüz tanımlı değilse veya paket dışında çalışıyorsak).
+  function subscribeToSharedBus() {
+    if (window.__gtAiOzetGtSubscribed) return;
+    if (window.GT && typeof window.GT.observe === 'function') {
+      window.__gtAiOzetGtSubscribed = true;
+      window.GT.observe(ensureMounted);
+      log('Paylaşımlı GT.observe() navigasyon bus\'ına bağlanıldı.');
+    }
+  }
+
+  function hookHistoryNavigation() {
+    if (window.__gtAiOzetHistoryHooked) return;
+    window.__gtAiOzetHistoryHooked = true;
+    const notify = debounce(ensureMounted, 150);
+    ['pushState', 'replaceState'].forEach((method) => {
+      const orig = history[method];
+      if (typeof orig !== 'function') return;
+      history[method] = function (...args) {
+        const ret = orig.apply(this, args);
+        notify();
+        return ret;
+      };
+    });
+    window.addEventListener('popstate', notify, { passive: true });
+  }
+
+  function watchBodyForRemount() {
+    if (window.__gtAiOzetBodyWatcherOn || !document.body) return;
+    window.__gtAiOzetBodyWatcherOn = true;
+    const notify = debounce(ensureMounted, 150);
+    const mo = new MutationObserver(notify);
+    mo.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // Hook/observer bir şekilde kaçırırsa diye ucuz bir yedek kontrol.
+  // Aynı tikte GT.observe henüz tanımlı değilse tekrar abone olmayı da dener
+  // (paket script'leri farklı sırada yüklenmiş olabilir).
+  setInterval(() => { subscribeToSharedBus(); ensureMounted(); }, 2000);
+
+  // ============================================================
+  // 12. GENEL API (konsoldan hata ayıklama)
   // ============================================================
   window.GTAiOzet = {
     version: VERSION,
@@ -1274,7 +1425,7 @@
       if (ui.refs) { ui.refs.slider.value = String(settings.ratioThreshold); ui.refs.thrLabel.textContent = fmtRatio(settings.ratioThreshold); }
       return store.result;
     },
-    analyze() { buildGroups(); evaluate(); syncUI(true); return store.result; },
+    analyze() { buildGroups(); computeOverview(); evaluate(); syncUI(true); return store.result; },
     ingest(rowsOrJson) {
       const data = typeof rowsOrJson === 'string' ? JSON.parse(rowsOrJson) : rowsOrJson;
       const rows = extractRows(data);
@@ -1291,12 +1442,18 @@
   };
 
   // ============================================================
-  // 12. BAŞLAT
+  // 13. BAŞLAT
   // ============================================================
   installHooks();
+  hookHistoryNavigation();
+  subscribeToSharedBus();
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', mountFab, { once: true });
+    document.addEventListener('DOMContentLoaded', () => {
+      mountFab();
+      watchBodyForRemount();
+    }, { once: true });
   } else {
     mountFab();
+    watchBodyForRemount();
   }
 })();
