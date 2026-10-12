@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Oyuncu Kartı — Party ID yazılınca Slack thread'ine
 // @namespace    palentis.oyuncu-kart
-// @version      1.2.2
+// @version      1.2.3
 // @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar, son giriş cihazı. Kart resim olarak çizilir (koyu başlık, kırmızı dikkat bandı, mavi 4 sütun para şeridi, yeşil finans). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -140,39 +140,18 @@ function gtSide() {
     const settle = (p) => p.then(v => v, e => { warn(e.message); return undefined; });
     const raw = {};   // teşhis için ham alan adları
 
-    /* VIP: panel sadece seviye numarası veriyor (vipLevel 267). Adı (Bronze…) bekleyen çekimler sayfasının
-       "VIP LEVEL" sütunundan öğrenilir: oradaki oyuncuların numarasıyla eşlenip hatırlanır. */
-    const VIP_SEED = { 267: 'Bronze', 268: 'Silver', 269: 'Gold', 270: 'Platinum', 271: 'Diamond' };   // 267/271 doğrulandı, arası sıralı varsayım
-    const vipMap = () => ({ ...VIP_SEED, ...GM_getValue('vipNames', {}) });
-    async function learnVip() {
-        if (Date.now() - GM_getValue('vipLearnAt', 0) < 3 * 3600e3) return;
-        GM_setValue('vipLearnAt', Date.now());
-        const doc = await legacy('PendingWithdrawals.action', { execute: 'Go' });
-        const table = doc.getElementById('pending_withdrawals');
-        const head = table && [...table.rows].find(r => /PARTY ID/i.test(clean(r)) && /VIP LEVEL/i.test(clean(r)));
-        if (!head) { warn('VIP adları: bekleyen çekimler listesi okunamadı'); return; }
-        const cols = {}; let p = 0;
-        for (const c of head.cells) { cols[clean(c).toUpperCase()] = p; p += c.colSpan || 1; }
-        const cellAt = (row, pos) => { let q = 0; for (const c of row.cells) { if (q === pos) return c; q += c.colSpan || 1; } return null; };
-        const byName = new Map();   // ad → örnek oyuncu
-        for (const r of table.rows) {
-            const pid = clean(cellAt(r, cols['PARTY ID'])), name = clean(cellAt(r, cols['VIP LEVEL']));
-            if (/^\d{8}$/.test(pid) && name && name !== 'N/A' && !byName.has(name)) byName.set(name, pid);
-        }
-        const map = GM_getValue('vipNames', {}), known = new Set(Object.values(vipMap()));
-        for (const [name, pid] of byName) {
-            if (known.has(name)) continue;
-            const det = await settle(ics(`players/${pid}/detail`));
-            const id = det?.vipLevel ?? det?.vipStatus;
-            if (id != null) { map[id] = name; log('VIP öğrenildi', id, '→', name); }
-        }
-        GM_setValue('vipNames', map);
-    }
+    /* VIP: oyuncu detayında sadece seviye numarası var (vipLevel 267). Adlar panelin kendi listesinden
+       (/ics/players/vip-status: [{id:267,name:'Bronze'}, …]) okunur, günde bir tazelenir. */
+    const VIP_SEED = { 267: 'Bronze', 268: 'Silver', 269: 'Gold', 270: 'Platinum', 271: 'Diamond' };   // liste okunamazsa yedek
     async function vipName(id) {
         if (id == null || id === '') return null;
         if (!/^\d+$/.test(String(id))) return String(id);   // zaten ad geldiyse
-        if (!vipMap()[id]) await settle(learnVip());
-        return vipMap()[id] || null;   // adı bilinmeyen numara kartta gösterilmez
+        let c = GM_getValue('vipList', null);
+        if (!c || Date.now() - c.at > 864e5 || !c.map[id]) {
+            const list = asList(await settle(ics('players/vip-status')));
+            if (list.length) { c = { at: Date.now(), map: Object.fromEntries(list.filter(v => v.id != null).map(v => [v.id, v.name || v.code])) }; GM_setValue('vipList', c); }
+        }
+        return c?.map?.[id] || VIP_SEED[id] || null;
     }
 
     async function identity(pid) {
