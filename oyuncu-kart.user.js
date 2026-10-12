@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Oyuncu Kartı — Party ID yazılınca Slack thread'ine
 // @namespace    palentis.oyuncu-kart
-// @version      1.1.2
+// @version      1.1.3
 // @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar. Kart resim olarak çizilir (dikkat kırmızı, bakiye mavi 2 sütun, finans yeşil). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -47,6 +47,8 @@ const TAG = '[Oyuncu Kartı]';
 const log = (...a) => console.log(TAG, ...a);
 const warn = (...a) => console.warn(TAG, ...a);
 const VER = (typeof GM_info !== 'undefined' && GM_info.script?.version) || '?';
+/** Teşhis izi: son adımlar GM deposunda (Durum menüsünde görünür). */
+const tr = (msg) => { try { const t = GM_getValue('trace', []); t.push(`${new Date().toLocaleTimeString('tr-TR')} ${location.hostname.split('.')[0]} ${msg}`); GM_setValue('trace', t.slice(-14)); } catch { /* yok say */ } };
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 if (location.hostname === 'app.slack.com') slackSide();
@@ -328,6 +330,7 @@ function gtSide() {
                 if (!req || Date.now() - req.at > 30 * 60000) continue;
                 try {
                     const card = await buildCard(req.pid);
+                    tr(`kart verisi hazır ${req.pid} (${card.card ? 'resim verisi' : 'eski biçim'})`);
                     GM_setValue('q:' + k.slice(4), { ...card, ver: VER, thread: req.thread, update: req.update || null, at: Date.now() });
                 } catch (e) {
                     warn('kart hazırlanamadı', req.pid, e.message);
@@ -585,15 +588,19 @@ function slackSide() {
     }
     /** Resmi thread'e dosya olarak paylaş; kart mesajının zamanını (🔄 ve silme için) dosya bilgisinden bul. */
     async function shareImage(blob, name, thread, comment) {
+        tr(`resim çizildi ${Math.round(blob.size / 1024)} KB`);
         const up = await api('files.getUploadURLExternal', { filename: name, length: String(blob.size) });
+        tr(`yükleme adresi alındı ${up.file_id}`);
         await putBytes(up.upload_url, blob);
-        await api('files.completeUploadExternal', { files: JSON.stringify([{ id: up.file_id, title: name }]), channel_id: CONFIG.CHANNEL, thread_ts: thread, initial_comment: comment });
+        tr('resim yüklendi');
+        const done = await api('files.completeUploadExternal', { files: JSON.stringify([{ id: up.file_id, title: name }]), channel_id: CONFIG.CHANNEL, thread_ts: thread, initial_comment: comment });
+        tr(`thread'e paylaşıldı (${done.files?.length || 0} dosya)`);
         for (let i = 0; i < 5; i++) {
             await sleep(1200);
             const r = await api('files.info', { file: up.file_id }, ['file_not_found']).catch(() => null);
             const sh = r?.file?.shares || {};
             const ts = (sh.private?.[CONFIG.CHANNEL] || sh.public?.[CONFIG.CHANNEL] || [])[0]?.ts;
-            if (ts) return { file: up.file_id, ts };
+            if (ts) { tr(`kart mesajı ${ts}`); return { file: up.file_id, ts }; }
         }
         return { file: up.file_id, ts: null };
     }
@@ -608,6 +615,7 @@ function slackSide() {
                 const v = GM_getValue(k, null);
                 GM_deleteValue(k);
                 if (!v) continue;
+                tr(`kuyruktan alındı: sürüm ${v.ver || '?'} · ${v.card ? 'resim verisi var' : v.blocks ? 'ESKİ biçim (blocks)' : 'sadece yazı'}`);
                 if (v.ver !== VER) {   // panel sekmesi eski sürümle çalışıyor (güncellemeden sonra yenilenmemiş)
                     GM_setValue('verWarn', `Panel sekmesi ${v.ver || 'eski'} sürümde, Slack ${VER}. GT panel sekmesini yenileyin (F5).`);
                     warn(GM_getValue('verWarn'));
@@ -632,7 +640,7 @@ function slackSide() {
                 }
                 await sleep(800);
             }
-        } catch (e) { warn('gönderilemedi:', e.message); status(`HATA: ${e.message}`); }
+        } catch (e) { warn('gönderilemedi:', e.message); status(`HATA: ${e.message}`); tr(`HATA: ${e.message}`); }
         finally { busy = false; if (again) setTimeout(flush, 200); }
     }
 
@@ -654,7 +662,7 @@ function slackSide() {
     });
     GM_registerMenuCommand('Durum', () => {
         const s = GM_getValue('slackStatus', null);
-        alert(`Oyuncu kartı: ${GM_getValue('enabled', true) === false ? 'KAPALI' : 'AÇIK'} · ${everyone() ? 'herkes' : 'sadece ben'}\nSon: ${s ? `${s.msg} (${new Date(s.at).toLocaleTimeString('tr-TR')})` : '—'}\nResim: ${GM_getValue('imgMode', '—')}${GM_getValue('verWarn', '') ? `\n⚠️ ${GM_getValue('verWarn')}` : ''}\nSürüm: ${VER}\nBekleyen istek: ${GM_listValues().filter(k => k.startsWith('req:')).length}`);
+        alert(`Oyuncu kartı: ${GM_getValue('enabled', true) === false ? 'KAPALI' : 'AÇIK'} · ${everyone() ? 'herkes' : 'sadece ben'}\nSon: ${s ? `${s.msg} (${new Date(s.at).toLocaleTimeString('tr-TR')})` : '—'}\nResim: ${GM_getValue('imgMode', '—')}${GM_getValue('verWarn', '') ? `\n⚠️ ${GM_getValue('verWarn')}` : ''}\nSürüm: ${VER}\n\nSon adımlar:\n${GM_getValue('trace', []).join('\n') || '—'}\nBekleyen istek: ${GM_listValues().filter(k => k.startsWith('req:')).length}`);
     });
 }
 
