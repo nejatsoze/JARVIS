@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dekont Aktar — Slack'ten Megapay / Hemen Pay Telegram grubuna
 // @namespace    palentis.dekont-aktar
-// @version      1.2.0
+// @version      1.2.1
 // @description  C0BMBT1A6KX kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesaja oyuncu bilgileriyle (Party ID, ad soyad) ve [Megapay] [Hemen Pay] butonlarıyla cevap verir. Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -40,7 +40,8 @@ const CONFIG = {
     POLL_SEC: 15,
     TARGETS: [
         // hash: Telegram Web K'daki sohbet adresi (#...). Telegram sekmesinin menüsünden "açık sohbeti hedef yap" ile değiştirilebilir.
-        { id: 'megapay', label: 'Megapay', url: 'https://t.me/c/2515555411/3', hash: '#-1002515555411' },
+        // Megapay grubu forum (alt konulu): 1 General, 3 Megapay Havale, 4 Megapay Kredi Kartı → 3'e gider
+        { id: 'megapay', label: 'Megapay', url: 'https://t.me/c/2515555411/3', hash: '#-2515555411', topic: { id: 3, name: 'Megapay Havale' } },
         { id: 'hemenpay', label: 'Hemen Pay', url: 'https://web.telegram.org/k/#-4487917824', hash: '#-4487917824' },
     ],
     EMAIL_RE: /([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/,
@@ -195,6 +196,14 @@ function telegramSide() {
             if (!location.pathname.startsWith('/k')) return done(false, 'Telegram sekmesi Web K değil (adres web.telegram.org/k/ olmalı)');
             const hash = hashOf(job);
             if (location.hash !== hash) { location.hash = hash; await tsleep(1800); }
+            if (job.topic) {   // alt konulu grup: konuyu listeden seç (önce numarayla, olmazsa adıyla)
+                const peer = hash.replace(/^#/, '');
+                const row = await waitFor(() => document.querySelector(`[data-peer-id="${peer}"][data-thread-id="${job.topic.id}"]`)
+                    || [...document.querySelectorAll('.chatlist-chat, a[data-peer-id], li[data-peer-id]')].find(el => visible(el) && (el.querySelector('.peer-title, .dialog-title, .user-title')?.textContent || el.textContent || '').trim().toLowerCase().startsWith(job.topic.name.toLowerCase())), 8000);
+                if (!row) return done(false, `"${job.topic.name}" konusu listede bulunamadı`);
+                for (const type of ['mousedown', 'mouseup', 'click']) row.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
+                await tsleep(1500);
+            }
             const input = await waitFor(mainInput, 10000);
             if (!input) return done(false, `${job.label} sohbeti açılamadı (mesaj kutusu yok — grup adresi doğru mu?)`);
             await tsleep(400);
@@ -449,7 +458,7 @@ function slackSide() {
             if (entry.file?.url) {
                 try { image = await blobToDataUrl(await fetchBlob(entry.file.url)); } catch (e) { warn('dekont alınamadı:', e.message); toast(`Dekont alınamadı (${e.message}), yalnızca bilgiler gidecek`, false); }
             }
-            GM_setValue('tgJob', { id, target: target.id, label: target.label, hash: target.hash, text: infoText(entry), image, pid: entry.pid, at: Date.now() });
+            GM_setValue('tgJob', { id, target: target.id, label: target.label, hash: target.hash, topic: target.topic || null, text: infoText(entry), image, pid: entry.pid, at: Date.now() });
             tr(`${target.label}: Telegram'a iş bırakıldı · ${entry.pid}${image ? ' (dekontlu)' : ''}`);
             const res = await new Promise((resolve) => {
                 const t = setTimeout(() => resolve({ ok: false, msg: 'Telegram sekmesi 40 sn içinde cevap vermedi' }), 40000);
