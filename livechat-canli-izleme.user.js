@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         LiveChat — Canlı Chat İzleme Paneli
 // @namespace    livechat-canli-izleme
-// @version      2.1.0
+// @version      2.2.0
 // @description  O an yürüyen tüm chatleri duruma göre gruplayan, sürüklenip boyutlandırılabilen bir panelde listeler; konuşmayı canlı okursun, üyenin IP/konum/cihaz/site bilgilerini görürsün, tek tıkla supervise edersin.
 // @author       —
 // @match        https://my.livechatinc.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        unsafeWindow
 // @connect      api.livechatinc.com
 // @run-at       document-idle
 // @noframes
@@ -19,7 +20,7 @@
   // ============================================================
   // 0. SABİTLER
   // ============================================================
-  const VERSION = '2.1.0';
+  const VERSION = '2.2.0';
   const API = 'https://api.livechatinc.com/v3.5/agent/action/';
   const LIST_INTERVAL = 5000;     // aktif chat listesi yenileme (ms)
   const CHAT_INTERVAL = 3000;     // açık konuşma yenileme (ms)
@@ -47,6 +48,8 @@
   };
   const ID_KEY = /^(playerid|userid|memberid|customerid|id|username|login|uye.*|oyuncu.*|kullanici.*)$/;
 
+  const DPIP = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window).documentPictureInPicture;
+
   const S = {
     get: (k, d) => GM_getValue(k, d),
     set: (k, v) => GM_setValue(k, v),
@@ -63,6 +66,8 @@
     filter: '',
     error: '',
     chatTimer: null,
+    listTimer: null,
+    pip: null,            // sabitlenmişse Picture-in-Picture penceresi
     open: S.get('open', false),
     info: S.get('infoOpen', true),
     sig: { msgs: '', info: '' },   // gereksiz yeniden çizimi önlemek için son içerik imzaları
@@ -438,6 +443,7 @@
     max: '<svg viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>',
     info: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>',
     ext: '<svg viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>',
+    pin: '<svg viewBox="0 0 24 24"><path d="M9 4h6l-1 6 3 3v2H7v-2l3-3-1-6zM12 15v6"/></svg>',
     search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>',
   };
 
@@ -496,6 +502,14 @@
   .tb{display:flex;gap:2px}
   .tb button{width:32px;height:30px;border:0;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer;display:grid;place-items:center}
   .tb button:hover{background:var(--hover);color:var(--fg)}
+  .tb button.on{color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent)}
+  .tb button[disabled]{opacity:.35;cursor:not-allowed}
+  .pinned .win{left:0!important;top:0!important;right:0;bottom:0;width:auto!important;height:auto!important;border-radius:0;box-shadow:none;min-width:0;min-height:0}
+  .pinned .bar{cursor:default}
+  .pinned .h,.pinned [data-a=max]{display:none}
+  .win{container-type:inline-size}
+  @container (max-width:900px){.info{display:none}}
+  @container (max-width:640px){.body{grid-template-columns:220px 1px 1fr!important}.vh .btn.pri{padding:7px 10px}}
   .err{background:color-mix(in srgb,var(--crit) 12%,transparent);color:var(--crit);padding:7px 16px;font-size:13px;flex:none}
 
   .body{flex:1;display:grid;grid-template-columns:var(--side-w,340px) 1px 1fr;min-height:0}
@@ -626,7 +640,7 @@
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
   `;
 
-  let root, win, mini, listEl, viewEl, convEl, infoEl, errEl, kpiEl, liveEl, bodyEl;
+  let host, root, win, mini, listEl, viewEl, convEl, infoEl, errEl, kpiEl, liveEl, bodyEl;
 
   function loadFont() {
     // macOS'ta SF Pro zaten var; diğer sistemlerde en yakın karşılık Inter. CSP engellerse sistem fontu kalır.
@@ -640,7 +654,7 @@
 
   function build() {
     loadFont();
-    const host = document.createElement('div');
+    host = document.createElement('div');
     host.id = 'lci-host';
     document.body.appendChild(host);
     const shadow = host.attachShadow({ mode: 'open' });
@@ -654,6 +668,7 @@
             <span class="sp"></span><span class="seg"></span>
             <span class="tb">
               <button data-a="settings" title="Ayarlar" aria-label="Ayarlar">${ICON.gear}</button>
+              <button data-a="pin" title="Sabitle: diğer sekmelerde ve programlarda da üstte kalsın" aria-label="Sabitle">${ICON.pin}</button>
               <button data-a="theme" title="Açık / koyu tema" aria-label="Tema">${ICON.theme}</button>
               <button data-a="min" title="Küçült (Esc)" aria-label="Küçült">${ICON.min}</button>
               <button data-a="max" title="Büyüt / geri al" aria-label="Büyüt">${ICON.max}</button>
@@ -695,6 +710,9 @@
     mini.onclick = () => setOpen(true);
     shadow.querySelector('[data-a=min]').onclick = () => setOpen(false);
     shadow.querySelector('[data-a=max]').onclick = toggleMax;
+    const pinBtn = shadow.querySelector('[data-a=pin]');
+    if (DPIP) pinBtn.onclick = togglePin;
+    else { pinBtn.disabled = true; pinBtn.title = 'Sabitleme bu tarayıcıda desteklenmiyor (Chrome / Edge 116+ gerekir)'; }
     shadow.querySelector('[data-a=settings]').onclick = renderSettings;
     shadow.querySelector('[data-a=theme]').onclick = () => {
       const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
@@ -718,7 +736,7 @@
     viewEl.addEventListener('click', (e) => {
       const cp = e.target.closest('[data-copy]');
       if (!cp || e.target.closest('a')) return;
-      navigator.clipboard.writeText(cp.dataset.copy).then(() => {
+      (state.pip || window).navigator.clipboard.writeText(cp.dataset.copy).then(() => {
         cp.classList.add('done');
         setTimeout(() => cp.classList.remove('done'), 700);
       }, () => {});
@@ -726,7 +744,7 @@
 
     // Sürükleme ve boyutlandırma
     shadow.querySelector('.bar').addEventListener('pointerdown', (e) => { if (!e.target.closest('button')) startDrag(e, 'move'); });
-    shadow.querySelector('.bar').addEventListener('dblclick', (e) => { if (!e.target.closest('button')) toggleMax(); });
+    shadow.querySelector('.bar').addEventListener('dblclick', (e) => { if (!e.target.closest('button') && !state.pip) toggleMax(); });
     shadow.querySelectorAll('.h').forEach((h) => h.addEventListener('pointerdown', (e) => startDrag(e, h.dataset.d)));
     shadow.querySelector('.split').addEventListener('pointerdown', startSplit);
     window.addEventListener('resize', () => applyGeo(win.hidden ? S.get('geo', null) : currentGeo()));
@@ -762,6 +780,7 @@
   function saveGeo() { if (!maxSaved) S.set('geo', currentGeo()); }
 
   function startDrag(e, mode) {
+    if (state.pip) return;   // sabitliyken pencereyi işletim sistemi taşır/boyutlar
     e.preventDefault();
     const r = currentGeo(), sx = e.clientX, sy = e.clientY;
     maxSaved = null;
@@ -788,15 +807,16 @@
   function startSplit(e) {
     e.preventDefault();
     const sx = e.clientX;
-    const w0 = parseInt(getComputedStyle(bodyEl).getPropertyValue('--side-w'), 10) || 340;
+    const w = e.target.ownerDocument.defaultView;   // sabitliyken olaylar PiP penceresinde akar
+    const w0 = parseInt(w.getComputedStyle(bodyEl).getPropertyValue('--side-w'), 10) || 340;
     const move = (ev) => bodyEl.style.setProperty('--side-w', clamp(w0 + ev.clientX - sx, 260, win.offsetWidth - 360) + 'px');
     const up = () => {
-      removeEventListener('pointermove', move);
-      removeEventListener('pointerup', up);
+      w.removeEventListener('pointermove', move);
+      w.removeEventListener('pointerup', up);
       S.set('sideW', parseInt(bodyEl.style.getPropertyValue('--side-w'), 10));
     };
-    addEventListener('pointermove', move);
-    addEventListener('pointerup', up);
+    w.addEventListener('pointermove', move);
+    w.addEventListener('pointerup', up);
   }
 
   function toggleMax() {
@@ -805,7 +825,66 @@
     applyGeo({ x: 8, y: 8, w: innerWidth - 16, h: innerHeight - 16 });
   }
 
+  // ---------- Sabitleme (Document Picture-in-Picture) ----------
+  // Panel, tarayıcının her zaman üstte duran ayrı penceresine taşınır; sekme veya program
+  // değiştirilse de ekranda kalır. LiveChat sekmesi açık kaldığı sürece çalışır.
+  async function togglePin() {
+    if (state.pip) { state.pip.close(); return; }
+    const g = currentGeo();
+    let pip;
+    try {
+      pip = await DPIP.requestWindow({ width: Math.round(g.w), height: Math.round(g.h) });
+    } catch (err) {
+      state.error = 'Sabitlenemedi: ' + err.message;
+      renderList();
+      return;
+    }
+    state.pip = pip;
+    pip.document.title = 'Canlı Chatler';
+    pip.document.body.style.cssText = 'margin:0;overflow:hidden';
+    const font = document.getElementById('lci-font');
+    if (font) pip.document.head.appendChild(font.cloneNode());
+    root.classList.add('pinned');
+    pip.document.body.appendChild(host);
+    pip.addEventListener('pagehide', unpin, { once: true });
+    setPinUi();
+    startTimers();
+  }
+
+  function unpin() {
+    state.pip = null;
+    root.classList.remove('pinned');
+    document.body.appendChild(host);
+    applyGeo(S.get('geo', null));
+    setPinUi();
+    startTimers();
+  }
+
+  function setPinUi() {
+    const b = root.querySelector('[data-a=pin]');
+    b.classList.toggle('on', !!state.pip);
+    b.title = state.pip ? 'Sabitlemeyi kaldır (panel sayfaya geri döner)' : 'Sabitle: diğer sekmelerde ve programlarda da üstte kalsın';
+  }
+
+  // ---------- Zamanlayıcılar ----------
+  // Sabitliyken zamanlayıcılar görünür olan PiP penceresinde kurulur: arka plandaki
+  // LiveChat sekmesinin zamanlayıcıları tarayıcı tarafından yavaşlatılır.
+  const isVisible = () => !!state.pip || !document.hidden;
+  function every(fn, ms) { const w = state.pip || window; return { w, id: w.setInterval(fn, ms) }; }
+  function stop(t) { if (t) t.w.clearInterval(t.id); }
+  function startChatTimer() {
+    stop(state.chatTimer);
+    state.chatTimer = every(() => { if (state.open && isVisible()) refreshDetail(false); }, CHAT_INTERVAL);
+  }
+  function startTimers() {
+    stop(state.listTimer);
+    // Panel kapalıyken de liste yenilenir: küçük düğmedeki sayaç ve uyarı canlı kalsın.
+    state.listTimer = every(() => { if (isVisible()) refreshList(); }, LIST_INTERVAL);
+    if (state.selected && !state.ended) startChatTimer();
+  }
+
   function setOpen(open) {
+    if (!open && state.pip) state.pip.close();
     state.open = open;
     S.set('open', open);
     win.hidden = !open;
@@ -929,7 +1008,7 @@
 
   function renderSettings() {
     state.selected = null;
-    clearInterval(state.chatTimer);
+    stop(state.chatTimer);
     infoEl.innerHTML = '';
     const c = creds();
     convEl.innerHTML = `
@@ -963,7 +1042,7 @@
       if (state.selected && !state.ended && !state.chats.some((c) => c.id === state.selected)) {
         // Chat bitti: konuşma ekranda kalır, sonuna "sona erdi" notu düşer, yenileme durur.
         state.ended = true;
-        clearInterval(state.chatTimer);
+        stop(state.chatTimer);
         renderView(true);
       }
     } catch (err) {
@@ -997,13 +1076,12 @@
     convEl.innerHTML = '<div class="empty" style="margin:auto">Yükleniyor…</div>';
     infoEl.innerHTML = '';
     renderList();
-    clearInterval(state.chatTimer);
+    stop(state.chatTimer);
     refreshDetail(true);
-    state.chatTimer = setInterval(() => { if (state.open && !document.hidden) refreshDetail(false); }, CHAT_INTERVAL);
+    startChatTimer();
   }
 
   build();
   refreshList();
-  // Panel kapalıyken de liste yenilenir: küçük düğmedeki sayaç ve uyarı canlı kalsın.
-  setInterval(() => { if (!document.hidden) refreshList(); }, LIST_INTERVAL);
+  startTimers();
 })();
