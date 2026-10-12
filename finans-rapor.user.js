@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Finansal Rapor — 3 saatte bir Slack'e
 // @namespace    palentis.finans-rapor
-// @version      1.1.0
+// @version      1.2.0
 // @description  Panelin Overview rapor servisinden (reports-secundus) yatırım, çekim, net, GGR, NGR, oyun, oyuncu ve bekleyen çekim verilerini alıp TR saatiyle 00 (gün kapanışı), 06, 09, 12, 15, 18, 21'de Slack kanalına kart olarak gönderir. Tutarlar €, dolar karşılığı anlık kurla. Herhangi bir GT sekmesinin açık olması yeterli.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -120,18 +120,19 @@ function gtSide() {
     const trNow = () => new Date(Date.now() + 3 * 3600e3);
     const trDate = (d) => `${String(d.getUTCDate()).padStart(2, '0')}.${String(d.getUTCMonth() + 1).padStart(2, '0')}.${d.getUTCFullYear()}`;
 
-    async function buildReport(slotHour) {
+    async function buildReport(slotHour, manual = false) {
         const [funds, activity, users, payments, fx] = await Promise.all([
             report('funds'), report('activity'),
             report('users').catch(e => { warn(e.message); return null; }),
             report('payments').catch(e => { warn(e.message); return null; }),
             eurUsd(),
         ]);
-        const close = slotHour === CONFIG.CLOSE_SLOT;
+        const close = !manual && slotHour === CONFIG.CLOSE_SLOT;   // elle istenen rapor gece de "Gün Kapanışı" olmaz
         const now = trNow();
         // Kapanış 00:00'da gider ama biten günü anlatır → tarih bir gün geri
         const day = close ? new Date(now.getTime() - 3600e3) : now;
         const title = close ? `🌙 Gün Kapanışı · ${trDate(day)}`
+            : manual ? `📊 Finansal Rapor · ${trDate(day)} · ${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')} (anlık)`
             : `📊 Finansal Rapor · ${trDate(day)} · ${String(slotHour ?? now.getUTCHours()).padStart(2, '0')}:00`;
         const T = (o) => o?.TODAY;
         const e0 = (n) => `${sign(n)}${Math.abs(Math.round(Number(n) || 0)).toLocaleString('tr-TR')} €`;
@@ -218,12 +219,26 @@ function gtSide() {
         } finally { busy = false; }
     }
 
+    /** Elle rapor: bu menüden ya da Slack sekmesinin menüsünden (manualReq sinyali) istenir. */
+    async function manualReport() {
+        const msg = await buildReport(trNow().getUTCHours(), true);
+        enqueue('manual-' + Date.now(), msg);
+        log('elle istenen rapor kuyruğa alındı');
+    }
     GM_registerMenuCommand('Raporu şimdi gönder', async () => {
-        try {
-            const msg = await buildReport(trNow().getUTCHours());
-            enqueue('manual-' + Date.now(), msg);
-            alert('Rapor kuyruğa alındı, Slack sekmesi gönderecek.');
-        } catch (e) { alert('Rapor hazırlanamadı: ' + e.message); }
+        try { await manualReport(); alert('Rapor kuyruğa alındı, Slack sekmesi gönderecek.'); }
+        catch (e) { alert('Rapor hazırlanamadı: ' + e.message); }
+    });
+    // Slack sekmesinden gelen istek: birden çok panel sekmesi açıksa yalnız biri üretir
+    GM_addValueChangeListener('manualReq', async (k, o, req) => {
+        if (!req?.id || Date.now() - req.at > 60000) return;
+        const claim = GM_getValue('manualClaim', null);
+        if (claim?.id === req.id) return;
+        GM_setValue('manualClaim', { id: req.id, owner: ME, at: Date.now() });
+        await sleep(300);
+        if (GM_getValue('manualClaim', null)?.owner !== ME) return;
+        try { await manualReport(); GM_setValue('manualRes', { id: req.id, ok: true, at: Date.now() }); }
+        catch (e) { GM_setValue('manualRes', { id: req.id, ok: false, msg: e.message, at: Date.now() }); }
     });
     GM_registerMenuCommand('Otomatik raporu aç / kapat', () => {
         const on = GM_getValue('enabled', true) === false;
@@ -332,6 +347,19 @@ function slackSide() {
     setInterval(flush, 20000);
     setTimeout(flush, 3000);
     status('bağlı, bekliyor');
+
+    // Elle rapor: rapor açık GT panel sekmesinde hazırlanır (veri oradan okunur), burada gönderilir
+    GM_registerMenuCommand('Raporu şimdi gönder', () => {
+        const id = Math.random().toString(36).slice(2);
+        let done = false;
+        GM_addValueChangeListener('manualRes', (k, o, r) => {
+            if (done || r?.id !== id) return;
+            done = true;
+            if (!r.ok) alert('Rapor hazırlanamadı: ' + r.msg);
+        });
+        GM_setValue('manualReq', { id, at: Date.now() });
+        setTimeout(() => { if (!done) alert('Rapor istendi ama GT panel sekmesi cevap vermedi. Panel sekmesi açık ve oturum açık mı? (Sekmeyi F5 ile yenileyip tekrar deneyin.)'); }, 25000);
+    });
 }
 
 })();
