@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LiveChat — Canlı Chat İzleme Paneli
 // @namespace    livechat-canli-izleme
-// @version      2.2.1
+// @version      2.2.2
 // @description  O an yürüyen tüm chatleri duruma göre gruplayan, sürüklenip boyutlandırılabilen bir panelde listeler; konuşmayı canlı okursun, üyenin IP/konum/cihaz/site bilgilerini görürsün, tek tıkla supervise edersin.
 // @author       —
 // @match        https://my.livechatinc.com/*
@@ -19,7 +19,7 @@
   // ============================================================
   // 0. SABİTLER
   // ============================================================
-  const VERSION = '2.2.1';
+  const VERSION = '2.2.2';
   const API = 'https://api.livechatinc.com/v3.5/agent/action/';
   const LIST_INTERVAL = 5000;     // aktif chat listesi yenileme (ms)
   const CHAT_INTERVAL = 3000;     // açık konuşma yenileme (ms)
@@ -240,10 +240,13 @@
     const customer = customerOf(users);
     const agents = users.filter((u) => u.type === 'agent' && u.present !== false);
     const humans = agents.filter((a) => !isBot(a));
+    // Supervise eden agent chate visibility "agents" ile eklenir; müşteri onu görmez.
+    const assigned = humans.filter((a) => a.visibility !== 'agents');
+    const supervisors = humans.filter((a) => a.visibility === 'agents');
     const lastMsg = c.last_event_per_type && c.last_event_per_type.message && c.last_event_per_type.message.event;
     const lastAuthor = lastMsg && users.find((u) => u.id === lastMsg.author_id);
     const waiting = lastMsg && lastAuthor && lastAuthor.type === 'customer' ? ts(lastMsg.created_at) : 0;
-    const cat = humans.length ? 'active' : agents.length ? 'bot' : 'queue';
+    const cat = assigned.length ? 'active' : agents.some(isBot) ? 'bot' : supervisors.length ? 'active' : 'queue';
     const lv = customer.last_visit || {};
     return {
       id: c.id,
@@ -252,7 +255,9 @@
       playerId: idFieldOf(customer),
       email: customer.email || '',
       ip: lv.ip || '',
-      agents: (humans.length ? humans : agents).map((a) => a.name || a.id).join(', '),
+      agents: (assigned.length ? assigned : agents.filter(isBot)).map((a) => a.name || a.id).join(', '),
+      supervisors: supervisors.map((a) => a.name || a.id).join(', '),
+      lastAuthor: lastAuthor ? (lastAuthor.name || lastAuthor.id) : '',
       started: ts(c.last_thread_summary.created_at),
       preview: lastMsg ? (lastMsg.text || (lastMsg.type === 'file' ? '📎 Dosya' : '[' + lastMsg.type + ']')) : '',
       lastFromCustomer: !!waiting,
@@ -824,13 +829,13 @@
       c.cat === 'queue' ? `<span class="pill p-warn">${ago(c.waiting || c.started)}</span>` : '',
       c.ip && dup.ip[c.ip] > 1 ? `<span class="pill p-dup" title="Aynı IP'den birden fazla aktif chat">IP ×${dup.ip[c.ip]}</span>` : '',
     ].join('');
-    const who = [c.playerId ? `#${c.playerId}` : '', c.agents].filter(Boolean).join(' · ');
+    const who = [c.playerId ? `ID ${c.playerId}` : '', c.agents, c.supervisors ? `👁 ${c.supervisors}` : ''].filter(Boolean).join(' · ');
     return `<div class="item${c.id === state.selected ? ' sel' : ''}${unread ? ' unread' : ''}" data-id="${esc(c.id)}" tabindex="0">
       <span class="av" style="background:${avatarBg(c.customerId || c.id)}">${esc(initials(c.customer))}</span>
       <span class="nm">${esc(c.customer)}</span>
       <span class="tm">${unread ? '<span class="udot" style="display:inline-block;margin-right:6px;vertical-align:middle"></span>' : ''}${ago(c.started)}</span>
-      <span class="meta">${pills}<span class="ag">${esc(who)}</span></span>
-      <span class="pv">${c.lastFromCustomer ? '' : esc((c.agents || 'Agent').split(',')[0]) + ': '}${esc(c.preview)}</span>
+      <span class="meta">${pills}<span class="ag" title="Oyuncu ID · atanan agent · 👁 supervise eden">${esc(who)}</span></span>
+      <span class="pv">${c.lastFromCustomer || !c.lastAuthor ? '' : esc(c.lastAuthor) + ': '}${esc(c.preview)}</span>
     </div>`;
   }
 
@@ -898,7 +903,7 @@
           .catch((err) => { b.disabled = false; state.error = err.message; renderList(); });
       };
     }
-    convEl.querySelector('.sub').textContent = `${s.agents || 'Agent atanmadı'} · ${ago(s.started)} önce başladı`;
+    convEl.querySelector('.sub').textContent = [s.agents || 'Agent atanmadı', s.supervisors ? `👁 izleyen: ${s.supervisors}` : '', `${ago(s.started)} önce başladı`].filter(Boolean).join(' · ');
 
     // Mesajlar yalnızca değiştiğinde yeniden çizilir; seçili metin ve görseller korunur.
     const last = events[events.length - 1];
