@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Oyuncu Kartı — Party ID yazılınca Slack thread'ine
 // @namespace    palentis.oyuncu-kart
-// @version      1.2.1
+// @version      1.2.2
 // @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar, son giriş cihazı. Kart resim olarak çizilir (koyu başlık, kırmızı dikkat bandı, mavi 4 sütun para şeridi, yeşil finans). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -142,7 +142,7 @@ function gtSide() {
 
     /* VIP: panel sadece seviye numarası veriyor (vipLevel 267). Adı (Bronze…) bekleyen çekimler sayfasının
        "VIP LEVEL" sütunundan öğrenilir: oradaki oyuncuların numarasıyla eşlenip hatırlanır. */
-    const VIP_SEED = { 267: 'Bronze', 271: 'Diamond' };
+    const VIP_SEED = { 267: 'Bronze', 268: 'Silver', 269: 'Gold', 270: 'Platinum', 271: 'Diamond' };   // 267/271 doğrulandı, arası sıralı varsayım
     const vipMap = () => ({ ...VIP_SEED, ...GM_getValue('vipNames', {}) });
     async function learnVip() {
         if (Date.now() - GM_getValue('vipLearnAt', 0) < 3 * 3600e3) return;
