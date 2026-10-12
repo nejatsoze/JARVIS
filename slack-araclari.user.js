@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Slack Araçları (Okundu + Watcher + Ayna)
 // @namespace    palentis.slack.tools
-// @version      2.1.0
+// @version      2.1.1
 // @description  Üç aracı tek script'te toplar: tümünü okundu işaretle, kanal watcher (Mola bildirimi) ve kanal aynalama. Ortak, taşınabilir buton adası. Ayna yalnız ana mesajları aktarır (thread cevapları aktarılmaz); 2.1.0'a geçişte birikmiş kuyruk bir kez sıfırlanır.
 // @match        https://app.slack.com/*
 // @match        https://*.slack.com/*
@@ -577,7 +577,7 @@
       DEBUG: false,
     };
 
-    const VERSION = '1.3.0';
+    const VERSION = '1.3.1';
     const PREFIX = '[SLACK AYNA]';
     const STATE_KEY = `slackMirror.state.${CONFIG.SRC}.${CONFIG.DST}.v1`;
     const PAUSE_KEY = `slackMirror.paused.${CONFIG.SRC}.${CONFIG.DST}`;
@@ -971,6 +971,26 @@
       return r.ts;
     }
 
+    const INSTANCE = Math.random().toString(36).slice(2);
+    const CLAIM_PREFIX = `slackMirror.claim.${CONFIG.SRC}.`;
+    async function claimMessage(ts) {
+      const key = CLAIM_PREFIX + ts;
+      try {
+        const cur = localStorage.getItem(key);
+        if (cur && cur !== INSTANCE) return false;
+        localStorage.setItem(key, INSTANCE);
+        await sleep(400 + Math.random() * 300);   // aynı anda yazan diğer kopya varsa son yazan kazanır
+        if (localStorage.getItem(key) !== INSTANCE) return false;
+        // eski sahiplenmeleri temizle (2 günden eski)
+        const cutoff = Date.now() / 1000 - 2 * 86400;
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(CLAIM_PREFIX) && tsNum(k.slice(CLAIM_PREFIX.length)) < cutoff) localStorage.removeItem(k);
+        }
+        return true;
+      } catch (_) { return true; }
+    }
+
     function forward(msg) {
       if (!isLeader || isPaused()) return;
       if (!isMirrorable(msg)) return;
@@ -982,6 +1002,8 @@
       enqueue(async () => {
         try {
           if (seenSet.has(ts) || state.map[ts]) return;
+          // Aynı mesajı başka bir kopya (ikinci kurulum / ikinci sekme) da aktarmasın: sayfanın ortak deposunda sahiplen
+          if (!(await claimMessage(ts))) { markSeen(ts); dbg('başka bir kopya aktarıyor, atlandı', ts); return; }
           const reply = isReply(msg);
           let parentDstTs = null;
           if (reply && CONFIG.MIRROR_THREADS) {
@@ -1335,7 +1357,7 @@
       }, 5000);
     }
 
-    console.log('[SlackTools] v2.1.0 yüklendi.');
+    console.log('[SlackTools] v2.1.1 yüklendi.');
   }
 
   if (document.readyState === 'loading') {

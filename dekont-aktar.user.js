@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dekont Aktar — Slack'ten Megapay / Hemen Pay Telegram grubuna
 // @namespace    palentis.dekont-aktar
-// @version      1.2.7
+// @version      1.2.8
 // @description  C0BMBT1A6KX kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesaja oyuncu bilgileriyle (Party ID, ad soyad) ve [Megapay] [Hemen Pay] butonlarıyla cevap verir. Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -411,6 +411,23 @@ function slackSide() {
     }
 
     /* ── cevap ── */
+    const INSTANCE = Math.random().toString(36).slice(2);
+    async function claimReply(id) {
+        const key = `dekontAktar.claim.${id}`;
+        try {
+            const cur = localStorage.getItem(key);
+            if (cur && cur !== INSTANCE) return false;
+            localStorage.setItem(key, INSTANCE);
+            await sleep(400 + Math.random() * 300);   // aynı anda yazan diğer kopya varsa son yazan kazanır
+            if (localStorage.getItem(key) !== INSTANCE) return false;
+            const cutoff = Date.now() / 1000 - 2 * 86400;   // 2 günden eski sahiplenmeleri temizle
+            for (let i = localStorage.length - 1; i >= 0; i--) {
+                const k = localStorage.key(i);
+                if (k && k.startsWith('dekontAktar.claim.') && parseFloat(k.slice(18)) < cutoff) localStorage.removeItem(k);
+            }
+            return true;
+        } catch { return true; }
+    }
     const infoText = (v) => `Oyuncu Bilgileri:\n• ${v.pid}\n• Ad Soyad : ${v.name}`;
     async function flush() {
         if (busy) { again = true; return; }
@@ -421,6 +438,8 @@ function slackSide() {
                 const v = GM_getValue(k, null);
                 GM_deleteValue(k);
                 if (!v) continue;
+                // aynı mesaja ikinci kopya (ikinci kurulum / sekme) cevap vermesin: Slack sayfasının ortak deposunda sahiplen
+                if (!(await claimReply(`${v.thread}.${v.value}`))) { tr(`atlandı (başka kopya cevaplıyor): ${v.value}`); continue; }
                 if (v.error) {
                     await api('chat.postMessage', { channel: CONFIG.CHANNEL, thread_ts: v.thread, text: `⚠️ ${v.value}: ${v.error}` });
                     status(`bulunamadı ${v.value}`);
