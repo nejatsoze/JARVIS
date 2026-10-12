@@ -313,7 +313,7 @@
     viewEl.innerHTML = `
       <div class="lci-settings">
         <h3 style="margin:0">Bağlantı ayarları</h3>
-        <small>developers.livechat.com → Tools → <b>Personal Access Tokens</b> → yeni token oluşturun.
+        <small>platform.text.com → Console → <b>Personal Access Tokens</b> → yeni token oluşturun.
         Gereken yetkiler (scope): <code>chats--all:ro</code>, <code>chats--access:ro</code>, supervise için ayrıca <code>chats--all:rw</code>.
         Token ekranında <b>Account ID</b> de görünür. Bilgiler yalnızca bu tarayıcıdaki Tampermonkey deposunda saklanır.</small>
         <label>Account ID<br><input name="accountId" style="width:100%" value="${esc(c.account)}"></label>
