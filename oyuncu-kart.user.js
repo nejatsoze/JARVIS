@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Oyuncu Kartı — Party ID yazılınca Slack thread'ine
 // @namespace    palentis.oyuncu-kart
-// @version      1.1.0
+// @version      1.1.1
 // @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar. Kart resim olarak çizilir (dikkat kırmızı, bakiye mavi 2 sütun, finans yeşil). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -25,9 +25,9 @@
  *   yani bot/API mesajı olmayan) mesajlardaki 8 haneli ID'leri bulur → GM deposuna 'req:' yazar.
  *   Varsayılan: kanaldaki herkesin yazdığı mesajlar; menüden "sadece ben" yapılabilir.
  *   GT sekmesi: 'req:' kayıtlarını alır, panelden veriyi okur, kart verisini 'q:' olarak yazar.
- *   Slack sekmesi kartı resim (PNG, 2x) olarak çizer, kanala paylaşmadan yükler ve thread'e image
- *   bloğuyla gönderir (ya da 🔄 ile istenen kartı chat.update ile yeniler). Slack cevaplarda renkli
- *   ek kutuları ve yan yana alanları göstermediği için kart resim.
+ *   Slack sekmesi kartı resim (PNG, 2x) olarak çizer ve thread'e dosya olarak paylaşır; 🔄 ile
+ *   yenilemede yeni kart gider, eskisi silinir. Slack cevaplarda renkli ek kutuları, yan yana
+ *   alanları ve image bloğunu göstermediği için kart thread'e doğrudan resim dosyası olarak gider.
  */
 
 (() => {
@@ -582,20 +582,19 @@ function slackSide() {
             onerror: () => reject(new Error('yükleme ağ hatası')), ontimeout: () => reject(new Error('yükleme zaman aşımı')),
         }));
     }
-    /** Resmi kanala paylaşmadan yükle; mümkünse genel bağlantıyla image bloğu kur (Mesai Panosu ile aynı yol). */
-    async function uploadImage(blob, name, alt) {
+    /** Resmi thread'e dosya olarak paylaş; kart mesajının zamanını (🔄 ve silme için) dosya bilgisinden bul. */
+    async function shareImage(blob, name, thread, comment) {
         const up = await api('files.getUploadURLExternal', { filename: name, length: String(blob.size) });
         await putBytes(up.upload_url, blob);
-        const done = await api('files.completeUploadExternal', { files: JSON.stringify([{ id: up.file_id, title: name }]) });
-        const file = done.files?.[0] || {};
-        try {
-            const r = await api('files.sharedPublicURL', { file: up.file_id }, ['already_public']);
-            const f = r.file || file;
-            const secret = String(f.permalink_public || '').split('-').pop();
-            const url = f.url_private || file.url_private;
-            if (url && secret) return { mode: 'genel bağlantı', block: { type: 'image', image_url: `${url}?pub_secret=${secret}`, alt_text: alt } };
-        } catch (e) { warn('genel bağlantı alınamadı, dosya kimliğiyle gösterilecek:', e.message); }
-        return { mode: 'dosya kimliği', block: { type: 'image', slack_file: { id: up.file_id }, alt_text: alt } };
+        await api('files.completeUploadExternal', { files: JSON.stringify([{ id: up.file_id, title: name }]), channel_id: CONFIG.CHANNEL, thread_ts: thread, initial_comment: comment });
+        for (let i = 0; i < 5; i++) {
+            await sleep(1200);
+            const r = await api('files.info', { file: up.file_id }, ['file_not_found']).catch(() => null);
+            const sh = r?.file?.shares || {};
+            const ts = (sh.private?.[CONFIG.CHANNEL] || sh.public?.[CONFIG.CHANNEL] || [])[0]?.ts;
+            if (ts) return { file: up.file_id, ts };
+        }
+        return { file: up.file_id, ts: null };
     }
 
     async function flush() {
@@ -608,25 +607,23 @@ function slackSide() {
                 const v = GM_getValue(k, null);
                 GM_deleteValue(k);
                 if (!v) continue;
-                let blocks = null;
                 if (v.card) {
+                    // Kart resmi thread'e doğrudan dosya olarak paylaşılır (Slack cevaplarda image bloğunu göstermedi)
                     const png = await renderCard(v.card);
-                    const img = await uploadImage(png, `oyuncu-${v.card.pid}.png`, v.text);
-                    GM_setValue('imgMode', img.mode);
-                    blocks = [{ type: 'context', elements: [{ type: 'mrkdwn', text: `👤 *${esc(v.card.name)}* · \`${v.card.pid}\`` }] }, img.block];
-                }
-                const body = { channel: CONFIG.CHANNEL, text: v.text, ...(blocks ? { blocks: JSON.stringify(blocks) } : {}) };
-                if (v.update) {
-                    await api('chat.update', { ...body, ts: v.update }, ['message_not_found', 'cant_update_message']);
-                    status(`kart yenilendi ${v.text}`);
-                } else {
-                    const r = await api('chat.postMessage', { ...body, thread_ts: v.thread, unfurl_links: 'false' });
-                    if (v.card) {
-                        const cards = GM_getValue('cards', {});
-                        cards[r.ts] = { pid: v.card.pid, thread: v.thread, at: Date.now(), seen: 0 };
-                        GM_setValue('cards', cards);
+                    const sh = await shareImage(png, `oyuncu-${v.card.pid}.png`, v.thread, `👤 *${esc(v.card.name)}* · \`${v.card.pid}\``);
+                    const cards = GM_getValue('cards', {});
+                    if (v.update && cards[v.update]) {   // 🔄 yenileme: yeni kart gitti, eskisi silinir
+                        const old = cards[v.update];
+                        delete cards[v.update];
+                        if (old.file) await api('files.delete', { file: old.file }, ['file_not_found', 'file_deleted', 'cant_delete_file']).catch(e => warn('eski kart silinemedi:', e.message));
                     }
-                    status(`kart gönderildi ${v.text}`);
+                    if (sh.ts) cards[sh.ts] = { pid: v.card.pid, thread: v.thread, file: sh.file, at: Date.now(), seen: 0 };
+                    GM_setValue('cards', cards);
+                    GM_setValue('imgMode', sh.ts ? 'thread dosyası' : 'thread dosyası (mesaj zamanı alınamadı, 🔄 çalışmaz)');
+                    status(`kart ${v.update ? 'yenilendi' : 'gönderildi'} ${v.text}`);
+                } else if (!v.update) {
+                    await api('chat.postMessage', { channel: CONFIG.CHANNEL, text: v.text, thread_ts: v.thread, unfurl_links: 'false' });
+                    status(`mesaj gönderildi ${v.text}`);
                 }
                 await sleep(800);
             }
