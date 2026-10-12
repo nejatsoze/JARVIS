@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Oyuncu Kartı — Party ID yazılınca Slack thread'ine
 // @namespace    palentis.oyuncu-kart
-// @version      1.1.3
-// @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar. Kart resim olarak çizilir (dikkat kırmızı, bakiye mavi 2 sütun, finans yeşil). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
+// @version      1.2.0
+// @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar, son giriş cihazı. Kart resim olarak çizilir (koyu başlık, kırmızı dikkat bandı, mavi 4 sütun para şeridi, yeşil finans). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
 // @grant        GM_getValue
@@ -46,6 +46,8 @@ const W = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow :
 const TAG = '[Oyuncu Kartı]';
 const log = (...a) => console.log(TAG, ...a);
 const warn = (...a) => console.warn(TAG, ...a);
+const P2 = (n) => String(n).padStart(2, '0');
+const MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 const VER = (typeof GM_info !== 'undefined' && GM_info.script?.version) || '?';
 /** Teşhis izi: son adımlar GM deposunda (Durum menüsünde görünür). */
 const tr = (msg) => { try { const t = GM_getValue('trace', []); t.push(`${new Date().toLocaleTimeString('tr-TR')} ${location.hostname.split('.')[0]} ${msg}`); GM_setValue('trace', t.slice(-14)); } catch { /* yok say */ } };
@@ -263,6 +265,25 @@ function gtSide() {
         }
         return [...by.values()].sort((a, b) => b.bet - a.bet || b.n - a.n).slice(0, 3);
     }
+    /** Son başarılı girişin tarayıcı + işletim sistemi (GT Player'daki giriş kayıtlarıyla aynı kaynak). */
+    async function lastDevice(pid) {
+        const list = asList(await ics(`players/${pid}/login-logs/more`, { startDate: ymd(dayOffset(-29)), endDate: ymd(dayOffset(1)) }));
+        raw.loginKeys = list[0] && Object.keys(list[0]).join(', ');
+        const f = (o, names) => { const k = Object.keys(o || {}).find(x => names.includes(x.toLowerCase())); return k && o[k] != null ? String(o[k]) : ''; };
+        const rows = list.map(r => ({
+            t: Number(f(r, ['logintime', 'logtime', 'time', 'createdat', 'date'])) || 0,
+            type: f(r, ['type', 'logtype', 'actiontype', 'action', 'logintype', 'eventtype']).toUpperCase(),
+            bad: /fail|error|denied|invalid|block|false/i.test(f(r, ['status', 'success', 'successful', 'loginstatus', 'result'])),
+            ua: f(r, ['useragent', 'ua', 'agent']), os: f(r, ['deviceos', 'os', 'osname', 'operatingsystem', 'platform']), br: f(r, ['browser', 'browsername', 'browsertype']),
+        })).filter(r => !r.bad && (!r.type || r.type.startsWith('LOGIN'))).sort((a, b) => b.t - a.t);
+        const r = rows[0];
+        if (!r) return null;
+        const s = `${r.br} ${r.ua}`.toLowerCase(), o = `${r.os} ${r.ua}`.toLowerCase();
+        const br = /edg/.test(s) ? 'Edge' : /samsung/.test(s) ? 'Samsung' : /opera|opr\//.test(s) ? 'Opera' : /firefox|fxios/.test(s) ? 'Firefox'
+            : /chrome|crios|chromium/.test(s) ? 'Chrome' : /safari/.test(s) ? 'Safari' : (r.br || '').slice(0, 12);
+        const os = /iphone|ipad|ipod|ios/.test(o) ? 'iOS' : /android/.test(o) ? 'Android' : /win/.test(o) ? 'Windows' : /mac|os x/.test(o) ? 'macOS' : /linux|x11/.test(o) ? 'Linux' : '';
+        return [br, os].filter(Boolean).join(' · ') || null;
+    }
     async function sameIp(pid) {
         const doc = await legacy('player/PlayerDuplicates.action', { partyId: pid, matchingItems: '1', execute: 'Search Duplicates', checkIp: 'true' });
         const ids = new Set();
@@ -272,9 +293,9 @@ function gtSide() {
 
     async function buildCard(pid) {
         for (const k of Object.keys(raw)) delete raw[k];
-        const [id, on, fin, dep, wd, bal, bon, gm, ip] = await Promise.all([
+        const [id, on, fin, dep, wd, bal, bon, gm, ip, dev] = await Promise.all([
             settle(identity(pid)), settle(online(pid)), settle(finance(pid)), settle(lastDeposit(pid)),
-            settle(withdrawals(pid)), settle(balance(pid)), settle(bonuses(pid)), settle(games(pid)), settle(sameIp(pid)),
+            settle(withdrawals(pid)), settle(balance(pid)), settle(bonuses(pid)), settle(games(pid)), settle(sameIp(pid)), settle(lastDevice(pid)),
         ]);
         if (!id?.name && !fin && !dep) throw new Error(`${pid} için panelden veri okunamadı (oyuncu yok ya da oturum düştü)`);
 
@@ -282,31 +303,35 @@ function gtSide() {
         const T = (x) => titleWords(String(x ?? ''));   // her kelimenin baş harfi büyük
         const flags = [];
         if (id?.kyc && id.kyc !== 'PASS') flags.push(`KYC ${id.kyc}`);
-        if (ip > 0) flags.push(T(`aynı IP'de ${ip} hesap`));
+        if (ip >= 2) flags.push(T(`aynı IP'de ${ip} hesap`));   // tek eşleşme dikkat sayılmaz
         if (dep?.at && bon) { const n = bon.filter(b => b.at > dep.at).length; if (n) flags.push(T(`son yatırımdan sonra ${n} bonus aldı`)); }
         const wtd = fin?.WTD;
         if (wtd && wtd.wd > wtd.dep) flags.push(T(`bu hafta çekim yatırımı geçti (${signed(wtd.dep - wtd.wd)} TL)`));
 
-        const sub = [id?.vip ? `VIP ${T(id.vip)}` : null,
-            id?.kyc ? `KYC ${id.kyc} ${id.kyc === 'PASS' ? '✓' : '✗'}` : null,
-            memberFor(id?.reg) || null,
-            on === true ? 'Şu An Çevrimiçi' : on === false ? 'Çevrimdışı' : null].filter(Boolean).join('  ·  ');
+        const regDays = Number.isFinite(id?.reg) ? Math.floor((Date.now() - id.reg) / 864e5) : null;
+        const member = regDays == null ? '' : regDays < 1 ? 'Bugün' : regDays < 31 ? `${regDays} Gün` : regDays < 365 ? `${Math.floor(regDays / 30)} Ay` : `${Math.floor(regDays / 365)} Yıl`;
+        const meta = [
+            id?.vip ? { k: 'VIP', v: T(id.vip) } : null,
+            id?.kyc ? { k: 'KYC', v: id.kyc === 'PASS' ? 'PASS ✓' : id.kyc, tone: id.kyc === 'PASS' ? 'ok' : 'bad' } : null,
+            member ? { k: 'Üyelik', v: member } : null,
+            dev ? { k: 'Son Giriş', v: dev } : null,
+        ].filter(Boolean);
 
-        const m = (label, main, extra) => ({ label, main, extra: extra || '' });
+        const m = (label, main, extra = []) => ({ label, main, extra: extra.filter(Boolean) });
         const money = [
             m('Bakiye', bal == null ? '–' : tl(bal)),
-            m('Bekleyen Çekim', wd ? (wd.pending ? tl(wd.pending) : 'Yok') : '–'),
-            m('Son Yatırım', dep ? tl(dep.amount) : 'Yok', [dep?.method && T(shortMethod(dep.method)), dep?.at && T(ago(Date.now() - dep.at))].filter(Boolean).join(' · ')),
-            m('Son Başarılı Çekim', wd?.last ? tl(wd.last.amount) : (wd ? 'Yok' : '–'), [wd?.last?.method && T(shortMethod(wd.last.method)), wd?.last?.at && T(ago(Date.now() - wd.last.at))].filter(Boolean).join(' · ')),
+            m('Bekleyen', wd ? (wd.pending ? tl(wd.pending) : 'Yok') : '–'),
+            m('Son Yatırım', dep ? tl(dep.amount) : 'Yok', [dep?.method && T(shortMethod(dep.method)), dep?.at && T(ago(Date.now() - dep.at))]),
+            m('Son Çekim', wd?.last ? tl(wd.last.amount) : (wd ? 'Yok' : '–'), [wd?.last?.method && T(shortMethod(wd.last.method)), wd?.last?.at && T(ago(Date.now() - wd.last.at))]),
         ];
         const finRows = fin ? [['Bugün', 'TODAY'], ['Bu Hafta', 'WTD'], ['Bu Ay', 'MTD'], ['Bu Yıl', 'YTD'], ['Tüm Zaman', 'LTD']]
             .map(([label, key]) => { const r = fin[key] || { dep: 0, wd: 0 }; return [label, int(r.dep), int(r.wd), r.dep - r.wd]; }) : null;
         const hasMoney = !!gm?.some(g => g.bet || g.win);
         const model = {
-            pid: String(pid), name: T(id?.name || 'İsim Alınamadı'), sub, online: on === true, flags, money,
+            pid: String(pid), name: T(id?.name || 'İsim Alınamadı'), meta, online: on === true ? true : on === false ? false : null, flags, money,
             fin: finRows && finRows.map(([l, d, w, n]) => ({ label: l, dep: d, wd: w, net: signed(n), neg: n < 0, pos: n > 0 })),
             games: (gm || []).map(g => ({ name: T(g.name), detail: hasMoney ? `Bahis ${int(g.bet)} · Net ${signed(g.win - g.bet)}` : '', neg: g.win - g.bet < 0 })),
-            bonuses: (bon || []).slice(0, 3).map(b => { const d = new Date(b.at + 3 * 3600e3); return { text: `${p2(d.getUTCDate())} ${AYLAR[d.getUTCMonth()]} · ${T(b.name)}`, amount: b.amount ? `${int(b.amount)} TL` : '' }; }),
+            bonuses: (bon || []).slice(0, 3).map(b => { const d = new Date(b.at + 3 * 3600e3); return { date: `${p2(d.getUTCDate())} ${AYLAR[d.getUTCMonth()]}`, name: T(b.name), amount: b.amount ? `${int(b.amount)} TL` : '' }; }),
         };
 
         GM_setValue('lastRaw', { pid, at: Date.now(), ...raw });
@@ -456,116 +481,134 @@ function slackSide() {
     }
 
     const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    /* ── kart çizimi (onaylanan B tasarımı) ── */
+    /* ── kart çizimi (onaylanan B tasarımı: koyu başlık, yatay şeritler) ── */
     const FONT = '"Slack-Lato","Lato","Segoe UI",Roboto,Arial,sans-serif';
     const C = {
-        head: '#525a66', ink: '#343a43',
-        warn: ['#fdecef', '#e01e5a', '#8a1538'],
-        money: ['#eef4fb', '#7fa7d9', '#dde7f3', '#5b6b80', '#26364d', '#6b7a8c'],
-        rest: ['#f2fbf6', '#2eb67d', '#dcefe4', '#2f5f48', '#3d4a44'],
-        neg: '#c0292b', pos: '#147a4b',
+        head: ['#3f4651', '#525a66'], ok: '#5fd99a', bad: '#ff7a90', online: '#2eb67d', offline: '#a0a7b1',
+        warn: '#e01e5a', kpi: '#eef4fb', kpiLine: '#dde7f3', kpiLbl: '#5b6b80', kpiVal: '#1f2d40', kpiSub: '#7b8796',
+        green: '#2f7a55', zebra: '#f4fbf7', th: '#8a94a1', ink: '#343a43', ink2: '#4a5361', neg: '#c0292b', pos: '#16794a',
+        line: '#edf0f3', foot: '#f8f9fb', footInk: '#9aa3ae',
     };
-    const CW = 460, PAD = 14, BAR = 5;
+    const CW = 520, PX = 20;
     function drawCard(g, k) {
         g.textBaseline = 'alphabetic';
-        const font = (w, px) => `${w} ${px}px ${FONT}`;
-        const txt = (t, x, y, f, color, align = 'left') => { g.font = f; g.fillStyle = color; g.textAlign = align; g.fillText(t, x, y); return g.measureText(t).width; };
-        const fit = (t, f, maxW) => { g.font = f; t = String(t); if (g.measureText(t).width <= maxW) return t; while (t.length > 1 && g.measureText(t + '…').width > maxW) t = t.slice(0, -1); return t + '…'; };
-        const wrap = (t, f, maxW) => {
-            g.font = f; const out = []; let line = '';
-            for (const w of String(t).split(' ')) { const tryL = line ? `${line} ${w}` : w; if (line && g.measureText(tryL).width > maxW) { out.push(line); line = w; } else line = tryL; }
-            if (line) out.push(line); return out;
+        const F = (w, px) => `${w} ${px}px ${FONT}`;
+        const txt = (t, x, y, f, color, align = 'left') => { g.font = f; g.fillStyle = color; g.textAlign = align; g.fillText(String(t), x, y); g.font = f; return g.measureText(String(t)).width; };
+        const W_ = (t, f) => { g.font = f; return g.measureText(String(t)).width; };
+        const fit = (t, f, maxW) => { t = String(t); if (W_(t, f) <= maxW) return t; while (t.length > 1 && W_(t + '…', f) > maxW) t = t.slice(0, -1); return t + '…'; };
+        /** Kelime kaydırma; parçalar [{t, f, c}] — kalın tutar gibi farklı yazı tipleri aynı satırda. */
+        const flow = (parts, x, y, maxW, lh, draw) => {
+            let cx = 0, lines = 1;
+            for (const p of parts) for (const [i, w] of p.t.split(' ').entries()) {
+                const word = (i ? ' ' : '') + w, ww = W_(word, p.f);
+                if (cx && cx + ww > maxW) { cx = 0; lines++; if (draw) txt(w, x, y + (lines - 1) * lh, p.f, p.c); cx = W_(w, p.f); continue; }
+                if (draw) txt(word, x + cx, y + (lines - 1) * lh, p.f, p.c);
+                cx += ww;
+            }
+            return lines;
         };
-        const band = (y, h, [bg, bar]) => { g.fillStyle = bg; g.fillRect(0, y, CW, h); g.fillStyle = bar; g.fillRect(0, y, BAR, h); };
-        const X = BAR + PAD - 2, IW = CW - X - PAD;
+        const UP = (t) => String(t).toLocaleUpperCase('tr-TR');
         let y = 0;
-        // başlık
-        const subL = wrap(k.sub || '', font(500, 12), CW - 2 * PAD);
-        const hH = 14 + 20 + subL.length * 16 + 10;
-        g.fillStyle = C.head; g.fillRect(0, 0, CW, hH);
-        txt(fit(`${k.name} · ${k.pid}`, font(800, 17), CW - 2 * PAD), PAD, 14 + 16, font(800, 17), '#fff');
-        subL.forEach((l, i) => txt(l, PAD, 14 + 20 + 13 + i * 16, font(500, 12), 'rgba(255,255,255,0.86)'));
-        if (k.online) { g.fillStyle = '#2eb67d'; g.beginPath(); g.arc(CW - PAD - 5, 14 + 10, 5, 0, Math.PI * 2); g.fill(); }
+
+        // ── başlık
+        const metaH = k.meta?.length ? 38 : 0, hH = 18 + 24 + (metaH ? 10 + metaH : 0) + 14;
+        const grad = g.createLinearGradient(0, 0, CW, hH); grad.addColorStop(0, C.head[0]); grad.addColorStop(1, C.head[1]);
+        g.fillStyle = grad; g.fillRect(0, 0, CW, hH);
+        let stW = 0;
+        if (k.online !== null && k.online !== undefined) {
+            const st = k.online ? 'Çevrimiçi' : 'Çevrimdışı';
+            stW = W_(st, F(700, 12)) + 18;
+            txt(st, CW - PX, 18 + 17, F(700, 12), 'rgba(255,255,255,0.88)', 'right');
+            g.fillStyle = k.online ? C.online : C.offline; g.beginPath(); g.arc(CW - PX - stW + 5, 18 + 13, 5, 0, Math.PI * 2); g.fill();
+        }
+        const nmW = txt(fit(k.name, F(900, 20), CW - 2 * PX - stW - 110), PX, 18 + 20, F(900, 20), '#fff');
+        txt(k.pid, PX + nmW + 10, 18 + 20, F(700, 13), 'rgba(255,255,255,0.72)');
+        if (metaH) {
+            let mx = PX; const my = 18 + 24 + 10;
+            for (const m of k.meta) {
+                const vw = W_(m.v, F(900, 14)), lw = W_(UP(m.k), F(700, 10.5));
+                txt(UP(m.k), mx, my + 11, F(700, 10.5), 'rgba(255,255,255,0.62)');
+                txt(m.v, mx, my + 30, F(900, 14), m.tone === 'ok' ? C.ok : m.tone === 'bad' ? C.bad : '#fff');
+                mx += Math.max(vw, lw) + 26;
+            }
+        }
         y = hH;
-        // dikkat
+
+        // ── dikkat bandı
         if (k.flags?.length) {
-            const L = wrap(`⚠ Dikkat: ${k.flags.join(' · ')}`, font(700, 12), IW);
-            const h = 16 + L.length * 16;
-            band(y, h, C.warn);
-            L.forEach((l, i) => txt(l, X, y + 8 + 12 + i * 16, font(700, 12), C.warn[2]));
+            const parts = [{ t: k.flags.join(' · '), f: F(900, 12.5), c: '#fff' }];
+            const n = flow(parts, PX, 0, CW - 2 * PX, 18, false), h = 12 + 13 + n * 18 + 6;
+            g.fillStyle = C.warn; g.fillRect(0, y, CW, h);
+            txt('DİKKAT', PX, y + 12 + 9, F(900, 10), 'rgba(255,255,255,0.85)');
+            flow(parts, PX, y + 12 + 13 + 13, CW - 2 * PX, 18, true);
             y += h;
         }
-        // para: 2×2
-        const cellH = (c) => 10 + 13 + 21 + (c.extra ? 15 : 0) + 8;
-        const rowsH = [Math.max(cellH(k.money[0]), cellH(k.money[1])), Math.max(cellH(k.money[2]), cellH(k.money[3]))];
-        band(y, rowsH[0] + rowsH[1], C.money);
-        const half = (CW - BAR) / 2;
+
+        // ── para: 4 sütun
+        const colW = CW / 4, maxEx = Math.max(0, ...k.money.map(c => c.extra.length));
+        const kH = 12 + 12 + 22 + maxEx * 15 + 12;
+        g.fillStyle = C.kpi; g.fillRect(0, y, CW, kH);
         k.money.forEach((c, i) => {
-            const cx = BAR + (i % 2) * half, cy = y + (i < 2 ? 0 : rowsH[0]);
-            txt(c.label.toLocaleUpperCase('tr-TR'), cx + PAD - 2, cy + 10 + 10, font(700, 10), C.money[3]);
-            txt(fit(c.main, font(800, 16), half - PAD * 2), cx + PAD - 2, cy + 10 + 13 + 17, font(800, 16), C.money[4]);
-            if (c.extra) txt(fit(c.extra, font(500, 11), half - PAD * 2), cx + PAD - 2, cy + 10 + 13 + 21 + 12, font(500, 11), C.money[5]);
+            const x = i * colW + 16, inner = colW - 26;
+            if (i) { g.fillStyle = C.kpiLine; g.fillRect(i * colW, y, 1, kH); }
+            txt(UP(c.label), x, y + 12 + 9, F(900, 9.5), C.kpiLbl);
+            txt(fit(c.main, F(900, 16.5), inner), x, y + 12 + 12 + 18, F(900, 16.5), C.kpiVal);
+            c.extra.forEach((e, j) => txt(fit(e, F(700, 10.5), inner), x, y + 12 + 12 + 22 + 12 + j * 15, F(700, 10.5), C.kpiSub));
         });
-        g.fillStyle = C.money[2];
-        g.fillRect(BAR + half, y, 1, rowsH[0] + rowsH[1]);
-        g.fillRect(BAR, y + rowsH[0], CW - BAR, 1);
-        y += rowsH[0] + rowsH[1];
-        g.fillStyle = C.money[2]; g.fillRect(BAR, y - 1, CW - BAR, 1);
-        // yeşil bölüm: finans, oyunlar, bonuslar
-        const sec = [];
-        if (k.fin) sec.push({ type: 'fin' });
-        if (k.games?.length) sec.push({ type: 'games' });
-        if (k.bonuses?.length) sec.push({ type: 'bon' });
-        if (!sec.length) return y;
-        const title = (t, ty) => txt(t.toLocaleUpperCase('tr-TR'), X, ty, font(800, 10.5), C.rest[3]);
-        const cols = [X + IW * 0.50, X + IW * 0.75, X + IW];   // sağa yaslı sütun sonları
-        const parts = [];
-        let h = 8;
-        for (const s of sec) {
-            if (s.type === 'fin') { parts.push({ s, y: h }); h += 16 + 18 + k.fin.length * 19 + 4; }
-            if (s.type === 'games') { parts.push({ s, y: h }); h += 18 + k.games.length * 17 + 6; }
-            if (s.type === 'bon') {
-                const lines = k.bonuses.map(b => wrap(b.text, font(500, 11.5), IW - 74));
-                parts.push({ s, y: h, lines }); h += 18 + lines.reduce((a, l) => a + l.length * 16 + 3, 0) + 4;
-            }
+        g.fillStyle = C.kpiLine; g.fillRect(0, y + kH - 1, CW, 1);
+        y += kH;
+
+        // ── finans
+        if (k.fin) {
+            y += 14;
+            txt('FİNANS (TL)', PX, y + 10, F(900, 10.5), C.green);
+            y += 18;
+            const cols = [CW - PX - 10 - 190, CW - PX - 10 - 95, CW - PX - 10];
+            ['YATIRIM', 'ÇEKİM', 'NET'].forEach((t, i) => txt(t, cols[i], y + 10, F(900, 10), C.th, 'right'));
+            y += 16;
+            k.fin.forEach((r, i) => {
+                const rh = 26;
+                if (i % 2 === 0) { g.fillStyle = C.zebra; g.beginPath(); g.roundRect ? g.roundRect(PX, y, CW - 2 * PX, rh, 6) : g.rect(PX, y, CW - 2 * PX, rh); g.fill(); }
+                txt(r.label, PX + 10, y + 17.5, F(900, 13), C.ink);
+                txt(r.dep, cols[0], y + 17.5, F(700, 13), C.ink2, 'right');
+                txt(r.wd, cols[1], y + 17.5, F(700, 13), C.ink2, 'right');
+                txt(r.net, cols[2], y + 17.5, F(900, 13), r.neg ? C.neg : r.pos ? C.pos : C.ink2, 'right');
+                y += rh;
+            });
+            y += 10;
         }
-        h += 6;
-        band(y, h, C.rest);
-        for (const p of parts) {
-            let py = y + p.y;
-            if (p.s.type === 'fin') {
-                title('Finans (TL)', py + 12);
-                py += 16;
-                ['Yatırım', 'Çekim', 'Net'].forEach((t, i) => txt(t.toLocaleUpperCase('tr-TR'), cols[i], py + 12, font(700, 9.5), C.rest[3], 'right'));
-                py += 18;
-                for (const r of k.fin) {
-                    g.fillStyle = C.rest[2]; g.fillRect(X, py, IW, 1);
-                    txt(r.label, X, py + 14, font(600, 12), C.rest[4]);
-                    txt(r.dep, cols[0], py + 14, font(500, 12), C.rest[4], 'right');
-                    txt(r.wd, cols[1], py + 14, font(500, 12), C.rest[4], 'right');
-                    txt(r.net, cols[2], py + 14, font(800, 12), r.neg ? C.neg : r.pos ? C.pos : C.rest[4], 'right');
-                    py += 19;
-                }
-            } else if (p.s.type === 'games') {
-                title('Son 7 Gün Oyunlar', py + 12);
-                py += 18;
+
+        // ── oyunlar | bonuslar
+        const hasG = k.games?.length, hasB = k.bonuses?.length;
+        if (hasG || hasB) {
+            g.fillStyle = C.line; g.fillRect(0, y, CW, 1);
+            const top = y + 16, gw = hasB ? 168 : CW - 2 * PX, bx = hasG ? PX + gw + 18 : PX, bw = CW - PX - bx;
+            let gy = top, by = top;
+            if (hasG) {
+                txt('SON 7 GÜN OYUNLAR', PX, gy + 10, F(900, 10.5), C.green); gy += 22;
                 for (const gm of k.games) {
-                    txt(fit(gm.name, font(600, 12), gm.detail ? IW * 0.55 : IW), X, py + 12, font(600, 12), C.rest[4]);
-                    if (gm.detail) txt(gm.detail, X + IW, py + 12, font(500, 11.5), gm.neg ? C.neg : C.rest[4], 'right');
-                    py += 17;
+                    txt(fit(gm.name, F(700, 12.5), gw), PX, gy + 10, F(700, 12.5), C.ink); gy += 18;
+                    if (gm.detail) { txt(fit(gm.detail, F(700, 10.5), gw), PX, gy + 8, F(700, 10.5), gm.neg ? C.neg : C.th); gy += 16; }
                 }
-            } else {
-                title('Son Bonuslar', py + 12);
-                py += 18;
-                k.bonuses.forEach((b, i) => {
-                    const L = p.lines[i];
-                    L.forEach((l, j) => txt(l, X, py + 12 + j * 16, font(500, 11.5), C.rest[4]));
-                    if (b.amount) txt(b.amount, X + IW, py + 12 + (L.length - 1) * 16, font(800, 12), C.rest[4], 'right');
-                    py += L.length * 16 + 3;
-                });
             }
+            if (hasB) {
+                txt('SON BONUSLAR', bx, by + 10, F(900, 10.5), C.green); by += 22;
+                for (const b of k.bonuses) {
+                    const parts = [{ t: UP(b.date), f: F(900, 11), c: C.th }, { t: ' ' + b.name, f: F(700, 12), c: C.ink2 }];
+                    if (b.amount) parts.push({ t: ' · ' + b.amount, f: F(900, 12), c: C.kpiVal });
+                    const n = flow(parts, bx, by + 10, bw, 16, true);
+                    by += n * 16 + 6;
+                }
+            }
+            y = Math.max(gy, by) + 8;
         }
-        return y + h;
+
+        // ── alt bilgi
+        const now = new Date(Date.now() + 3 * 3600e3);
+        g.fillStyle = C.line; g.fillRect(0, y, CW, 1);
+        g.fillStyle = C.foot; g.fillRect(0, y + 1, CW, 30);
+        txt(`${P2(now.getUTCDate())} ${MONTHS[now.getUTCMonth()]} ${P2(now.getUTCHours())}:${P2(now.getUTCMinutes())} · 🔄 tepkisiyle yenilenir`, PX, y + 20, F(700, 10.5), C.footInk);
+        return y + 31;
     }
     /** Kartı 2x çözünürlükte PNG olarak çiz (önce boyu ölç, sonra çiz). */
     function renderCard(k) {
@@ -575,6 +618,7 @@ function slackSide() {
         cv.width = CW * S; cv.height = H * S;
         const g = cv.getContext('2d');
         g.scale(S, S);
+        g.beginPath(); g.roundRect ? g.roundRect(0, 0, CW, H, 12) : g.rect(0, 0, CW, H); g.clip();
         g.fillStyle = '#fff'; g.fillRect(0, 0, CW, H);
         drawCard(g, k);
         return new Promise((res, rej) => cv.toBlob(b => (b ? res(b) : rej(new Error('kart resmi üretilemedi'))), 'image/png'));
