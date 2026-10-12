@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Oyuncu Kartı — Party ID yazılınca Slack thread'ine
 // @namespace    palentis.oyuncu-kart
-// @version      1.0.9
-// @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar (satır satır). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
+// @version      1.1.0
+// @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar. Kart resim olarak çizilir (dikkat kırmızı, bakiye mavi 2 sütun, finans yeşil). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
 // @grant        GM_getValue
@@ -11,7 +11,10 @@
 // @grant        GM_listValues
 // @grant        GM_addValueChangeListener
 // @grant        GM_registerMenuCommand
+// @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
+// @connect      files.slack.com
+// @connect      slack.com
 // @run-at       document-idle
 // @noframes
 // ==/UserScript==
@@ -21,8 +24,10 @@
  *   Slack sekmesi: kanalı 15 sn'de bir okur; Slack istemcisinden yazılmış (client_msg_id olan,
  *   yani bot/API mesajı olmayan) mesajlardaki 8 haneli ID'leri bulur → GM deposuna 'req:' yazar.
  *   Varsayılan: kanaldaki herkesin yazdığı mesajlar; menüden "sadece ben" yapılabilir.
- *   GT sekmesi: 'req:' kayıtlarını alır, panelden veriyi okur, kartı (Block Kit) 'q:' olarak yazar.
- *   Slack sekmesi kartı thread'e gönderir (ya da 🔄 ile istenen kartı chat.update ile yeniler).
+ *   GT sekmesi: 'req:' kayıtlarını alır, panelden veriyi okur, kart verisini 'q:' olarak yazar.
+ *   Slack sekmesi kartı resim (PNG, 2x) olarak çizer, kanala paylaşmadan yükler ve thread'e image
+ *   bloğuyla gönderir (ya da 🔄 ile istenen kartı chat.update ile yeniler). Slack cevaplarda renkli
+ *   ek kutuları ve yan yana alanları göstermediği için kart resim.
  */
 
 (() => {
@@ -115,15 +120,8 @@ function gtSide() {
         return d < 60 ? `${d} gün önce` : `${Math.floor(d / 30)} ay önce`;
     }
     const AYLAR = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
-    /** Bloklardaki tüm metinlerde kelime başlarını büyütür (tr: i→İ). Kesme işaretinden sonrası (IP'de) küçük kalır. */
-    function titleCase(node) {
-        if (Array.isArray(node)) { node.forEach(titleCase); return; }
-        if (!node || typeof node !== 'object') return;
-        for (const [k, v] of Object.entries(node)) {
-            if ((k === 'text' || k === 'title' || k === 'value') && typeof v === 'string') node[k] = v.replace(/(^|[\s(·\/*_`-])(\p{Ll})/gu, (m, a, c) => a + c.toLocaleUpperCase('tr-TR'));
-            else if (typeof v === 'object') titleCase(v);
-        }
-    }
+    /** Kelime başlarını büyütür (tr: i→İ). Kesme işaretinden sonrası (IP'de) küçük kalır. */
+    const titleWords = (t) => t.replace(/(^|[\s(·\/*_`-])(\p{Ll})/gu, (m, a, c) => a + c.toLocaleUpperCase('tr-TR'));
     function memberFor(ms) {
         if (!Number.isFinite(ms)) return '';
         const d = Math.floor((Date.now() - ms) / 864e5);
@@ -277,77 +275,39 @@ function gtSide() {
         ]);
         if (!id?.name && !fin && !dep) throw new Error(`${pid} için panelden veri okunamadı (oyuncu yok ya da oturum düştü)`);
 
-        // ⚠️ dikkat satırı
+        // Kart artık resim: GT tarafı yalnızca veriyi (model) hazırlar, Slack tarafı çizer.
+        const T = (x) => titleWords(String(x ?? ''));   // her kelimenin baş harfi büyük
         const flags = [];
-        if (id?.kyc && id.kyc !== 'PASS') flags.push(`KYC ${esc(id.kyc)}`);
-        if (ip > 0) flags.push(`aynı IP'de ${ip} hesap`);
-        if (dep?.at && bon) { const n = bon.filter(b => b.at > dep.at).length; if (n) flags.push(`son yatırımdan sonra ${n} bonus aldı`); }
+        if (id?.kyc && id.kyc !== 'PASS') flags.push(`KYC ${id.kyc}`);
+        if (ip > 0) flags.push(T(`aynı IP'de ${ip} hesap`));
+        if (dep?.at && bon) { const n = bon.filter(b => b.at > dep.at).length; if (n) flags.push(T(`son yatırımdan sonra ${n} bonus aldı`)); }
         const wtd = fin?.WTD;
-        if (wtd && wtd.wd > wtd.dep) flags.push(`bu hafta çekim yatırımı geçti (${signed(wtd.dep - wtd.wd)} TL)`);
+        if (wtd && wtd.wd > wtd.dep) flags.push(T(`bu hafta çekim yatırımı geçti (${signed(wtd.dep - wtd.wd)} TL)`));
 
-        const sub = [id?.vip ? `VIP ${esc(id.vip)}` : null,
-            id?.kyc ? `KYC *${esc(id.kyc)}* ${id.kyc === 'PASS' ? '✅' : '⛔'}` : null,
+        const sub = [id?.vip ? `VIP ${T(id.vip)}` : null,
+            id?.kyc ? `KYC ${id.kyc} ${id.kyc === 'PASS' ? '✓' : '✗'}` : null,
             memberFor(id?.reg) || null,
-            on === true ? '🟢 *Şu an çevrimiçi*' : on === false ? '⚪ Çevrimdışı' : null].filter(Boolean).join(' · ');
+            on === true ? 'Şu An Çevrimiçi' : on === false ? 'Çevrimdışı' : null].filter(Boolean).join('  ·  ');
 
-        const blocks = [
-            { type: 'header', text: { type: 'plain_text', text: `👤 ${id?.name || 'İsim alınamadı'} · ${pid}`, emoji: true } },
-            { type: 'section', text: { type: 'mrkdwn', text: sub || '–' } },
+        const m = (label, main, extra) => ({ label, main, extra: extra || '' });
+        const money = [
+            m('Bakiye', bal == null ? '–' : tl(bal)),
+            m('Bekleyen Çekim', wd ? (wd.pending ? tl(wd.pending) : 'Yok') : '–'),
+            m('Son Yatırım', dep ? tl(dep.amount) : 'Yok', [dep?.method && T(shortMethod(dep.method)), dep?.at && T(ago(Date.now() - dep.at))].filter(Boolean).join(' · ')),
+            m('Son Başarılı Çekim', wd?.last ? tl(wd.last.amount) : (wd ? 'Yok' : '–'), [wd?.last?.method && T(shortMethod(wd.last.method)), wd?.last?.at && T(ago(Date.now() - wd.last.at))].filter(Boolean).join(' · ')),
         ];
-        // Renkli çizgili ek kutular (cevapta da 2 sütun kalan eski tip alanlar): dikkat kırmızı, bakiye mavi, finans ve sonrası yeşil
-        const COLORS = { warn: '#e01e5a', money: '#7fa7d9', rest: '#2eb67d' };
-        const attachments = [];
-        if (flags.length) attachments.push({ color: COLORS.warn, blocks: [{ type: 'context', elements: [{ type: 'mrkdwn', text: `⚠️ *Dikkat:* ${flags.join(' · ')}` }] }] });
-        const fld = (title, main, extra) => ({ title, value: `${main}${extra ? `\n${extra}` : ''}`, short: true });
-        attachments.push({ color: COLORS.money, mrkdwn_in: ['fields'], fields: [
-            fld('💳 Bakiye', bal == null ? '–' : tl(bal)),
-            fld('⏳ Bekleyen çekim', wd ? (wd.pending ? tl(wd.pending) : 'yok') : '–'),
-            fld('💰 Son yatırım', dep ? `${tl(dep.amount)}${dep.method ? ` · _${esc(shortMethod(dep.method))}_` : ''}` : '_yok_', dep?.at ? ago(Date.now() - dep.at) : ''),
-            fld('💸 Son başarılı çekim', wd?.last ? `${tl(wd.last.amount)}${wd.last.method ? ` · _${esc(shortMethod(wd.last.method))}_` : ''}` : (wd ? '_yok_' : '–'), wd?.last?.at ? ago(Date.now() - wd.last.at) : ''),
-        ] });
-        const rest = [];   // finans, oyunlar, bonuslar → yeşil kutu
-
-        if (fin) {
-            const rowsDef = [['Bugün', 'TODAY'], ['Bu hafta', 'WTD'], ['Bu ay', 'MTD'], ['Bu yıl', 'YTD'], ['Tüm zaman', 'LTD']];
-            const pad = (s, n) => String(s).padStart(n);
-            const lines = [`${''.padEnd(10)}${pad('Yatırım', 10)}${pad('Çekim', 10)}${pad('Net', 10)}`];
-            for (const [label, key] of rowsDef) {
-                const r = fin[key] || { dep: 0, wd: 0 };   // o dönemde işlem yoksa 0
-                const net = r.dep - r.wd;
-                lines.push(`${label.padEnd(10)}${pad(int(r.dep), 10)}${pad(int(r.wd), 10)}${pad(signed(net), 10)}${net < 0 ? ' ▼' : ''}`);
-            }
-            rest.push({ type: 'section', text: { type: 'mrkdwn', text: `*Finans (TL)*\n\`\`\`${lines.join('\n')}\`\`\`` } },
-                { type: 'context', elements: [{ type: 'mrkdwn', text: 'Net = yatırım − çekim · ▼ oyuncu lehine (site eksi)' }] });
-        }
-        if (gm?.length) {
-            const pad = (s, n) => String(s).padStart(n);
-            const hasMoney = gm.some(g => g.bet || g.win);
-            const lines = gm.map(g => {
-                const name = g.name.length > 20 ? g.name.slice(0, 19) + '…' : g.name;
-                return hasMoney ? `${name.padEnd(21)}bahis ${pad(int(g.bet), 9)}  ${pad(signed(g.win - g.bet), 9)}` : name;
-            });
-            if (rest.length) rest.push({ type: 'divider' });
-            rest.push({ type: 'section', text: { type: 'mrkdwn', text: `*Son 7 gün oyunlar*\n\`\`\`${lines.join('\n')}\`\`\`` } });
-        }
-        if (bon?.length) {
-            const lines = bon.slice(0, 3).map(b => { const d = new Date(b.at + 3 * 3600e3); return `${p2(d.getUTCDate())} ${AYLAR[d.getUTCMonth()]} · ${esc(b.name)}${b.amount ? ` ${int(b.amount)} TL` : ''}`; });
-            rest.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `Son bonuslar:\n${lines.join('\n')}` }] });
-        }
-        if (rest.length) attachments.push({ color: COLORS.rest, blocks: rest });
-
-        // Yedek: Slack ek kutuları kabul etmezse aynı içerik düz bloklarla (renksiz, kısa satırlar)
-        const line = (t, v) => `${t}: ${v.replace(/\n/g, ' · ')}`;
-        const mf = attachments.find(a => a.fields).fields;
-        const flat = [...blocks];
-        if (flags.length) flat.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `⚠️ *Dikkat:* ${flags.join(' · ')}` }] });
-        flat.push({ type: 'divider' }, { type: 'section', text: { type: 'mrkdwn', text: [
-            `${line(`*${mf[0].title}*`, mf[0].value)}  ·  ${line(`*${mf[1].title}*`, mf[1].value)}`,
-            line(`*${mf[2].title}*`, mf[2].value), line(`*${mf[3].title}*`, mf[3].value)].join('\n') } });
-        if (rest.length) flat.push({ type: 'divider' }, ...rest);
-        titleCase(blocks); titleCase(attachments); titleCase(flat);   // kartın tamamında her kelimenin baş harfi büyük
+        const finRows = fin ? [['Bugün', 'TODAY'], ['Bu Hafta', 'WTD'], ['Bu Ay', 'MTD'], ['Bu Yıl', 'YTD'], ['Tüm Zaman', 'LTD']]
+            .map(([label, key]) => { const r = fin[key] || { dep: 0, wd: 0 }; return [label, int(r.dep), int(r.wd), r.dep - r.wd]; }) : null;
+        const hasMoney = !!gm?.some(g => g.bet || g.win);
+        const model = {
+            pid: String(pid), name: T(id?.name || 'İsim Alınamadı'), sub, online: on === true, flags, money,
+            fin: finRows && finRows.map(([l, d, w, n]) => ({ label: l, dep: d, wd: w, net: signed(n), neg: n < 0, pos: n > 0 })),
+            games: (gm || []).map(g => ({ name: T(g.name), detail: hasMoney ? `Bahis ${int(g.bet)} · Net ${signed(g.win - g.bet)}` : '', neg: g.win - g.bet < 0 })),
+            bonuses: (bon || []).slice(0, 3).map(b => { const d = new Date(b.at + 3 * 3600e3); return { text: `${p2(d.getUTCDate())} ${AYLAR[d.getUTCMonth()]} · ${T(b.name)}`, amount: b.amount ? `${int(b.amount)} TL` : '' }; }),
+        };
 
         GM_setValue('lastRaw', { pid, at: Date.now(), ...raw });
-        return { text: `👤 ${id?.name || pid} · ${pid}`, blocks, attachments, flat };
+        return { text: `👤 ${model.name} · ${pid}`, card: model };
     }
 
     /* ── istek kuyruğu ── */
@@ -491,6 +451,153 @@ function slackSide() {
         GM_setValue('cards', cards);
     }
 
+    const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    /* ── kart çizimi (onaylanan B tasarımı) ── */
+    const FONT = '"Slack-Lato","Lato","Segoe UI",Roboto,Arial,sans-serif';
+    const C = {
+        head: '#525a66', ink: '#343a43',
+        warn: ['#fdecef', '#e01e5a', '#8a1538'],
+        money: ['#eef4fb', '#7fa7d9', '#dde7f3', '#5b6b80', '#26364d', '#6b7a8c'],
+        rest: ['#f2fbf6', '#2eb67d', '#dcefe4', '#2f5f48', '#3d4a44'],
+        neg: '#c0292b', pos: '#147a4b',
+    };
+    const CW = 460, PAD = 14, BAR = 5;
+    function drawCard(g, k) {
+        g.textBaseline = 'alphabetic';
+        const font = (w, px) => `${w} ${px}px ${FONT}`;
+        const txt = (t, x, y, f, color, align = 'left') => { g.font = f; g.fillStyle = color; g.textAlign = align; g.fillText(t, x, y); return g.measureText(t).width; };
+        const fit = (t, f, maxW) => { g.font = f; t = String(t); if (g.measureText(t).width <= maxW) return t; while (t.length > 1 && g.measureText(t + '…').width > maxW) t = t.slice(0, -1); return t + '…'; };
+        const wrap = (t, f, maxW) => {
+            g.font = f; const out = []; let line = '';
+            for (const w of String(t).split(' ')) { const tryL = line ? `${line} ${w}` : w; if (line && g.measureText(tryL).width > maxW) { out.push(line); line = w; } else line = tryL; }
+            if (line) out.push(line); return out;
+        };
+        const band = (y, h, [bg, bar]) => { g.fillStyle = bg; g.fillRect(0, y, CW, h); g.fillStyle = bar; g.fillRect(0, y, BAR, h); };
+        const X = BAR + PAD - 2, IW = CW - X - PAD;
+        let y = 0;
+        // başlık
+        const subL = wrap(k.sub || '', font(500, 12), CW - 2 * PAD);
+        const hH = 14 + 20 + subL.length * 16 + 10;
+        g.fillStyle = C.head; g.fillRect(0, 0, CW, hH);
+        txt(fit(`${k.name} · ${k.pid}`, font(800, 17), CW - 2 * PAD), PAD, 14 + 16, font(800, 17), '#fff');
+        subL.forEach((l, i) => txt(l, PAD, 14 + 20 + 13 + i * 16, font(500, 12), 'rgba(255,255,255,0.86)'));
+        if (k.online) { g.fillStyle = '#2eb67d'; g.beginPath(); g.arc(CW - PAD - 5, 14 + 10, 5, 0, Math.PI * 2); g.fill(); }
+        y = hH;
+        // dikkat
+        if (k.flags?.length) {
+            const L = wrap(`⚠ Dikkat: ${k.flags.join(' · ')}`, font(700, 12), IW);
+            const h = 16 + L.length * 16;
+            band(y, h, C.warn);
+            L.forEach((l, i) => txt(l, X, y + 8 + 12 + i * 16, font(700, 12), C.warn[2]));
+            y += h;
+        }
+        // para: 2×2
+        const cellH = (c) => 10 + 13 + 21 + (c.extra ? 15 : 0) + 8;
+        const rowsH = [Math.max(cellH(k.money[0]), cellH(k.money[1])), Math.max(cellH(k.money[2]), cellH(k.money[3]))];
+        band(y, rowsH[0] + rowsH[1], C.money);
+        const half = (CW - BAR) / 2;
+        k.money.forEach((c, i) => {
+            const cx = BAR + (i % 2) * half, cy = y + (i < 2 ? 0 : rowsH[0]);
+            txt(c.label.toLocaleUpperCase('tr-TR'), cx + PAD - 2, cy + 10 + 10, font(700, 10), C.money[3]);
+            txt(fit(c.main, font(800, 16), half - PAD * 2), cx + PAD - 2, cy + 10 + 13 + 17, font(800, 16), C.money[4]);
+            if (c.extra) txt(fit(c.extra, font(500, 11), half - PAD * 2), cx + PAD - 2, cy + 10 + 13 + 21 + 12, font(500, 11), C.money[5]);
+        });
+        g.fillStyle = C.money[2];
+        g.fillRect(BAR + half, y, 1, rowsH[0] + rowsH[1]);
+        g.fillRect(BAR, y + rowsH[0], CW - BAR, 1);
+        y += rowsH[0] + rowsH[1];
+        g.fillStyle = C.money[2]; g.fillRect(BAR, y - 1, CW - BAR, 1);
+        // yeşil bölüm: finans, oyunlar, bonuslar
+        const sec = [];
+        if (k.fin) sec.push({ type: 'fin' });
+        if (k.games?.length) sec.push({ type: 'games' });
+        if (k.bonuses?.length) sec.push({ type: 'bon' });
+        if (!sec.length) return y;
+        const title = (t, ty) => txt(t.toLocaleUpperCase('tr-TR'), X, ty, font(800, 10.5), C.rest[3]);
+        const cols = [X + IW * 0.50, X + IW * 0.75, X + IW];   // sağa yaslı sütun sonları
+        const parts = [];
+        let h = 8;
+        for (const s of sec) {
+            if (s.type === 'fin') { parts.push({ s, y: h }); h += 16 + 18 + k.fin.length * 19 + 4; }
+            if (s.type === 'games') { parts.push({ s, y: h }); h += 18 + k.games.length * 17 + 6; }
+            if (s.type === 'bon') {
+                const lines = k.bonuses.map(b => wrap(b.text, font(500, 11.5), IW - 74));
+                parts.push({ s, y: h, lines }); h += 18 + lines.reduce((a, l) => a + l.length * 16 + 3, 0) + 4;
+            }
+        }
+        h += 6;
+        band(y, h, C.rest);
+        for (const p of parts) {
+            let py = y + p.y;
+            if (p.s.type === 'fin') {
+                title('Finans (TL)', py + 12);
+                py += 16;
+                ['Yatırım', 'Çekim', 'Net'].forEach((t, i) => txt(t.toLocaleUpperCase('tr-TR'), cols[i], py + 12, font(700, 9.5), C.rest[3], 'right'));
+                py += 18;
+                for (const r of k.fin) {
+                    g.fillStyle = C.rest[2]; g.fillRect(X, py, IW, 1);
+                    txt(r.label, X, py + 14, font(600, 12), C.rest[4]);
+                    txt(r.dep, cols[0], py + 14, font(500, 12), C.rest[4], 'right');
+                    txt(r.wd, cols[1], py + 14, font(500, 12), C.rest[4], 'right');
+                    txt(r.net, cols[2], py + 14, font(800, 12), r.neg ? C.neg : r.pos ? C.pos : C.rest[4], 'right');
+                    py += 19;
+                }
+            } else if (p.s.type === 'games') {
+                title('Son 7 Gün Oyunlar', py + 12);
+                py += 18;
+                for (const gm of k.games) {
+                    txt(fit(gm.name, font(600, 12), gm.detail ? IW * 0.55 : IW), X, py + 12, font(600, 12), C.rest[4]);
+                    if (gm.detail) txt(gm.detail, X + IW, py + 12, font(500, 11.5), gm.neg ? C.neg : C.rest[4], 'right');
+                    py += 17;
+                }
+            } else {
+                title('Son Bonuslar', py + 12);
+                py += 18;
+                k.bonuses.forEach((b, i) => {
+                    const L = p.lines[i];
+                    L.forEach((l, j) => txt(l, X, py + 12 + j * 16, font(500, 11.5), C.rest[4]));
+                    if (b.amount) txt(b.amount, X + IW, py + 12 + (L.length - 1) * 16, font(800, 12), C.rest[4], 'right');
+                    py += L.length * 16 + 3;
+                });
+            }
+        }
+        return y + h;
+    }
+    /** Kartı 2x çözünürlükte PNG olarak çiz (önce boyu ölç, sonra çiz). */
+    function renderCard(k) {
+        const probe = document.createElement('canvas').getContext('2d');
+        const H = Math.ceil(drawCard(probe, k));
+        const S = 2, cv = document.createElement('canvas');
+        cv.width = CW * S; cv.height = H * S;
+        const g = cv.getContext('2d');
+        g.scale(S, S);
+        g.fillStyle = '#fff'; g.fillRect(0, 0, CW, H);
+        drawCard(g, k);
+        return new Promise((res, rej) => cv.toBlob(b => (b ? res(b) : rej(new Error('kart resmi üretilemedi'))), 'image/png'));
+    }
+    function putBytes(url, blob) {
+        return new Promise((resolve, reject) => GM_xmlhttpRequest({
+            method: 'POST', url, data: blob, timeout: 60000, headers: { 'Content-Type': blob.type },
+            onload: (r) => (r.status >= 200 && r.status < 300 ? resolve() : reject(new Error(`yükleme HTTP ${r.status}`))),
+            onerror: () => reject(new Error('yükleme ağ hatası')), ontimeout: () => reject(new Error('yükleme zaman aşımı')),
+        }));
+    }
+    /** Resmi kanala paylaşmadan yükle; mümkünse genel bağlantıyla image bloğu kur (Mesai Panosu ile aynı yol). */
+    async function uploadImage(blob, name, alt) {
+        const up = await api('files.getUploadURLExternal', { filename: name, length: String(blob.size) });
+        await putBytes(up.upload_url, blob);
+        const done = await api('files.completeUploadExternal', { files: JSON.stringify([{ id: up.file_id, title: name }]) });
+        const file = done.files?.[0] || {};
+        try {
+            const r = await api('files.sharedPublicURL', { file: up.file_id }, ['already_public']);
+            const f = r.file || file;
+            const secret = String(f.permalink_public || '').split('-').pop();
+            const url = f.url_private || file.url_private;
+            if (url && secret) return { mode: 'genel bağlantı', block: { type: 'image', image_url: `${url}?pub_secret=${secret}`, alt_text: alt } };
+        } catch (e) { warn('genel bağlantı alınamadı, dosya kimliğiyle gösterilecek:', e.message); }
+        return { mode: 'dosya kimliği', block: { type: 'image', slack_file: { id: up.file_id }, alt_text: alt } };
+    }
+
     async function flush() {
         if (busy) { again = true; return; }
         if (!isLeader()) return;   // birden çok Slack sekmesi açıksa yalnızca lider gönderir (çift cevap olmasın)
@@ -501,29 +608,22 @@ function slackSide() {
                 const v = GM_getValue(k, null);
                 GM_deleteValue(k);
                 if (!v) continue;
-                const useAtt = v.attachments && GM_getValue('attOk', null) !== false;   // ek kutular bir kez reddedildiyse hep düz gönder
-                const body = (ts) => ({ channel: CONFIG.CHANNEL, ...(ts ? { ts } : { thread_ts: v.thread, unfurl_links: 'false' }), text: v.text,
-                    ...(v.blocks ? { blocks: JSON.stringify(useAtt ? v.blocks : (v.flat || v.blocks)) } : {}), attachments: JSON.stringify(useAtt ? v.attachments : []) });
-                /** Slack ek kutuları sessizce düşürdüyse kartı düz haliyle güncelle ve bunu hatırla. */
-                const checkAtt = async (r, ts) => {
-                    if (!useAtt || !r?.ok) return;
-                    const n = r.message?.attachments?.length || 0;
-                    GM_setValue('attDiag', { at: Date.now(), sent: v.attachments.length, got: n });
-                    if (n) { GM_setValue('attOk', true); return; }
-                    warn('Slack ek kutuları kabul etmedi, düz karta geçiliyor');
-                    GM_setValue('attOk', false);
-                    if (v.flat) await api('chat.update', { channel: CONFIG.CHANNEL, ts, text: v.text, blocks: JSON.stringify(v.flat), attachments: '[]' }, ['message_not_found', 'cant_update_message']);
-                };
+                let blocks = null;
+                if (v.card) {
+                    const png = await renderCard(v.card);
+                    const img = await uploadImage(png, `oyuncu-${v.card.pid}.png`, v.text);
+                    GM_setValue('imgMode', img.mode);
+                    blocks = [{ type: 'context', elements: [{ type: 'mrkdwn', text: `👤 *${esc(v.card.name)}* · \`${v.card.pid}\`` }] }, img.block];
+                }
+                const body = { channel: CONFIG.CHANNEL, text: v.text, ...(blocks ? { blocks: JSON.stringify(blocks) } : {}) };
                 if (v.update) {
-                    const r = await api('chat.update', body(v.update), ['message_not_found', 'cant_update_message']);
-                    await checkAtt(r, v.update);
+                    await api('chat.update', { ...body, ts: v.update }, ['message_not_found', 'cant_update_message']);
                     status(`kart yenilendi ${v.text}`);
                 } else {
-                    const r = await api('chat.postMessage', body(null));
-                    await checkAtt(r, r.ts);
-                    if (v.blocks) {
+                    const r = await api('chat.postMessage', { ...body, thread_ts: v.thread, unfurl_links: 'false' });
+                    if (v.card) {
                         const cards = GM_getValue('cards', {});
-                        cards[r.ts] = { pid: (v.text.match(CONFIG.ID_RE) || [])[0], thread: v.thread, at: Date.now(), seen: 0 };
+                        cards[r.ts] = { pid: v.card.pid, thread: v.thread, at: Date.now(), seen: 0 };
                         GM_setValue('cards', cards);
                     }
                     status(`kart gönderildi ${v.text}`);
@@ -534,6 +634,7 @@ function slackSide() {
         finally { busy = false; if (again) setTimeout(flush, 200); }
     }
 
+    if (W.__OK_TEST__) W.__OK_TEST__.renderCard = renderCard;
     GM_addValueChangeListener('ping', () => flush());
     setInterval(flush, 10000);
     setInterval(scan, CONFIG.POLL_SEC * 1000);
@@ -549,14 +650,9 @@ function slackSide() {
         GM_setValue('enabled', on);
         alert(`Oyuncu kartı ${on ? 'AÇIK' : 'KAPALI'}.`);
     });
-    GM_registerMenuCommand('Renkli kutuları yeniden dene', () => {
-        const d = GM_getValue('attDiag', null);
-        GM_deleteValue('attOk');
-        alert(`Son deneme: ${d ? `${d.sent} kutu gönderildi, Slack ${d.got} kutu kaydetti (${new Date(d.at).toLocaleTimeString('tr-TR')})` : 'yok'}\nSonraki kart yine renkli kutularla denenecek.`);
-    });
     GM_registerMenuCommand('Durum', () => {
         const s = GM_getValue('slackStatus', null);
-        alert(`Oyuncu kartı: ${GM_getValue('enabled', true) === false ? 'KAPALI' : 'AÇIK'} · ${everyone() ? 'herkes' : 'sadece ben'}\nSon: ${s ? `${s.msg} (${new Date(s.at).toLocaleTimeString('tr-TR')})` : '—'}\nBekleyen istek: ${GM_listValues().filter(k => k.startsWith('req:')).length}`);
+        alert(`Oyuncu kartı: ${GM_getValue('enabled', true) === false ? 'KAPALI' : 'AÇIK'} · ${everyone() ? 'herkes' : 'sadece ben'}\nSon: ${s ? `${s.msg} (${new Date(s.at).toLocaleTimeString('tr-TR')})` : '—'}\nResim: ${GM_getValue('imgMode', '—')}\nBekleyen istek: ${GM_listValues().filter(k => k.startsWith('req:')).length}`);
     });
 }
 
