@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dekont Aktar — Slack'ten Megapay / Hemen Pay Telegram grubuna
 // @namespace    palentis.dekont-aktar
-// @version      1.1.0
+// @version      1.1.1
 // @description  C0BMBT1A6KX kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesaja oyuncu bilgileriyle (Party ID, ad soyad) ve [Megapay] [Hemen Pay] butonlarıyla cevap verir. Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi açık değilse dekont + bilgiler panoya kopyalanır ve grup açılır. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -316,20 +316,21 @@ function slackSide() {
         try {
             if (!token) await resolveToken();
             let last = GM_getValue('lastTs', null);
-            if (!last) { last = String(Date.now() / 1000); GM_setValue('lastTs', last); return; }   // ilk kurulum: geçmişe cevap yok
+            if (!last) { last = String(Date.now() / 1000); GM_setValue('lastTs', last); tr('izleme başladı (bundan sonraki mesajlar)'); return; }   // ilk kurulum: geçmişe cevap yok
             const r = await api('conversations.history', { channel: CONFIG.CHANNEL, oldest: last, limit: '50' });
             const msgs = (r.messages || []).sort((a, b) => parseFloat(a.ts) - parseFloat(b.ts));
             for (const m of msgs) {
                 last = m.ts;
-                if (m.bot_id || (m.subtype && m.subtype !== 'file_share')) continue;   // insan mesajları (görselli olanlar dahil)
+                const what = `${(m.text || '').slice(0, 40).replace(/\s+/g, ' ')}${m.files?.length ? ` [+${m.files.length} dosya]` : ''}`;
+                if (m.bot_id || (m.subtype && m.subtype !== 'file_share')) { tr(`atlandı (${m.subtype || 'bot'}): ${what}`); continue; }   // insan mesajları (görselli olanlar dahil)
                 const t = trigger(m.text);
-                if (!t) continue;
+                if (!t) { tr(`tetik yok: ${what}`); continue; }
                 const img = (m.files || []).find(f => /^image\//.test(f.mimetype || ''));
                 request(`${m.ts}-${t.value}`, { ...t, thread: m.ts, file: img ? { url: img.url_private_download || img.url_private, name: img.name, type: img.mimetype } : null });
                 log('istek:', t.kind, t.value, 'mesaj', m.ts, img ? '(görselli)' : '(görselsiz)');
             }
             GM_setValue('lastTs', last);
-            status('izleniyor');
+            status(`izleniyor (${msgs.length} yeni mesaj)`);
         } catch (e) { warn('tarama hatası:', e.message); status(`HATA: ${e.message}`); }
         finally { scanning = false; }
     }
