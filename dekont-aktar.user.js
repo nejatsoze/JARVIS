@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dekont Aktar — Slack'ten Megapay / Hemen Pay Telegram grubuna
 // @namespace    palentis.dekont-aktar
-// @version      1.2.2
+// @version      1.2.3
 // @description  C0BMBT1A6KX kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesaja oyuncu bilgileriyle (Party ID, ad soyad) ve [Megapay] [Hemen Pay] butonlarıyla cevap verir. Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -187,7 +187,23 @@ function telegramSide() {
         lines.forEach((l, i) => { if (i) document.execCommand('insertLineBreak') || document.execCommand('insertParagraph'); document.execCommand('insertText', false, l); });
         if (!(el.textContent || '').includes(lines[0])) { el.innerText = text; el.dispatchEvent(new InputEvent('input', { bubbles: true })); }
     }
-    const dataUrlToFile = async (u) => { const b = await (await fetch(u)).blob(); return new File([b], `dekont.${(b.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: b.type }); };
+    /* Firefox + Tampermonkey: script'in kendi dünyasında oluşturulan DataTransfer/File'ı Telegram'ın kodu okuyamaz.
+       Bu yüzden dosya, aktarım nesnesi ve olay sayfanın (Telegram'ın) kendi kurucularıyla oluşturulur. */
+    const PW = (typeof unsafeWindow !== 'undefined' && unsafeWindow) || window;
+    const toPage = (o) => (typeof cloneInto === 'function' ? cloneInto(o, PW, { wrapReflectors: true }) : o);
+    async function pageTransfer(dataUrl) {
+        // data: adresi fetch ile okunmaz (Telegram'ın güvenlik kuralı engelleyebilir): base64 burada çözülür
+        const [head, b64] = String(dataUrl).split(',');
+        const type = head.match(/data:([^;]+)/)?.[1] || 'image/png';
+        const bin = atob(b64), u8 = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+        const ext = (type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+        const file = new PW.File(toPage([u8]), `dekont.${ext}`, toPage({ type }));
+        const dt = new PW.DataTransfer();
+        dt.items.add(file);
+        return dt;
+    }
+    const pageEvent = (Ctor, type, extra) => new PW[Ctor](type, toPage({ bubbles: true, cancelable: true, ...extra }));
     const sendBtn = (root) => [...root.querySelectorAll('button')].find(b => visible(b) && (/btn-primary|btn-send/.test(b.className) || /^(send|gönder)$/i.test((b.textContent || '').trim())));
 
     async function run(job) {
@@ -217,17 +233,20 @@ function telegramSide() {
             if (!input) return done(false, `${job.label} sohbeti açılamadı (mesaj kutusu yok — grup adresi doğru mu?)`);
             await tsleep(400);
             if (job.image) {
-                const file = await dataUrlToFile(job.image);
-                const dt = new DataTransfer(); dt.items.add(file);
+                const dt = await pageTransfer(job.image);
                 input.focus();
-                input.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+                input.dispatchEvent(pageEvent('ClipboardEvent', 'paste', { clipboardData: dt }));
                 let pop = await waitFor(popup, 4000);
                 if (!pop) {   // yapıştırma tutmadıysa sürükle-bırak
+                    tr('telegram: yapıştırma tutmadı, sürükle-bırak deneniyor');
                     const zone = $('.chat.active') || $('.chats-container') || document.body;
-                    for (const type of ['dragenter', 'dragover', 'drop']) zone.dispatchEvent(new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true }));
+                    for (const type of ['dragenter', 'dragover', 'drop']) zone.dispatchEvent(pageEvent('DragEvent', type, { dataTransfer: dt }));
                     pop = await waitFor(popup, 4000);
                 }
-                if (!pop) return done(false, 'görsel gönderme penceresi açılmadı');
+                if (!pop) {
+                    const seen = [...document.querySelectorAll('[class*="popup"]')].filter(visible).map(e => e.className).slice(0, 4).join(' | ');
+                    return done(false, `görsel gönderme penceresi açılmadı${seen ? ` (ekrandaki pencereler: ${seen})` : ''}`);
+                }
                 tr('telegram: görsel penceresi açıldı');
                 const caption = await waitFor(() => [...pop.querySelectorAll('div.input-message-input[contenteditable="true"], .input-field-input[contenteditable="true"]')].find(visible), 3000);
                 if (caption) typeInto(caption, job.text);
