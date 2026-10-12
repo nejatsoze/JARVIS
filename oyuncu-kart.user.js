@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Oyuncu Kartı — Party ID yazılınca Slack thread'ine
 // @namespace    palentis.oyuncu-kart
-// @version      1.3.0
-// @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince ya da mesaj "info ad@mail.com" ise (mail ile arama) o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar, son giriş cihazı. Kart resim olarak çizilir (koyu başlık, kırmızı dikkat bandı, mavi 4 sütun para şeridi, yeşil finans). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
+// @version      1.3.1
+// @description  C0C8HMG3KUH kanalında bir mesajda Party ID (8 hane) geçince ya da mesaj "info ad@mail.com" ise (mail ile arama) o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar, son giriş cihazı. Kart resim olarak çizilir (koyu başlık, kırmızı dikkat bandı, mavi 4 sütun para şeridi, yeşil finans). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
 // @grant        GM_getValue
@@ -34,7 +34,7 @@
 'use strict';
 
 const CONFIG = {
-    CHANNEL: 'C0BMBT1A6KX',
+    CHANNEL: 'C0C8HMG3KUH',
     POLL_SEC: 15,
     REFRESH_REACTION: 'arrows_counterclockwise',
     ID_RE: /(?<![\d])1\d{7}(?![\d])/g,
@@ -471,6 +471,7 @@ function slackSide() {
         lastRefreshCheck = Date.now();
         const cards = GM_getValue('cards', {});
         for (const [ts, c] of Object.entries(cards)) {
+            if (c.ch && c.ch !== CONFIG.CHANNEL) { delete cards[ts]; continue; }   // kanal değiştiyse eski kanalın kartları izlenmez
             if (Date.now() - c.at > 12 * 3600e3) { delete cards[ts]; continue; }
             const r = await api('reactions.get', { channel: CONFIG.CHANNEL, timestamp: ts, full: 'true' }, ['message_not_found']);
             const n = (r.message?.reactions || []).find(x => x.name === CONFIG.REFRESH_REACTION)?.count || 0;
@@ -700,7 +701,7 @@ function slackSide() {
                         delete cards[v.update];
                         if (old.file) await api('files.delete', { file: old.file }, ['file_not_found', 'file_deleted', 'cant_delete_file']).catch(e => warn('eski kart silinemedi:', e.message));
                     }
-                    if (sh.ts) cards[sh.ts] = { pid: v.card.pid, thread: v.thread, file: sh.file, at: Date.now(), seen: 0 };
+                    if (sh.ts) cards[sh.ts] = { ch: CONFIG.CHANNEL, pid: v.card.pid, thread: v.thread, file: sh.file, at: Date.now(), seen: 0 };
                     GM_setValue('cards', cards);
                     GM_setValue('imgMode', sh.ts ? 'thread dosyası' : 'thread dosyası (mesaj zamanı alınamadı, 🔄 çalışmaz)');
                     status(`kart ${v.update ? 'yenilendi' : 'gönderildi'} ${v.text}`);
