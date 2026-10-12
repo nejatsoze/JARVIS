@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LiveChat — Canlı Chat İzleme Paneli
 // @namespace    livechat-canli-izleme
-// @version      2.1.0
+// @version      2.2.1
 // @description  O an yürüyen tüm chatleri duruma göre gruplayan, sürüklenip boyutlandırılabilen bir panelde listeler; konuşmayı canlı okursun, üyenin IP/konum/cihaz/site bilgilerini görürsün, tek tıkla supervise edersin.
 // @author       —
 // @match        https://my.livechatinc.com/*
@@ -19,7 +19,7 @@
   // ============================================================
   // 0. SABİTLER
   // ============================================================
-  const VERSION = '2.1.0';
+  const VERSION = '2.2.1';
   const API = 'https://api.livechatinc.com/v3.5/agent/action/';
   const LIST_INTERVAL = 5000;     // aktif chat listesi yenileme (ms)
   const CHAT_INTERVAL = 3000;     // açık konuşma yenileme (ms)
