@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Dekont Aktar — Slack'ten Megapay / Hemen Pay Telegram grubuna
 // @namespace    palentis.dekont-aktar
-// @version      1.1.1
-// @description  C0BMBT1A6KX kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesaja oyuncu bilgileriyle (Party ID, ad soyad) ve [Megapay] [Hemen Pay] butonlarıyla cevap verir. Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi açık değilse dekont + bilgiler panoya kopyalanır ve grup açılır. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
+// @version      1.2.0
+// @description  C0BMBT1A6KX kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesaja oyuncu bilgileriyle (Party ID, ad soyad) ve [Megapay] [Hemen Pay] butonlarıyla cevap verir. Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
 // @match        https://web.telegram.org/*
@@ -29,7 +29,7 @@
  *   Slack sekmesi mesaja cevap verir: Oyuncu Bilgileri + [Megapay] [Hemen Pay] (bağlantı butonları).
  *   Butona basılınca (Slack sayfasında yakalanır): görsel + bilgiler 'tgJob' olarak GM deposuna yazılır;
  *   açık Telegram Web (K) sekmesi işi alır, gruba geçer, görseli yapıştırır, açıklamaya bilgileri yazar ve
- *   gönderir; sonucu 'tgResult' ile bildirir. Telegram sekmesi yoksa: panoya kopyala + grubu aç.
+ *   gönderir; sonucu 'tgResult' ile bildirir. Telegram sekmesi 'tgPing'e cevap vermezse: bilgiler panoya + uyarı.
  */
 
 (() => {
@@ -159,11 +159,18 @@ function telegramSide() {
     const ME = Math.random().toString(36).slice(2);
     const $ = (sel, root = document) => root.querySelector(sel);
     const visible = (el) => !!el && el.getClientRects().length > 0;
-    const waitFor = async (fn, ms = 8000, step = 150) => { const end = Date.now() + ms; for (;;) { const v = fn(); if (v) return v; if (Date.now() > end) return null; await sleep(step); } };
+    const waitFor = async (fn, ms = 8000, step = 150) => { const end = Date.now() + ms; for (;;) { const v = fn(); if (v) return v; if (Date.now() > end) return null; await tsleep(step); } };
     const hashOf = (job) => GM_getValue(`tgHash_${job.target}`, null) || job.hash;
-    // Slack'e "açığım" sinyali
-    const beat = () => GM_setValue('tgAlive', { owner: ME, at: Date.now(), k: location.pathname.startsWith('/k') });
-    beat(); setInterval(beat, 5000);
+    // Arka plandaki sekmede setTimeout dakikada bire düşebilir: bekleme Worker saatiyle (yavaşlatılmaz), olmazsa setTimeout
+    let worker = null, wseq = 0; const wwait = new Map();
+    try {
+        worker = new Worker(URL.createObjectURL(new Blob(['onmessage=e=>setTimeout(()=>postMessage(e.data.id),e.data.ms)'], { type: 'text/javascript' })));
+        worker.onmessage = (e) => { const r = wwait.get(e.data); if (r) { wwait.delete(e.data); r(); } };
+    } catch { worker = null; }
+    const tsleep = (ms) => worker ? new Promise(r => { const id = ++wseq; wwait.set(id, r); worker.postMessage({ id, ms }); }) : sleep(ms);
+    // Slack'in "orada mısın?" sorusuna cevap (olay tabanlı, zamanlayıcıya bağlı değil)
+    GM_addValueChangeListener('tgPing', (k, o, v) => { if (v?.id) GM_setValue('tgPong', { id: v.id, owner: ME, k: location.pathname.startsWith('/k'), at: Date.now() }); });
+    GM_setValue('tgAlive', { owner: ME, at: Date.now(), k: location.pathname.startsWith('/k') });
 
     const mainInput = () => [...document.querySelectorAll('.chat-input div.input-message-input[contenteditable="true"]')].find(visible);
     const popup = () => [...document.querySelectorAll('.popup-new-media, .popup-send-photo, .popup-new-media.active')].find(visible);
@@ -181,16 +188,16 @@ function telegramSide() {
         // birden çok Telegram sekmesi varsa biri alır
         const claimKey = `tgClaim_${job.id}`;
         if (GM_getValue(claimKey, null)) return;
-        GM_setValue(claimKey, ME); await sleep(250);
+        GM_setValue(claimKey, ME); await tsleep(250);
         if (GM_getValue(claimKey, null) !== ME) return;
         const done = (ok, msg) => { GM_setValue('tgResult', { id: job.id, ok, msg: msg || '', at: Date.now() }); GM_deleteValue(claimKey); tr(`telegram ${job.label}: ${ok ? 'gönderildi' : 'HATA ' + msg}`); };
         try {
             if (!location.pathname.startsWith('/k')) return done(false, 'Telegram sekmesi Web K değil (adres web.telegram.org/k/ olmalı)');
             const hash = hashOf(job);
-            if (location.hash !== hash) { location.hash = hash; await sleep(1800); }
+            if (location.hash !== hash) { location.hash = hash; await tsleep(1800); }
             const input = await waitFor(mainInput, 10000);
             if (!input) return done(false, `${job.label} sohbeti açılamadı (mesaj kutusu yok — grup adresi doğru mu?)`);
-            await sleep(400);
+            await tsleep(400);
             if (job.image) {
                 const file = await dataUrlToFile(job.image);
                 const dt = new DataTransfer(); dt.items.add(file);
@@ -205,7 +212,7 @@ function telegramSide() {
                 if (!pop) return done(false, 'görsel gönderme penceresi açılmadı');
                 const caption = await waitFor(() => [...pop.querySelectorAll('div.input-message-input[contenteditable="true"], .input-field-input[contenteditable="true"]')].find(visible), 3000);
                 if (caption) typeInto(caption, job.text);
-                await sleep(300);
+                await tsleep(300);
                 const btn = sendBtn(pop);
                 if (!btn) return done(false, 'gönder düğmesi bulunamadı');
                 btn.click();
@@ -213,14 +220,14 @@ function telegramSide() {
                 if (!gone) return done(false, 'gönderim onaylanmadı (pencere kapanmadı)');
                 if (!caption) {   // açıklama alanı yoksa bilgileri ayrı mesaj olarak gönder
                     const inp = await waitFor(mainInput, 3000);
-                    if (inp) { typeInto(inp, job.text); await sleep(200); const b = $('.chat-input .btn-send'); b ? b.click() : inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true })); }
+                    if (inp) { typeInto(inp, job.text); await tsleep(200); const b = $('.chat-input .btn-send'); b ? b.click() : inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true })); }
                 }
             } else {
                 typeInto(input, job.text);
-                await sleep(250);
+                await tsleep(250);
                 const b = $('.chat-input .btn-send');
                 if (b) b.click(); else input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
-                await sleep(600);
+                await tsleep(600);
             }
             done(true);
         } catch (e) { done(false, e.message); }
@@ -336,7 +343,7 @@ function slackSide() {
     }
 
     /* ── cevap ── */
-    const infoText = (v) => `Oyuncu Bilgileri:\n• ${v.pid} (PartyID)\n• Ad Soyad : ${v.name}`;
+    const infoText = (v) => `Oyuncu Bilgileri:\n• ${v.pid}\n• Ad Soyad : ${v.name}`;
     async function flush() {
         if (busy) { again = true; return; }
         if (!isLeader()) return;
@@ -352,7 +359,7 @@ function slackSide() {
                     continue;
                 }
                 const blocks = [
-                    { type: 'section', text: { type: 'mrkdwn', text: `*Oyuncu Bilgileri:*\n• \`${v.pid}\` (PartyID)\n• Ad Soyad : ${esc(v.name)}` } },
+                    { type: 'section', text: { type: 'mrkdwn', text: `*Oyuncu Bilgileri:*\n• \`${v.pid}\`\n• Ad Soyad : ${esc(v.name)}` } },
                     { type: 'actions', elements: CONFIG.TARGETS.map(t => ({ type: 'button', action_id: `dk_${t.id}`, text: { type: 'plain_text', text: t.label }, url: t.url })) },
                 ];
                 const r = await api('chat.postMessage', { channel: CONFIG.CHANNEL, thread_ts: v.thread, text: infoText(v), blocks: JSON.stringify(blocks), unfurl_links: 'false' });
@@ -376,44 +383,7 @@ function slackSide() {
             onerror: () => reject(new Error('görsel indirilemedi')), ontimeout: () => reject(new Error('görsel zaman aşımı')),
         }));
     }
-    /** Pano yalnızca PNG kabul eder: JPEG vb. dekontu PNG'ye çevir. */
-    async function toPng(blob) {
-        if (blob.type === 'image/png') return blob;
-        const bmp = await createImageBitmap(blob);
-        const cv = document.createElement('canvas');
-        cv.width = bmp.width; cv.height = bmp.height;
-        cv.getContext('2d').drawImage(bmp, 0, 0);
-        return new Promise((res, rej) => cv.toBlob(b => (b ? res(b) : rej(new Error('png üretilemedi'))), 'image/png'));
-    }
-    const pngCache = new Map();   // görsel adresi → Promise<Blob>
-    function pngFor(entry) {
-        const url = entry?.file?.url;
-        if (!url) return null;
-        if (!pngCache.has(url)) pngCache.set(url, fetchBlob(url).then(toPng).catch(e => { pngCache.delete(url); throw e; }));
-        return pngCache.get(url);
-    }
     const blobToDataUrl = (b) => new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(b); });
-
-    async function copyAndOpen(entry, target) {
-        const text = infoText(entry);
-        const items = { 'text/plain': new Blob([text], { type: 'text/plain' }) };
-        const png = pngFor(entry);
-        if (png) {
-            items['image/png'] = png;
-            items['text/html'] = png.then(blobToDataUrl).then(u => new Blob([`<img src="${u}"><br>${esc(text).replace(/\n/g, '<br>')}`], { type: 'text/html' }));
-        }
-        let ok = true;
-        try {
-            await navigator.clipboard.write([new ClipboardItem(items)]);
-        } catch (e) {
-            ok = false;
-            warn('pano (görselli) yazılamadı:', e.message);
-            try { await navigator.clipboard.writeText(text); } catch { /* yok say */ }
-        }
-        tr(`${target.label}: ${ok ? (png ? 'görsel + bilgi kopyalandı' : 'bilgi kopyalandı (görsel yok)') : 'yalnızca bilgi kopyalandı'} · ${entry.pid}`);
-        toast(ok ? `${png ? 'Dekont ve oyuncu bilgileri' : 'Oyuncu bilgileri'} kopyalandı → ${target.label} açılıyor, yapıştırın (Ctrl+V)` : 'Görsel kopyalanamadı, sadece bilgiler kopyalandı', ok);
-        W.open(target.url, `palentis-telegram-${target.id}`);
-    }
 
     function toast(msg, ok = true) {
         const d = document.createElement('div');
@@ -424,7 +394,7 @@ function slackSide() {
         setTimeout(() => d.remove(), 4500);
     }
 
-    /** Slack'teki bağlantı butonu: hangi hedef, hangi oyuncu? (oyuncu, butonun mesajındaki "(PartyID)" satırından) */
+    /** Slack'teki bağlantı butonu: hangi hedef, hangi oyuncu? (oyuncu, butonun mesajındaki "Oyuncu Bilgileri" altındaki ilk numara) */
     function locate(el) {
         const btn = el.closest('a, button');
         if (!btn) return null;
@@ -433,8 +403,8 @@ function slackSide() {
         const target = CONFIG.TARGETS.find(t => label === t.label || (href && href.includes(t.url)));
         if (!target) return null;
         let box = btn;
-        for (let i = 0; i < 12 && box && !/\(PartyID\)/.test(box.textContent || ''); i++) box = box.parentElement;
-        const pid = (box?.textContent || '').match(/(\d{6,})\s*\(PartyID\)/)?.[1];
+        for (let i = 0; i < 12 && box && !/Oyuncu Bilgileri/.test(box.textContent || ''); i++) box = box.parentElement;
+        const pid = (box?.textContent || '').match(/Oyuncu Bilgileri:?[\s\S]*?(\d{6,})/)?.[1];
         if (!pid) return null;
         const map = GM_getValue('replies', {});
         // önce Slack'in mesaj kutusundaki zaman damgası (aynı oyuncunun birden çok dekontu olabilir), yoksa o oyuncunun en son cevabı
@@ -443,16 +413,28 @@ function slackSide() {
         const entry = (ts && map[ts]) || Object.values(map).filter(e => e.pid === pid).sort((a, b) => b.at - a.at)[0];
         return entry ? { target, entry } : null;
     }
-    // görseli butona gelince önceden hazırla (tıklamada pano izni kaybolmasın)
-    document.addEventListener('pointerover', (e) => { const l = locate(e.target); if (l) pngFor(l.entry)?.catch(() => {}); }, true);
     document.addEventListener('click', (e) => {
         const l = locate(e.target);
         if (!l) return;
         e.preventDefault(); e.stopImmediatePropagation();
-        const alive = GM_getValue('tgAlive', null);
-        if (alive && Date.now() - alive.at < 20000) sendViaTelegram(l.entry, l.target);   // Telegram sekmesi açık: tek tık gönderim
-        else copyAndOpen(l.entry, l.target);                                              // değilse: panoya kopyala + grubu aç
+        // Telegram sekmesine "orada mısın?" (arka plandaki sekmede zamanlayıcılar yavaşladığı için kalp atışına değil cevaba bakılır)
+        const id = Math.random().toString(36).slice(2);
+        let answered = false;
+        const lid = GM_addValueChangeListener('tgPong', (k, o, v) => { if (v?.id === id) answered = true; });
+        GM_setValue('tgPing', { id, at: Date.now() });
+        const t0 = Date.now();
+        (async () => {
+            while (!answered && Date.now() - t0 < 2500) await sleep(100);
+            GM_removeValueChangeListener?.(lid);
+            if (answered) sendViaTelegram(l.entry, l.target);    // tek tık gönderim
+            else copyFallback(l.entry, l.target);                // Telegram sekmesi cevap vermedi
+        })();
     }, true);
+    async function copyFallback(entry, target) {
+        tr(`${target.label}: Telegram sekmesi cevap vermedi, panoya kopyalandı · ${entry.pid}`);
+        try { await navigator.clipboard.writeText(infoText(entry)); } catch { /* yok say */ }
+        toast(`Telegram sekmesi cevap vermedi. Telegram Web sekmesini F5 ile yenileyip tekrar basın. (Bilgiler panoya kopyalandı.)`, false);
+    }
 
     /** Telegram sekmesine iş bırak, sonucu bekle. */
     const sending = new Set();
@@ -482,7 +464,7 @@ function slackSide() {
     setInterval(flush, 10000);
     setInterval(scan, CONFIG.POLL_SEC * 1000);
     setTimeout(scan, 3000);
-    if (W.__DK_TEST__) Object.assign(W.__DK_TEST__, { trigger, locate, copyAndOpen, toPng });
+    if (W.__DK_TEST__) Object.assign(W.__DK_TEST__, { trigger, locate });
 
     GM_registerMenuCommand('Dekont Aktar aç / kapat', () => {
         const on = GM_getValue('enabled', true) === false;
@@ -491,7 +473,7 @@ function slackSide() {
     });
     GM_registerMenuCommand('Durum', () => {
         const s = GM_getValue('slackStatus', null);
-        alert(`Dekont Aktar: ${GM_getValue('enabled', true) === false ? 'KAPALI' : 'AÇIK'} · kanal ${CONFIG.CHANNEL}\nSon: ${s ? `${s.msg} (${new Date(s.at).toLocaleTimeString('tr-TR')})` : '—'}\nKullanıcı adı arama alanı: ${GM_getValue('userField', '— (ilk aramada bulunur)')}\nSürüm: ${GM_info?.script?.version || '?'}\n\nSon adımlar:\n${GM_getValue('trace', []).join('\n') || '—'}`);
+        alert(`Dekont Aktar: ${GM_getValue('enabled', true) === false ? 'KAPALI' : 'AÇIK'} · kanal ${CONFIG.CHANNEL}\nSon: ${s ? `${s.msg} (${new Date(s.at).toLocaleTimeString('tr-TR')})` : '—'}\nTelegram sekmesi: ${(() => { const a = GM_getValue('tgPong', null) || GM_getValue('tgAlive', null); return a ? `son görülme ${new Date(a.at).toLocaleTimeString('tr-TR')}${a.k === false ? ' (Web K DEĞİL)' : ''}` : 'hiç görülmedi'; })()}\nKullanıcı adı arama alanı: ${GM_getValue('userField', '— (ilk aramada bulunur)')}\nSürüm: ${GM_info?.script?.version || '?'}\n\nSon adımlar:\n${GM_getValue('trace', []).join('\n') || '—'}`);
     });
 }
 
