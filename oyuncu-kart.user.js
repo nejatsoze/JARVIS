@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Oyuncu Kartı — Party ID yazılınca Slack thread'ine
 // @namespace    palentis.oyuncu-kart
-// @version      1.2.3
+// @version      1.2.4
 // @description  C0BMBT1A6KX kanalında bir mesajda Party ID (8 hane) geçince o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar, son giriş cihazı. Kart resim olarak çizilir (koyu başlık, kırmızı dikkat bandı, mavi 4 sütun para şeridi, yeşil finans). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -469,6 +469,31 @@ function slackSide() {
         line: '#edf0f3', foot: '#f8f9fb', footInk: '#9aa3ae',
     };
     const CW = 520, PX = 20;
+    /** VIP seviye sembolü (vektör, emoji fontuna bağlı değil): madalya / platin altıgen / elmas. */
+    function vipIcon(g, cx, cy, name) {
+        const n = String(name).toLowerCase();
+        const tone = /bronz/.test(n) ? ['#e0a36b', '#a8642e'] : /silver|gümüş/.test(n) ? ['#e9edf2', '#a3adb9'] : /gold|altın/.test(n) ? ['#ffd866', '#d19a12']
+            : /platin/.test(n) ? ['#d9f1fb', '#7fb8cf'] : /diamond|elmas/.test(n) ? ['#9ee7ff', '#3aa7d6'] : ['#d5d9df', '#8a94a1'];
+        g.save();
+        const grad = g.createLinearGradient(cx - 7, cy - 7, cx + 7, cy + 7); grad.addColorStop(0, tone[0]); grad.addColorStop(1, tone[1]);
+        g.fillStyle = grad; g.strokeStyle = 'rgba(255,255,255,0.55)'; g.lineWidth = 1;
+        g.beginPath();
+        if (/diamond|elmas/.test(n)) {   // elmas: üst taç + sivri alt
+            g.moveTo(cx - 7, cy - 2.5); g.lineTo(cx - 3.5, cy - 6.5); g.lineTo(cx + 3.5, cy - 6.5); g.lineTo(cx + 7, cy - 2.5); g.lineTo(cx, cy + 7); g.closePath();
+            g.fill(); g.stroke();
+            g.beginPath(); g.moveTo(cx - 7, cy - 2.5); g.lineTo(cx + 7, cy - 2.5); g.moveTo(cx - 2, cy - 2.5); g.lineTo(cx, cy + 7); g.lineTo(cx + 2, cy - 2.5); g.stroke();
+        } else if (/platin/.test(n)) {   // platin: altıgen
+            for (let i = 0; i < 6; i++) { const a = Math.PI / 6 + i * Math.PI / 3; g[i ? 'lineTo' : 'moveTo'](cx + 7 * Math.cos(a), cy + 7 * Math.sin(a)); }
+            g.closePath(); g.fill(); g.stroke();
+            g.beginPath(); g.arc(cx, cy, 2.6, 0, Math.PI * 2); g.fillStyle = 'rgba(255,255,255,0.75)'; g.fill();
+        } else {   // bronz / gümüş / altın: yıldızlı madalya
+            g.arc(cx, cy, 7, 0, Math.PI * 2); g.fill(); g.stroke();
+            g.beginPath();
+            for (let i = 0; i < 10; i++) { const r = i % 2 ? 1.6 : 3.8, a = -Math.PI / 2 + i * Math.PI / 5; g[i ? 'lineTo' : 'moveTo'](cx + r * Math.cos(a), cy + r * Math.sin(a)); }
+            g.closePath(); g.fillStyle = 'rgba(255,255,255,0.85)'; g.fill();
+        }
+        g.restore();
+    }
     function drawCard(g, k) {
         g.textBaseline = 'alphabetic';
         const F = (w, px) => `${w} ${px}px ${FONT}`;
@@ -505,9 +530,11 @@ function slackSide() {
         if (metaH) {
             let mx = PX; const my = 18 + 24 + 10;
             for (const m of k.meta) {
-                const vw = W_(m.v, F(900, 14)), lw = W_(UP(m.k), F(700, 10.5));
+                const ic = m.k === 'VIP' ? 20 : 0;   // VIP değerinin önünde seviye sembolü
+                const vw = W_(m.v, F(900, 14)) + ic, lw = W_(UP(m.k), F(700, 10.5));
                 txt(UP(m.k), mx, my + 11, F(700, 10.5), 'rgba(255,255,255,0.62)');
-                txt(m.v, mx, my + 30, F(900, 14), m.tone === 'ok' ? C.ok : m.tone === 'bad' ? C.bad : '#fff');
+                if (ic) vipIcon(g, mx + 7, my + 25, m.v);
+                txt(m.v, mx + ic, my + 30, F(900, 14), m.tone === 'ok' ? C.ok : m.tone === 'bad' ? C.bad : '#fff');
                 mx += Math.max(vw, lw) + 26;
             }
         }
