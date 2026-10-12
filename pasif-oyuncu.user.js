@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pasif Oyuncular — 7 gündür oynamayanlar
 // @namespace    palentis.pasif-oyuncu
-// @version      1.1.0
+// @version      1.1.1
 // @description  Her sabah TR 10:00'da, bir önceki günün sonunda 7. oynamadığı günü dolduran oyuncuları (son oyunu 8 gün önceki TR gününde olanlar) Slack kanalına raporlar: ana mesajda sayı, thread'de tablo resimleri (60'ar satır) ve Excel dosyası. Herhangi bir GT sekmesinin açık olması yeterli.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -38,7 +38,7 @@
 'use strict';
 
 const CONFIG = {
-    CHANNEL: 'C0C80H6L4CD',
+    CHANNEL: 'C0C8HMG3KUH',
     HOUR_TR: 10,
     GRACE_MIN: 180,
     DAYS: 7,
