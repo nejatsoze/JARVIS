@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dekont Aktar — Slack'ten Megapay / Hemen Pay Telegram grubuna
 // @namespace    palentis.dekont-aktar
-// @version      1.2.3
+// @version      1.2.4
 // @description  C0BMBT1A6KX kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesaja oyuncu bilgileriyle (Party ID, ad soyad) ve [Megapay] [Hemen Pay] butonlarıyla cevap verir. Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -203,7 +203,28 @@ function telegramSide() {
         dt.items.add(file);
         return dt;
     }
-    const pageEvent = (Ctor, type, extra) => new PW[Ctor](type, toPage({ bubbles: true, cancelable: true, ...extra }));
+    /** Sayfa olayı + dosya taşıyıcısı olaya sonradan özellik olarak eklenir (Firefox, kurucuya verilen dosyaları siler). */
+    function pageEvent(Ctor, type, prop, dt) {
+        const ev = new (PW[Ctor] || PW.Event)(type, toPage({ bubbles: true, cancelable: true }));
+        try { PW.Object.defineProperty(ev.wrappedJSObject || ev, prop, toPage({ value: dt, configurable: true })); } catch (e) { warn('olay özelliği eklenemedi:', e.message); }
+        return ev;
+    }
+    /** Telegram'ın sürükle-bırak yolu: gövdeye dragenter/dragover → Telegram bırakma kutusunu açar → dosya o kutuya bırakılır. */
+    async function dropFiles(dt) {
+        const body = document.body;
+        body.dispatchEvent(pageEvent('DragEvent', 'dragenter', 'dataTransfer', dt));
+        let zone = null;
+        for (let i = 0; i < 20 && !zone; i++) {
+            body.dispatchEvent(pageEvent('DragEvent', 'dragover', 'dataTransfer', dt));   // 500 ms'de bir yenilenmezse kutu kapanır
+            await tsleep(150);
+            const drops = [...document.querySelectorAll('.drops-container .drop')];
+            zone = drops[drops.length - 1] || null;   // son kutu: "hızlı gönder" (medya)
+        }
+        if (!zone) return false;
+        zone.dispatchEvent(pageEvent('DragEvent', 'dragover', 'dataTransfer', dt));
+        zone.dispatchEvent(pageEvent('DragEvent', 'drop', 'dataTransfer', dt));
+        return true;
+    }
     const sendBtn = (root) => [...root.querySelectorAll('button')].find(b => visible(b) && (/btn-primary|btn-send/.test(b.className) || /^(send|gönder)$/i.test((b.textContent || '').trim())));
 
     async function run(job) {
@@ -235,13 +256,13 @@ function telegramSide() {
             if (job.image) {
                 const dt = await pageTransfer(job.image);
                 input.focus();
-                input.dispatchEvent(pageEvent('ClipboardEvent', 'paste', { clipboardData: dt }));
+                input.dispatchEvent(pageEvent('ClipboardEvent', 'paste', 'clipboardData', dt));
                 let pop = await waitFor(popup, 4000);
                 if (!pop) {   // yapıştırma tutmadıysa sürükle-bırak
                     tr('telegram: yapıştırma tutmadı, sürükle-bırak deneniyor');
-                    const zone = $('.chat.active') || $('.chats-container') || document.body;
-                    for (const type of ['dragenter', 'dragover', 'drop']) zone.dispatchEvent(pageEvent('DragEvent', type, { dataTransfer: dt }));
-                    pop = await waitFor(popup, 4000);
+                    const dropped = await dropFiles(dt);
+                    if (!dropped) tr('telegram: bırakma kutusu açılmadı');
+                    pop = await waitFor(popup, 5000);
                 }
                 if (!pop) {
                     const seen = [...document.querySelectorAll('[class*="popup"]')].filter(visible).map(e => e.className).slice(0, 4).join(' | ');
