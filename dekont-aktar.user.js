@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dekont Aktar — Slack'ten Megapay / Hemen Pay Telegram grubuna
 // @namespace    palentis.dekont-aktar
-// @version      1.2.6
+// @version      1.2.7
 // @description  C0BMBT1A6KX kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesaja oyuncu bilgileriyle (Party ID, ad soyad) ve [Megapay] [Hemen Pay] butonlarıyla cevap verir. Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -238,17 +238,26 @@ function telegramSide() {
         const done = (ok, msg) => { GM_setValue('tgResult', { id: job.id, ok, msg: msg || '', at: Date.now() }); GM_deleteValue(claimKey); tr(`telegram ${job.label}: ${ok ? 'gönderildi' : 'HATA ' + msg}`); };
         try {
             if (!location.pathname.startsWith('/k')) return done(false, 'Telegram sekmesi Web K değil (adres web.telegram.org/k/ olmalı)');
-            const hash = hashOf(job);
+            const base = hashOf(job).split('?')[0];
+            // alt konulu grup: Telegram Web K konuyu adresle açar (#-ID?thread=N)
+            const hash = job.topic ? `${base}?thread=${job.topic.id}` : base;
             if (location.hash !== hash) { location.hash = hash; await tsleep(1800); }
             tr(`telegram: sohbet ${hash} açıldı`);
-            if (job.topic) {   // alt konulu grup: konuyu listeden seç (önce numarayla, olmazsa adıyla)
-                const peer = hash.replace(/^#/, '');
-                const row = await waitFor(() => document.querySelector(`[data-peer-id="${peer}"][data-thread-id="${job.topic.id}"]`)
-                    || [...document.querySelectorAll('.chatlist-chat, a[data-peer-id], li[data-peer-id]')].find(el => visible(el) && (el.querySelector('.peer-title, .dialog-title, .user-title')?.textContent || el.textContent || '').trim().toLowerCase().startsWith(job.topic.name.toLowerCase())), 8000);
-                if (!row) return done(false, `"${job.topic.name}" konusu listede bulunamadı`);
-                tr(`telegram: konu seçildi (${(row.textContent || '').trim().slice(0, 30)})`);
-                for (const type of ['mousedown', 'mouseup', 'click']) row.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
-                await tsleep(1500);
+            if (job.topic) {   // doğru konu mu? Üst başlıkta konunun adı görünmeli; değilse listeden seçmeyi dene
+                const name = job.topic.name.toLowerCase();
+                const inTopic = () => [...document.querySelectorAll('.topbar .peer-title, .chat.active .peer-title')].some(el => visible(el) && (el.textContent || '').trim().toLowerCase().startsWith(name));
+                let ok = await waitFor(inTopic, 6000);
+                if (!ok) {
+                    const peer = base.replace(/^#/, '');
+                    const row = [...document.querySelectorAll(`[data-peer-id="${peer}"][data-thread-id="${job.topic.id}"]`)].find(visible)
+                        || [...document.querySelectorAll('.chatlist-chat, li[data-peer-id]')].find(el => visible(el) && (el.querySelector('.peer-title')?.textContent || '').trim().toLowerCase().startsWith(name));
+                    if (row) {
+                        for (const type of ['mousedown', 'mouseup', 'click']) row.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
+                        ok = await waitFor(inTopic, 5000);
+                    }
+                }
+                if (!ok) return done(false, `"${job.topic.name}" konusu açılamadı (yanlış yere gitmesin diye gönderilmedi)`);
+                tr(`telegram: konu açık (${job.topic.name})`);
             }
             const input = await waitFor(mainInput, 10000);
             if (!input) return done(false, `${job.label} sohbeti açılamadı (mesaj kutusu yok — grup adresi doğru mu?)`);
