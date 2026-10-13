@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.4.1
+// @version      1.4.2
 // @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. Tampermonkey menüsünden Açık / Kapalı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -67,6 +67,12 @@ const log = (...a) => console.log(TAG, ...a);
 const warn = (...a) => console.warn(TAG, ...a);
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+const VER = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '?';
+const newer = (a, b) => { const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
+// Güncellemeden sonra yenilenmemiş eski sekmeler çalışmasın: en yeni sürüm kendini kaydeder
+if (newer(VER, GM_getValue('ver', '0'))) GM_setValue('ver', VER);
+const stale = () => newer(GM_getValue('ver', '0'), VER);
+
 const MODES = { off: 'Kapalı', live: 'Açık' };
 const mode = () => GM_getValue('mode', 'live') === 'off' ? 'off' : 'live';   // deneme modu kaldırıldı: eski 'dry' kaydı = Açık
 
@@ -80,7 +86,8 @@ GM_registerMenuCommand('Durum', () => {
     // Deneme bonusu var ama kazanç bonusu iptal edilebilir durumda değil (panelde Cancel çıkmıyor, ör. Spent)
     const spent = rows.filter(([, v]) => v.spent).slice(0, 15).map(([id, v]) => `${v.party} (işlem ${id}): ${v.spent}`).join('\n');
     const s = GM_getValue('slackStatus', null);
-    alert(`Mod: ${MODES[mode()]}\nSlack: ${s ? s.msg : 'hiç bağlanmadı'}\n\nSon kayıtlar:\n${last || '—'}\n\nİptal edilemeyen (Spent vb.) — party ID:\n${spent || '—'}`);
+    const drop = GM_getValue('dropped', []).slice(-5).map(d => `${d.party || '?'} (${new Date(d.at).toLocaleTimeString('tr-TR')})`).join(', ');
+    alert(`Sürüm: ${VER}${stale() ? ' — ESKİ SEKME, F5 ile yenileyin!' : ''}\nMod: ${MODES[mode()]}\nSlack: ${s ? s.msg : 'hiç bağlanmadı'}\n\nSon kayıtlar:\n${last || '—'}\n\nİptal edilemeyen (Spent vb.) — party ID:\n${spent || '—'}${drop ? `\n\nEski sekmeden gelip gönderilmeyen mesajlar (party):\n${drop}` : ''}`);
 });
 
 if (location.hostname === 'app.slack.com') slackSide();
@@ -286,7 +293,7 @@ ${body}
 
     /* ── Slack ── */
     function enqueue(key, text) {
-        GM_setValue('q:' + key, { text, at: Date.now() });
+        GM_setValue('q:' + key, { text, at: Date.now(), v: VER });
         GM_setValue('ping', Date.now());
     }
 
@@ -384,7 +391,7 @@ ${body}
 
     let busy = false;
     async function tick() {
-        if (busy || mode() === 'off') return;
+        if (busy || mode() === 'off' || stale()) return;   // eski sürüm sekmesi: hiçbir şey yapma
         // Birden fazla GT sekmesi: tek lider çalışsın
         const lead = GM_getValue('leader', null);
         if (lead && lead.owner !== ME && Date.now() - lead.at < 3 * CONFIG.POLL_SEC * 1000) return;
@@ -517,6 +524,15 @@ function slackSide() {
             const items = keys.map(k => [k, GM_getValue(k, null)]).filter(([, v]) => v).sort((a, b) => a[1].at - b[1].at);
             for (const [k, v] of items) {
                 if (Date.now() - v.at > 24 * 3600e3) { GM_deleteValue(k); continue; }
+                // Sürüm damgası yok = güncellenmemiş eski GT sekmesinden eski biçimde mesaj: gönderme, Durum'a yaz
+                if (!v.v) {
+                    const d = GM_getValue('dropped', []);
+                    d.push({ party: (String(v.text).match(/ID:\*?\s*(\d+)/) || [])[1], at: Date.now() });
+                    GM_setValue('dropped', d.slice(-20));
+                    GM_deleteValue(k);
+                    status('UYARI: eski sürüm GT sekmesi açık — tüm GT sekmelerini F5 ile yenileyin');
+                    continue;
+                }
                 GM_setValue('slackLock', { owner: ME, at: Date.now() });
                 const sent = GM_getValue('sent', {});
                 const id = k.slice(2);
