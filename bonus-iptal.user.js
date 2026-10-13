@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.2.1
+// @version      1.2.2
 // @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. VARSAYILAN DENEME MODU: hiçbir bonusu iptal etmez, sadece kararı Slack'e yazar. Tampermonkey menüsünden Kapalı / Deneme / Canlı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -406,20 +406,32 @@ ID: ${pid}`);
         finally { busy = false; }
     }
 
-    GM_registerMenuCommand('Teşhis: son platform bonusunu değerlendir', async () => {
+    GM_registerMenuCommand('Teşhis: son platform bonusunu değerlendir / işle', async () => {
         try {
             const [tx] = await fetchPlatformBonuses();
             if (!tx) { alert('Bugün platform bonus kaydı yok.'); return; }
             const m = matchBonus(await playerBonuses(tx.partyId), tx);
-            alert([
+            const rec = book()[tx.tranId];
+            const lines = [
                 `Transaction ${tx.tranId} · Party ${tx.partyId} · ${tx.at} · ${money(tx.credit)} TL`,
                 tx.credit < CONFIG.LIMIT ? 'Limit altı → bonus iptali + mesaj' : `Limit üstü → bonus iptali + tüm sağlayıcı kısıtı + ${money(CONFIG.PAYOUT)} TL`,
                 `Personel no (oturum): ${staffId() ?? 'OKUNAMADI'}`,
                 `Eşleşen bonus: ${m.pick ? `${m.pick.planName} #${m.pick.id} (${m.pick.status})` : m.already ? 'zaten iptal edilmiş' : m.ambiguous ? 'birden fazla!' : 'yok'}`,
                 `Son ${CONFIG.LOOKBACK_H} saatteki ${CONFIG.TARGET_PLANS.join('/')} bonusları: ${m.candidates.map(b => `${b.planName} #${b.id} ${b.status}`).join(', ') || '—'}`,
                 `İşlem saatinde açılan kazanç bonusu: ${m.wins.map(b => `${b.planName} #${b.id} ${b.status}`).join(', ') || '—'}`,
-                '', 'İptal edilmedi, Slack\'e yazılmadı.',
-            ].join('\n'));
+                `Bot kaydı: ${rec ? (rec.result || `aranıyor (${rec.tries || 0})`) : 'henüz işlenmedi'}`,
+                `Mod: ${MODES[mode()]}`,
+            ];
+            if (!m.pick || mode() === 'off') { alert([...lines, '', 'Teşhis yalnızca değerlendirir: iptal edilmedi, Slack\'e yazılmadı.'].join('\n')); return; }
+            const what = mode() === 'live' ? `${m.pick.planName} #${m.pick.id} GERÇEKTEN iptal edilip Slack'e yazılsın mı?` : 'DENEME: iptal edilmeden Slack\'e deneme mesajı yazılsın mı?';
+            if (!confirm([...lines, '', `Bu işlem şimdi işlensin mi? ${what}`].join('\n'))) return;
+            while (busy) await sleep(500);
+            busy = true;
+            try {
+                const b = book(); delete b[tx.tranId]; GM_setValue('book', b);
+                await handle(tx);
+            } finally { busy = false; }
+            alert(`Sonuç: ${book()[tx.tranId]?.result || 'işlenemedi'}`);
         } catch (e) { alert('Teşhis hatası: ' + e.message); }
     });
 
