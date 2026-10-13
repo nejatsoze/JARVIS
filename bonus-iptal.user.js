@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.5.1
+// @version      1.5.2
 // @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. Tampermonkey menüsünden Açık / Kapalı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -86,8 +86,10 @@ GM_registerMenuCommand('Durum', () => {
     // Deneme bonusu var ama kazanç bonusu iptal edilebilir durumda değil (panelde Cancel çıkmıyor, ör. Spent)
     const spent = rows.filter(([, v]) => v.spent).slice(0, 15).map(([id, v]) => `${v.party} (işlem ${id}): ${v.spent}`).join('\n');
     const s = GM_getValue('slackStatus', null);
+    const q = GM_listValues().filter(k => k.startsWith('q:')).map(k => GM_getValue(k, null)).filter(Boolean);
+    const qInfo = q.length ? `${q.length} mesaj (en eskisi ${Math.round((Date.now() - Math.min(...q.map(x => x.at))) / 60000)} dk önce)` : 'boş';
     const drop = GM_getValue('dropped', []).slice(-5).map(d => `${d.party || '?'} (${new Date(d.at).toLocaleTimeString('tr-TR')})`).join(', ');
-    alert(`Sürüm: ${VER}${stale() ? ' — ESKİ SEKME, F5 ile yenileyin!' : ''}\nMod: ${MODES[mode()]}\nSlack: ${s ? s.msg : 'hiç bağlanmadı'}\n\nSon kayıtlar:\n${last || '—'}\n\nİptal edilemeyen (Spent vb.) — party ID:\n${spent || '—'}${drop ? `\n\nEski sekmeden gelip gönderilmeyen mesajlar (party):\n${drop}` : ''}`);
+    alert(`Sürüm: ${VER}${stale() ? ' — ESKİ SEKME, F5 ile yenileyin!' : ''}\nMod: ${MODES[mode()]}\nSlack: ${s ? s.msg : 'hiç bağlanmadı'}${s ? ` (${new Date(s.at).toLocaleTimeString('tr-TR')})` : ''}\nSlack kuyruğu: ${qInfo}\n\nSon kayıtlar:\n${last || '—'}\n\nİptal edilemeyen (Spent vb.) — party ID:\n${spent || '—'}${drop ? `\n\nEski sekmeden gelip gönderilmeyen mesajlar (party):\n${drop}` : ''}`);
 });
 
 if (location.hostname === 'app.slack.com') slackSide();
