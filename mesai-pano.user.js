@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mesai Panosu — canlı giriş / mola / çıkış tablosu
 // @namespace    palentis.mesai-pano
-// @version      1.1.3
-// @description  C08PZGND15G kanalındaki giriş, mola (m1 10, m2 30, m10, m30, ym, Mola) ve çıkış mesajlarını okuyup haftalık vardiya programıyla birleştirir; C0C87GMFWSZ'deki tek bir mesajı dakikada bir tablo resmi (PNG, 2x) olarak günceller; resim thread'e değil doğrudan mesajın içine konur. Haftalık program Tampermonkey menüsünden tablo yapıştırılarak girilir.
+// @version      1.1.4
+// @description  C08PZGND15G kanalındaki giriş, mola (m1 10, m2 30, m10, m30, ym, Mola) ve çıkış mesajlarını okuyup haftalık vardiya programıyla birleştirir; C0C8B1YR5SA'deki tek bir mesajı dakikada bir tablo resmi (PNG, 2x) olarak günceller; resim thread'e değil doğrudan mesajın içine konur. Haftalık program Tampermonkey menüsünden tablo yapıştırılarak girilir.
 // @match        https://app.slack.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -27,7 +27,7 @@
  *   Yanıtta "mola" geçerse (ör. "+kmola") dönüş + yeni süresiz mola; sonraki yanıt dönüş.
  *   Vardiyalar gece yarısını geçtiği için durum takvim gününe değil son "Giriş"e göredir.
  *
- * PANO (C0C87GMFWSZ): tek mesaj, içinde image bloğu. Her güncellemede PNG kanala/thread'e
+ * PANO (C0C8B1YR5SA): tek mesaj, içinde image bloğu. Her güncellemede PNG kanala/thread'e
  * paylaşılmadan yüklenir; Slack'in genel dosya bağlantısı (files.sharedPublicURL) alınıp
  * mesajdaki resim onunla değiştirilir, eski dosya silinir. Çalışma alanı genel bağlantıya
  * izin vermiyorsa dosya kimliğiyle (slack_file) gösterilir.
@@ -43,7 +43,7 @@
 
 const CONFIG = {
     SOURCE: 'C08PZGND15G',
-    BOARD: 'C0C87GMFWSZ',
+    BOARD: 'C0C8B1YR5SA',
     POLL_SEC: 30,
     REFRESH_SEC: 60,
     LOOKBACK_H: 30,
