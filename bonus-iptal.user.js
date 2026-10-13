@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.4.0
+// @version      1.4.1
 // @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. Tampermonkey menüsünden Açık / Kapalı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -371,7 +371,7 @@ ${body}
             await addPayout(pid);
             done.push(`+${money(CONFIG.PAYOUT)} TL eklendi`);
 
-            enqueue(tx.tranId, card(':moneybag: *Deneme Bonusu Çekilebilir Bakiye*', await playerInfo(pid), MESSAGE_WIN(x), pid));
+            // Başarılı limit üstü işlem için Slack'e mesaj gitmez (yalnızca hata olursa uyarı gider)
             setBook(tx.tranId, { final: true, result: `limit üstü: ${done.join(', ')}` });
             log(`${tx.tranId}: limit üstü tamam → ${done.join(', ')}`);
         } catch (e) {
