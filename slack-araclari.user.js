@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Slack Araçları (Okundu + Watcher + Ayna)
 // @namespace    palentis.slack.tools
-// @version      2.1.2
+// @version      2.1.3
 // @description  Üç aracı tek script'te toplar: tümünü okundu işaretle, kanal watcher (Mola bildirimi) ve kanal aynalama. Ortak, taşınabilir buton adası. Ayna yalnız ana mesajları aktarır (thread cevapları aktarılmaz); 2.1.0'a geçişte birikmiş kuyruk bir kez sıfırlanır.
 // @match        https://app.slack.com/*
 // @match        https://*.slack.com/*
@@ -578,7 +578,7 @@
       DEBUG: false,
     };
 
-    const VERSION = '1.3.1';
+    const VERSION = '1.3.2';
     const PREFIX = '[SLACK AYNA]';
     const STATE_KEY = `slackMirror.state.${CONFIG.SRC}.${CONFIG.DST}.v1`;
     const PAUSE_KEY = `slackMirror.paused.${CONFIG.SRC}.${CONFIG.DST}`;
@@ -710,14 +710,17 @@
     async function resolveToken() {
       const candidates = collectTokens();
       if (!candidates.length) throw new Error('Slack token bulunamadı — Slack web istemcisinde oturum açık mı?');
+      const errs = [];
       for (const cand of candidates) {
         try {
           const info = await rawApi('conversations.info', { channel: CONFIG.SRC }, cand);
           if (info.ok) { token = cand; return info.channel; }
+          errs.push(info.error || '?');
           dbg('token elendi:', info.error);
-        } catch (e) { dbg('token denemesi başarısız', e); }
+        } catch (e) { errs.push(e.message || 'istek hatası'); dbg('token denemesi başarısız', e); }
       }
-      throw new Error(`Hiçbir oturum ${CONFIG.SRC} kanalını göremiyor (kanalın üyesi misiniz?)`);
+      // Slack'in döndürdüğü hata kodları da yazılır (ör. channel_not_found, invalid_auth)
+      throw new Error(`Hiçbir oturum ${CONFIG.SRC} kanalını göremiyor [${candidates.length} oturum: ${[...new Set(errs)].join(', ')}]`);
     }
 
     async function getUserProfile(id) {
@@ -1298,7 +1301,8 @@
         setStatus('dinleniyor', route);
       } catch (e) {
         fail(e.message);
-        setStatus('hata', e.message);
+        setStatus('hata', `${e.message} — 1 dk sonra tekrar denenecek`);
+        setTimeout(start, 60000);   // oturum/yetki değişiminden sonra sayfa yenilemeden toparlansın
         return;
       }
       acquireLeadership();
