@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.5.2
+// @version      1.5.3
 // @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. Tampermonkey menüsünden Açık / Kapalı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -184,7 +184,10 @@ function gtSide() {
             if (col(r, 'TRANSACTION TYPE') !== 'PLTFRM_BON') continue;
             const tranId = col(r, 'TRANSACTION ID'), partyId = col(r, 'PARTY ID');
             if (!/^\d+$/.test(tranId) || !/^\d+$/.test(partyId)) continue;
-            out.push({ tranId, partyId, at: col(r, 'TRANSACTION DATE'), credit: num(col(r, 'CREDIT')) });
+            const credit = num(col(r, 'CREDIT'));
+            // İptal edilen bonusun ters kaydı (borç / sıfır alacak) yeni bir kazanç değildir: atla
+            if (Number.isFinite(credit) && credit <= 0) continue;
+            out.push({ tranId, partyId, at: col(r, 'TRANSACTION DATE'), credit });
         }
         return out;
     }
@@ -237,7 +240,15 @@ ${body}
 *Kullanıcı Adı:* ${esc(p.user)}${note ? `\n\n_${esc(note)}_` : ''}`;
     const cancelText = (p, x, pid) => card(':no_entry: *Deneme Bonusu İptal*', p, MESSAGE(x), pid);
 
+    /** Bu botun iptal ettiği bonuslar (tekrar görünen kayıtlarda "başkası iptal etti" sanılmasın) */
+    const ours = () => GM_getValue('cancelled', {});
+    function markOurs(bonusId) {
+        const c = ours(), week = Date.now() - 7 * 864e5;
+        for (const k of Object.keys(c)) if (c[k] < week) delete c[k];
+        c[bonusId] = Date.now(); GM_setValue('cancelled', c);
+    }
     async function cancelBonus(pid, bonusId) {
+        markOurs(bonusId);   // istekten ÖNCE: yanıt kaybolsa bile kendi iptalimiz sayılır
         const r = await ics(`player-bonus/${bonusId}`, {}, 'DELETE');
         if (r && typeof r === 'object' && r.status && r.status !== 'OK') throw new Error(`panel yanıtı: ${r.status}${r.message ? ' — ' + r.message : ''}`);
         // Doğrula: listede artık Canceled olmalı
@@ -327,6 +338,9 @@ ${body}
         const list = await playerBonuses(tx.partyId);
         const m = matchBonus(list, tx);
         const tries = (entry?.tries || 0) + 1;
+        if (m.already && m.wins.some(b => /cancel/i.test(b.status) && ours()[b.id])) {
+            setBook(tx.tranId, { final: true, result: 'bizim iptal ettiğimiz bonus — tekrar kayıt, atlandı' }); return;
+        }
         if (m.already) { await adopt(tx); setBook(tx.tranId, { final: true, result: 'zaten iptal (başkası) — mesajı yeni biçime çevrilecek' }); log(`${tx.tranId}: bonus zaten iptal edilmiş`); return; }
         if (m.ambiguous) {
             setBook(tx.tranId, { final: true, result: 'birden fazla eşleşen bonus — dokunulmadı' });
