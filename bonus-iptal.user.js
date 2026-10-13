@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.4.3
+// @version      1.5.0
 // @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. Tampermonkey menüsünden Açık / Kapalı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -292,8 +292,8 @@ ${body}
     }
 
     /* ── Slack ── */
-    function enqueue(key, text) {
-        GM_setValue('q:' + key, { text, at: Date.now(), v: VER });
+    function enqueue(key, text, extra = {}) {
+        GM_setValue('q:' + key, { text, at: Date.now(), v: VER, ...extra });
         GM_setValue('ping', Date.now());
     }
 
@@ -307,6 +307,13 @@ ${body}
         GM_setValue('book', b);
     }
 
+    /** Bonusu başka bir kaynak (aynı Slack hesabıyla çalışan eski bot) iptal edip eski biçimle yazdıysa:
+     *  Slack tarafı o mesajı bulup yeni biçimle günceller; bulunamazsa hiçbir şey göndermez. */
+    async function adopt(tx) {
+        if (tx.credit >= CONFIG.LIMIT) return;
+        enqueue(tx.tranId + '-adopt', cancelText(await playerInfo(tx.partyId), money(tx.credit), tx.partyId), { adopt: tx.partyId });
+    }
+
     async function handle(tx) {
         const entry = book()[tx.tranId];
         if (entry?.final) return;
@@ -317,7 +324,7 @@ ${body}
         const list = await playerBonuses(tx.partyId);
         const m = matchBonus(list, tx);
         const tries = (entry?.tries || 0) + 1;
-        if (m.already) { setBook(tx.tranId, { final: true, result: 'zaten iptal (başkası)' }); log(`${tx.tranId}: bonus zaten iptal edilmiş`); return; }
+        if (m.already) { await adopt(tx); setBook(tx.tranId, { final: true, result: 'zaten iptal (başkası) — mesajı yeni biçime çevrilecek' }); log(`${tx.tranId}: bonus zaten iptal edilmiş`); return; }
         if (m.ambiguous) {
             setBook(tx.tranId, { final: true, result: 'birden fazla eşleşen bonus — dokunulmadı' });
             enqueue(tx.tranId + '-amb', card(':warning: *Deneme Bonusu İptal Edilemedi*', await playerInfo(tx.partyId),
@@ -345,7 +352,7 @@ ${body}
         } catch (e) {
             // Bonus bu arada iptal edildiyse (başka sekme/kopya ya da elle) sessizce geç; mesajı o taraf atar
             const now = await playerBonuses(tx.partyId).then(l => l.find(b => String(b.id) === String(m.pick.id))).catch(() => null);
-            if (now && /cancel/i.test(now.status)) { setBook(tx.tranId, { final: true, result: `zaten iptal: ${info}` }); log(`${tx.tranId}: ${info} zaten iptal edilmiş`); return; }
+            if (now && /cancel/i.test(now.status)) { await adopt(tx); setBook(tx.tranId, { final: true, result: `zaten iptal: ${info} — mesajı yeni biçime çevrilecek` }); log(`${tx.tranId}: ${info} zaten iptal edilmiş`); return; }
             // Geçici panel hatası olabilir: Slack'e yazmadan önce sonraki turlarda tekrar dene
             const ct = (entry?.cancelTries || 0) + 1;
             if (ct < 3) { setBook(tx.tranId, { cancelTries: ct, result: `iptal denemesi ${ct}: ${e.message}` }); warn(`${tx.tranId}: iptal denemesi ${ct} başarısız`, e.message); return; }
@@ -543,6 +550,13 @@ function slackSide() {
                     continue;
                 }
                 GM_setValue('slackLock', { owner: ME, at: Date.now() });
+                if (v.adopt) {
+                    // Eski biçimli mesajı (bizim hesaptan, aynı ID'li, yeni başlıksız) bul ve güncelle; yoksa 15 dk bekle, sonra bırak
+                    const old = await findOld(v.adopt);
+                    if (old) { await send(v.text, old); GM_deleteValue(k); status(`eski mesaj yeni biçime çevrildi ${v.adopt}`); }
+                    else if (Date.now() - v.at > 15 * 60000) GM_deleteValue(k);
+                    continue;
+                }
                 const sent = GM_getValue('sent', {});
                 const id = k.slice(2);
                 const r = await send(v.text, sent[id]?.ts);
@@ -556,6 +570,15 @@ function slackSide() {
             }
         } catch (e) { warn('gönderilemedi:', e.message); status(`HATA: ${e.message}`); }
         finally { busy = false; GM_deleteValue('slackLock'); }
+    }
+    let me = null;
+    async function findOld(pid) {
+        if (!me) { const a = await call('auth.test', {}); me = a.ok ? a.user_id : null; }
+        const h = await call('conversations.history', { channel: CONFIG.CHANNEL, limit: '50' });
+        if (!h.ok) throw new Error(h.error);
+        const re = new RegExp(`ID:\\*?\\s*${pid}\\b`);
+        const m = (h.messages || []).find(x => x.user === me && re.test(x.text || '') && !/Deneme Bonusu İptal\*/.test(x.text || ''));
+        return m ? m.ts : null;
     }
     GM_addValueChangeListener('ping', () => flush());
     setInterval(flush, 20000);
