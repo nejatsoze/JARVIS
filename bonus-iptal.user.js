@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.3.2
+// @version      1.3.3
 // @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. Tampermonkey menüsünden Açık / Kapalı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -316,6 +316,12 @@ function gtSide() {
             setBook(tx.tranId, { final: true, result: `iptal: ${info}` });
             log(`${tx.tranId}: İPTAL → ${info}, kazanç ${x}`);
         } catch (e) {
+            // Bonus bu arada iptal edildiyse (başka sekme/kopya ya da elle) sessizce geç; mesajı o taraf atar
+            const now = await playerBonuses(tx.partyId).then(l => l.find(b => String(b.id) === String(m.pick.id))).catch(() => null);
+            if (now && /cancel/i.test(now.status)) { setBook(tx.tranId, { final: true, result: `zaten iptal: ${info}` }); log(`${tx.tranId}: ${info} zaten iptal edilmiş`); return; }
+            // Geçici panel hatası olabilir: Slack'e yazmadan önce sonraki turlarda tekrar dene
+            const ct = (entry?.cancelTries || 0) + 1;
+            if (ct < 3) { setBook(tx.tranId, { cancelTries: ct, result: `iptal denemesi ${ct}: ${e.message}` }); warn(`${tx.tranId}: iptal denemesi ${ct} başarısız`, e.message); return; }
             setBook(tx.tranId, { final: true, result: `iptal başarısız: ${e.message}` });
             enqueue(tx.tranId + '-err', `:warning: Bonus iptal edilemedi — ${esc(e.message)}\nID: ${tx.partyId}\nBonus: ${esc(info)}`);
             warn(`${tx.tranId}: iptal başarısız`, e);
