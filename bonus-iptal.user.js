@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.4.2
+// @version      1.4.3
 // @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. Tampermonkey menüsünden Açık / Kapalı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -423,6 +423,15 @@ ${body}
         finally { busy = false; }
     }
 
+    GM_registerMenuCommand('Test: örnek iptal mesajı gönder (iptal yapmaz)', async () => {
+        try {
+            const [tx] = await fetchPlatformBonuses();
+            if (!tx) { alert('Bugün platform bonus kaydı yok; örnek için bir oyuncu bulunamadı.'); return; }
+            const p = await playerInfo(tx.partyId);
+            enqueue('test-' + Date.now(), `:test_tube: _TEST — bu betiğin (${VER}) mesaj biçimi, hiçbir bonus iptal edilmedi_\n\n` + cancelText(p, money(tx.credit), tx.partyId));
+            alert(`Örnek mesaj kuyruğa alındı (oyuncu ${tx.partyId}: ${p.name} / ${p.user}). Birkaç saniye içinde Slack kanalında görünmeli.`);
+        } catch (e) { alert('Test hatası: ' + e.message); }
+    });
     GM_registerMenuCommand('Teşhis: son platform bonusunu değerlendir / işle', async () => {
         try {
             const [tx] = await fetchPlatformBonuses();
@@ -552,6 +561,29 @@ function slackSide() {
     setInterval(flush, 20000);
     setTimeout(flush, 3000);
     status('bağlı, bekliyor');
+
+    /** Kanaldaki son mesajları kim attı? Bu betiğin attıkları 'sent' kaydından tanınır. */
+    GM_registerMenuCommand('Teşhis: kanaldaki son mesajlar kimden?', async () => {
+        try {
+            if (!token) await resolveToken();
+            const h = await call('conversations.history', { channel: CONFIG.CHANNEL, limit: '12' });
+            if (!h.ok) throw new Error(h.error);
+            const mine = new Set(Object.values(GM_getValue('sent', {})).map(x => x.ts));
+            const names = {};
+            const who = async (m) => {
+                if (m.bot_id || m.bot_profile) return `BOT/uygulama: ${m.bot_profile?.name || m.username || m.bot_id}`;
+                if (!m.user) return '?';
+                if (!(m.user in names)) { const u = await call('users.info', { user: m.user }); names[m.user] = u.ok ? (u.user.real_name || u.user.name) : m.user; }
+                return names[m.user];
+            };
+            const lines = [];
+            for (const m of h.messages || []) {
+                const t = new Date(+m.ts * 1000).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+                lines.push(`${t} · ${await who(m)}${mine.has(m.ts) ? ' · ✅ BU BETİK' : ''}${m.subtype ? ' · ' + m.subtype : ''}\n   ${String(m.text || '').replace(/\s+/g, ' ').slice(0, 60)}`);
+            }
+            alert(`Sürüm ${VER} · kanal ${CONFIG.CHANNEL}\n\n${lines.join('\n') || '—'}`);
+        } catch (e) { alert('Teşhis hatası: ' + e.message); }
+    });
 }
 
 })();
