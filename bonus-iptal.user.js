@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.2.4
-// @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. VARSAYILAN DENEME MODU: hiçbir bonusu iptal etmez, sadece kararı Slack'e yazar. Tampermonkey menüsünden Kapalı / Deneme / Canlı seçilir.
+// @version      1.3.0
+// @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. Tampermonkey menüsünden Açık / Kapalı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
 // @grant        GM_getValue
@@ -27,7 +27,7 @@
  *      TARGET_PLANS (deneme) bonusu varsa (durumu fark etmez, genelde "Spent") ve kazanç bonusu
  *      iptal edilebilir durumdaysa (Active / Queued / Spent Active / Pending) iptal edilir.
  *      Deneme bonusu yoksa hiçbir mesaj gitmez, sadece Durum/konsola yazılır.
- *   3. Canlı: DELETE /ics/player-bonus/{bonusId} (panelin Cancel butonunun isteği),
+ *   3. DELETE /ics/player-bonus/{bonusId} (panelin Cancel butonunun isteği),
  *      ardından listeden durumunun Canceled olduğu doğrulanır ve Slack'e mesaj gider.
  *   4. Credit >= LIMIT (25.000) ise ayrıca: GET/PUT /ics/player-lock-provider/{party} ile tüm
  *      sağlayıcılar kısıtlanır, POST /ics/accounts/adjustments ile "Çekilebilir Deneme Bonusu"
@@ -35,8 +35,6 @@
  *      bot kaydı + son 30 günde aynı tutarda MAN_ADJUST kontrolü.
  *
  * GÜVENLİK
- *   · Varsayılan DENEME: iptal yok, Slack'e "DENEME — iptal edilmedi" notuyla ve
- *     bulunan bonusun adı/ID'siyle yazar (doğru bonusu seçtiğini görebilirsin).
  *   · Eşleşen bonus tek ve kesin değilse iptal yok.
  *   · Bonus zaten iptal edilmişse (diğer bot) sessizce geçilir.
  *   · İlk çalışmada listede zaten olan kayıtlar "görüldü" sayılır, işlenmez.
@@ -69,16 +67,12 @@ const log = (...a) => console.log(TAG, ...a);
 const warn = (...a) => console.warn(TAG, ...a);
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-const MODES = { off: 'Kapalı', dry: 'Deneme', live: 'Canlı' };
-const mode = () => GM_getValue('mode', 'dry');
+const MODES = { off: 'Kapalı', live: 'Açık' };
+const mode = () => GM_getValue('mode', 'live') === 'off' ? 'off' : 'live';   // deneme modu kaldırıldı: eski 'dry' kaydı = Açık
 
 // Mod ve Durum her iki sitede de menüde (Teşhis yalnız GT'de)
 GM_registerMenuCommand('Mod: Kapalı', () => { GM_setValue('mode', 'off'); alert('Bonus İptal KAPALI.'); });
-GM_registerMenuCommand('Mod: Deneme (iptal etmez, Slack\'e yazar)', () => { GM_setValue('mode', 'dry'); alert('Bonus İptal DENEME modunda: hiçbir bonus iptal edilmez.'); });
-GM_registerMenuCommand('Mod: Canlı (gerçekten iptal eder)', () => {
-    if (!confirm('CANLI mod: 25.000 TL altı freespin kazançlarının bonusu GERÇEKTEN iptal edilecek.\n\nDiğer bot kapalı mı? Devam edilsin mi?')) return;
-    GM_setValue('mode', 'live'); alert('Bonus İptal CANLI.');
-});
+GM_registerMenuCommand('Mod: Açık', () => { GM_setValue('mode', 'live'); alert('Bonus İptal AÇIK.'); });
 GM_registerMenuCommand('Durum', () => {
     const rows = Object.entries(GM_getValue('book', {})).filter(([, v]) => v.result !== 'kurulumda mevcuttu').sort((a, b) => b[1].at - a[1].at);
     const party = (v) => v.party ? ` · party ${v.party}` : '';
@@ -316,12 +310,6 @@ function gtSide() {
         const x = money(tx.credit);
         const info = `${m.pick.planName} #${m.pick.id}`;
         if (over) return payoutFlow(tx, m.pick, x, info);
-        if (mode() !== 'live') {
-            enqueue(tx.tranId, `:test_tube: _DENEME — iptal edilmedi (bulunan bonus: ${esc(info)})_\n${MESSAGE(x)}\nID: ${tx.partyId}`);
-            setBook(tx.tranId, { final: true, result: `deneme: ${info}` });
-            log(`${tx.tranId}: DENEME → ${info}, kazanç ${x}`);
-            return;
-        }
         try {
             await cancelBonus(tx.partyId, m.pick.id);
             enqueue(tx.tranId, `${MESSAGE(x)}\nID: ${tx.partyId}`);
@@ -339,17 +327,6 @@ function gtSide() {
     async function payoutFlow(tx, bonus, x, info) {
         const pid = tx.partyId;
         const paidBook = GM_getValue('paid', {});
-        if (mode() !== 'live') {
-            let prov = '?';
-            try { const c = await ics(`player-lock-provider/${pid}`); prov = `${(c.nonLockedProviders || []).length} açık / ${(c.lockedProviders || []).length + (c.nonLockedProviders || []).length} toplam`; } catch { /* yok say */ }
-            enqueue(tx.tranId, `:test_tube: _DENEME — uygulanmadı: bonus iptali (${esc(info)}), tüm sağlayıcı kısıtı (${prov}), +${money(CONFIG.PAYOUT)} TL "${esc(CONFIG.PAYOUT_NOTE)}"_
-${MESSAGE_WIN(x)}
-ID: ${pid}`);
-            setBook(tx.tranId, { final: true, result: `deneme (limit üstü): ${info}` });
-            log(`${tx.tranId}: DENEME limit üstü → ${info}, kazanç ${x}`);
-            return;
-        }
-
         const done = [];
         try {
             if (paidBook[pid]) throw new Error('bu oyuncuya daha önce ödeme yapılmış (bot kaydı)');
@@ -428,7 +405,7 @@ ID: ${pid}`);
                 `Mod: ${MODES[mode()]}`,
             ];
             if (!m.pick || mode() === 'off') { alert([...lines, '', 'Teşhis yalnızca değerlendirir: iptal edilmedi, Slack\'e yazılmadı.'].join('\n')); return; }
-            const what = mode() === 'live' ? `${m.pick.planName} #${m.pick.id} GERÇEKTEN iptal edilip Slack'e yazılsın mı?` : 'DENEME: iptal edilmeden Slack\'e deneme mesajı yazılsın mı?';
+            const what = `${m.pick.planName} #${m.pick.id} iptal edilip Slack'e yazılsın mı?`;
             if (!confirm([...lines, '', `Bu işlem şimdi işlensin mi? ${what}`].join('\n'))) return;
             while (busy) await sleep(500);
             busy = true;
@@ -483,7 +460,7 @@ function slackSide() {
         }
         throw new Error(`hiçbir oturum ${CONFIG.CHANNEL} kanalını göremiyor`);
     }
-    /** Aynı işlem için daha önce mesaj gittiyse (ör. önce DENEME, sonra Canlı) yenisi atılmaz, eskisi güncellenir. */
+    /** Aynı işlem için daha önce mesaj gittiyse (ör. Teşhis'ten yeniden işlenince) yenisi atılmaz, eskisi güncellenir. */
     async function send(text, prev) {
         for (let i = 0; i < 4; i++) {
             const r = prev
