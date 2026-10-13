@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Slack Alarm - 3 Kademeli Toggle
 // @namespace    palentis-slack-alarm
-// @version      3.0
+// @version      3.0.1
 // @description  Sidebar'da hedef kanal/kişi okunmamış olduğunda alarm çalar. 0: kapalı · I: her yeni mesajda iki kez · II: okunana kadar tekrar. Kademe tüm sekmelerde senkron.
 // @match        https://app.slack.com/*
 // @noframes
@@ -23,6 +23,7 @@
         'cekim-iptal',
         'casino-sorunları',
         'kupon-sorunları',
+        'cekim-talepleri',
     ];
 
     // calma: yeni bir okunmamış mesaj başına en fazla kaç kez çalacağı.
