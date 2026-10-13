@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Oyuncu Kartı — Party ID yazılınca Slack thread'ine
 // @namespace    palentis.oyuncu-kart
-// @version      1.3.3
-// @description  C0C8HMG3KUH kanalında bir mesajda Party ID (8 hane) geçince ya da mesaj "info ad@mail.com" ise (mail ile arama) o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar, son giriş cihazı. Kart resim olarak çizilir (koyu başlık, kırmızı dikkat bandı, mavi 4 sütun para şeridi, yeşil finans). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
+// @version      1.3.4
+// @description  C08RY9N9Y3W kanalında bir mesajda Party ID (8 hane) geçince ya da mesaj "info ad@mail.com" ise (mail ile arama) o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar, son giriş cihazı. Kart resim olarak çizilir (koyu başlık, kırmızı dikkat bandı, mavi 4 sütun para şeridi, yeşil finans). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
 // @grant        GM_getValue
@@ -34,7 +34,7 @@
 'use strict';
 
 const CONFIG = {
-    CHANNEL: 'C0C8HMG3KUH',
+    CHANNEL: 'C08RY9N9Y3W',
     POLL_SEC: 15,
     REFRESH_REACTION: 'arrows_counterclockwise',
     ID_RE: /(?<![\d])1\d{7}(?![\d])/g,
