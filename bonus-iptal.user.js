@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.1.1
-// @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa oyuncunun Zumabet Hosgeldin Freesin bonusunu iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. VARSAYILAN DENEME MODU: hiçbir bonusu iptal etmez, sadece kararı Slack'e yazar. Tampermonkey menüsünden Kapalı / Deneme / Canlı seçilir.
+// @version      1.2.0
+// @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. VARSAYILAN DENEME MODU: hiçbir bonusu iptal etmez, sadece kararı Slack'e yazar. Tampermonkey menüsünden Kapalı / Deneme / Canlı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
 // @grant        GM_getValue
@@ -21,11 +21,12 @@
  *   1. POLL_SEC'te bir /j/reports/TransactionReport.action formu arka planda
  *      Transaction Type = Platform Bonus, bugünün tarihiyle gönderilir (sayfayı açık
  *      tutmak gerekmez; herhangi bir GT sekmesi yeter).
- *   2. Yeni PLTFRM_BON satırı (Transaction ID ile) ve Credit < LIMIT ise:
- *      oyuncunun bonus listesinde (GET /ics/player-bonus/{party}) adı TARGET_PLANS'ta
- *      olan, iptal edilebilir durumda (Active / Queued / Spent Active / Pending) ve
- *      platform bonusundan önceki LOOKBACK_H saat içinde açılmış bonus aranır.
- *      Bulunamazsa (deneme bonusu değil ya da "Spent") hiçbir mesaj gitmez, sadece Durum/konsola yazılır.
+ *   2. Yeni PLTFRM_BON satırı (Transaction ID ile) için oyuncunun bonus listesinde
+ *      (GET /ics/player-bonus/{party}) işlem saatinde açılmış kazanç bonusu (ör. "Freespin Zuma",
+ *      tutarı = kazanç) aranır. Yalnızca oyuncunun ondan önceki LOOKBACK_H saat içinde bir
+ *      TARGET_PLANS (deneme) bonusu varsa (durumu fark etmez, genelde "Spent") ve kazanç bonusu
+ *      iptal edilebilir durumdaysa (Active / Queued / Spent Active / Pending) iptal edilir.
+ *      Deneme bonusu yoksa hiçbir mesaj gitmez, sadece Durum/konsola yazılır.
  *   3. Canlı: DELETE /ics/player-bonus/{bonusId} (panelin Cancel butonunun isteği),
  *      ardından listeden durumunun Canceled olduğu doğrulanır ve Slack'e mesaj gider.
  *   4. Credit >= LIMIT (25.000) ise ayrıca: GET/PUT /ics/player-lock-provider/{party} ile tüm
@@ -51,7 +52,7 @@ const CONFIG = {
     LIMIT: 25000,                         // altı: iptal + mesaj · üstü (dahil): iptal + tüm sağlayıcı kısıtı + 2.000 TL
     PAYOUT: 2000,                         // limit üstünde eklenen çekilebilir tutar
     PAYOUT_NOTE: 'Çekilebilir Deneme Bonusu',
-    TARGET_PLANS: ['Zumabet Hosgeldin Freesin'],   // iptal edilecek bonus planı
+    TARGET_PLANS: ['Zumabet Hosgeldin Freesin'],   // deneme bonusu planı (kazancından açılan bonus iptal edilir)
     LOOKBACK_H: 24,                       // bonus, platform bonusundan en fazla bu kadar saat önce açılmış olmalı
     MATCH_MIN: 5,                         // saat farkı payı (dk)
     FIND_RETRY: 4,                        // bonus henüz görünmüyorsa kaç tur daha aransın
@@ -172,19 +173,28 @@ function gtSide() {
     async function playerBonuses(pid) {
         return asList(await ics(`player-bonus/${pid}`, { currency: 'undefined' }));
     }
-    /** { pick, already, candidates } — pick: iptal edilecek tek bonus; already: aynı kazancın bonusu zaten iptal */
+    /** Kural: freespin kazancı (PLTFRM_BON) oyuncuya ayrı bir bonus olarak düşer (ör. "Freespin Zuma"; açılış saati =
+     *  işlem saati, tutar = kazanç). İptal edilen bu kazanç bonusudur — yalnızca oyuncunun ondan önce LOOKBACK_H içinde
+     *  açılmış bir TARGET_PLANS (deneme) bonusu varsa (durumu fark etmez, genelde "Spent").
+     *  { pick, already, ambiguous, candidates (deneme bonusları), wins (kazanç bonusu adayları) } */
     function matchBonus(list, tx) {
         const t = stamp(tx.at);
         const pad = CONFIG.MATCH_MIN * 60000;
-        const near = (b) => { const bt = stamp(b.triggerDate); return Number.isFinite(t) && bt <= t + pad && bt >= t - CONFIG.LOOKBACK_H * 3600e3 - pad; };
         const plan = (b) => CONFIG.TARGET_PLANS.some(p => String(b.planName || '').trim().toLowerCase() === p.toLowerCase());
-        const mine = list.filter(b => plan(b) && near(b));
-        const open = mine.filter(b => CANCELLABLE.includes(String(b.status || '').toUpperCase()));
+        const bt = (b) => stamp(b.triggerDate);
+        const amt = (b) => { for (const k of ['amount', 'bonusAmount', 'initialAmount']) { const v = num(b[k]); if (Number.isFinite(v) && v > 0) return v; } return NaN; };
+        const trial = list.filter(b => plan(b) && Number.isFinite(t) && bt(b) <= t + pad && bt(b) >= t - CONFIG.LOOKBACK_H * 3600e3 - pad);
+        let wins = list.filter(b => !plan(b) && Number.isFinite(t) && Math.abs(bt(b) - t) <= pad);
+        // Tutar okunabiliyorsa kazançla aynı olanlar (aynı dakikada başka bonus açılmışsa ayırt eder)
+        const same = wins.filter(b => Math.abs(amt(b) - tx.credit) < 0.01);
+        if (same.length) wins = same;
+        const open = trial.length ? wins.filter(b => CANCELLABLE.includes(String(b.status || '').toUpperCase())) : [];
         return {
             pick: open.length === 1 ? open[0] : null,
             ambiguous: open.length > 1,
-            already: !open.length && mine.some(b => /cancel/i.test(b.status)),
-            candidates: mine,
+            already: !!trial.length && !open.length && wins.some(b => /cancel/i.test(b.status)),
+            candidates: trial,
+            wins,
         };
     }
     async function cancelBonus(pid, bonusId) {
@@ -277,7 +287,7 @@ function gtSide() {
         }
         if (!m.pick) {
             if (tries < CONFIG.FIND_RETRY) { setBook(tx.tranId, { tries }); return; }   // bonus henüz oluşmamış olabilir
-            const seen = m.candidates.map(b => `#${b.id} ${b.status}`).join(', ') || 'hiç yok';
+            const seen = `deneme: ${m.candidates.map(b => `#${b.id} ${b.status}`).join(', ') || 'yok'} · kazanç bonusu: ${m.wins.map(b => `#${b.id} ${b.status}`).join(', ') || 'yok'}`;
             setBook(tx.tranId, { final: true, result: `iptal edilebilir bonus yok (${seen})` });
             // Deneme bonusu değil (ya da artık iptal edilemez): Slack'e bir şey gitmez, sadece defter + konsol
             log(`${tx.tranId}: iptal edilebilir bonus bulunamadı`, m.candidates);
@@ -405,6 +415,7 @@ ID: ${pid}`);
                 `Personel no (oturum): ${staffId() ?? 'OKUNAMADI'}`,
                 `Eşleşen bonus: ${m.pick ? `${m.pick.planName} #${m.pick.id} (${m.pick.status})` : m.already ? 'zaten iptal edilmiş' : m.ambiguous ? 'birden fazla!' : 'yok'}`,
                 `Son ${CONFIG.LOOKBACK_H} saatteki ${CONFIG.TARGET_PLANS.join('/')} bonusları: ${m.candidates.map(b => `${b.planName} #${b.id} ${b.status}`).join(', ') || '—'}`,
+                `İşlem saatinde açılan kazanç bonusu: ${m.wins.map(b => `${b.planName} #${b.id} ${b.status}`).join(', ') || '—'}`,
                 '', 'İptal edilmedi, Slack\'e yazılmadı.',
             ].join('\n'));
         } catch (e) { alert('Teşhis hatası: ' + e.message); }
