@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.2.2
+// @version      1.2.3
 // @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. VARSAYILAN DENEME MODU: hiçbir bonusu iptal etmez, sadece kararı Slack'e yazar. Tampermonkey menüsünden Kapalı / Deneme / Canlı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -478,9 +478,13 @@ function slackSide() {
         }
         throw new Error(`hiçbir oturum ${CONFIG.CHANNEL} kanalını göremiyor`);
     }
-    async function send(text) {
+    /** Aynı işlem için daha önce mesaj gittiyse (ör. önce DENEME, sonra Canlı) yenisi atılmaz, eskisi güncellenir. */
+    async function send(text, prev) {
         for (let i = 0; i < 4; i++) {
-            const r = await call('chat.postMessage', { channel: CONFIG.CHANNEL, text, unfurl_links: 'false', unfurl_media: 'false' });
+            const r = prev
+                ? await call('chat.update', { channel: CONFIG.CHANNEL, ts: prev, text })
+                : await call('chat.postMessage', { channel: CONFIG.CHANNEL, text, unfurl_links: 'false', unfurl_media: 'false' });
+            if (!r.ok && prev && /message_not_found|cant_update_message|edit_window_closed/.test(r.error)) { prev = null; continue; }
             if (r.ok) return r;
             if (r.error === 'ratelimited') { await sleep(r.retry); continue; }
             if (/invalid_auth|not_authed|token_revoked/.test(r.error)) { token = null; await resolveToken(); continue; }
@@ -504,7 +508,13 @@ function slackSide() {
             for (const [k, v] of items) {
                 if (Date.now() - v.at > 24 * 3600e3) { GM_deleteValue(k); continue; }
                 GM_setValue('slackLock', { owner: ME, at: Date.now() });
-                await send(v.text);
+                const sent = GM_getValue('sent', {});
+                const id = k.slice(2);
+                const r = await send(v.text, sent[id]?.ts);
+                const week = Date.now() - 7 * 864e5;
+                for (const x of Object.keys(sent)) if (sent[x].at < week) delete sent[x];
+                sent[id] = { ts: r.ts || sent[id]?.ts, at: Date.now() };
+                GM_setValue('sent', sent);
                 GM_deleteValue(k);
                 status(`son gönderim ${k.slice(2)}`);
                 await sleep(1200);
