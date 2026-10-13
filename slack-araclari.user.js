@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Slack Araçları (Okundu + Watcher + Ayna)
 // @namespace    palentis.slack.tools
-// @version      2.1.1
+// @version      2.1.2
 // @description  Üç aracı tek script'te toplar: tümünü okundu işaretle, kanal watcher (Mola bildirimi) ve kanal aynalama. Ortak, taşınabilir buton adası. Ayna yalnız ana mesajları aktarır (thread cevapları aktarılmaz); 2.1.0'a geçişte birikmiş kuyruk bir kez sıfırlanır.
 // @match        https://app.slack.com/*
 // @match        https://*.slack.com/*
@@ -251,6 +251,7 @@
       'C0A9YJRFY1L', 'C08SFHYL0CQ', 'C07LYJ4HK0F', 'C08PUFUTT3P',
       'C08Q00NMW5R', 'C08QALM34FM', 'D08R9AXBZJL', 'C08QH2ZG7R7',
       'C08PUFTL869', 'D08R9AW6RK2', 'C08PN8ZJL2J', 'C08Q00L6WD9',
+      'C0C81S6KVMK',
     ];
 
     const TARGET_CHANNEL = 'C08PZGND15G';
