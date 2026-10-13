@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.3.0
+// @version      1.3.1
 // @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. Tampermonkey menüsünden Açık / Kapalı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -75,7 +75,7 @@ GM_registerMenuCommand('Mod: Kapalı', () => { GM_setValue('mode', 'off'); alert
 GM_registerMenuCommand('Mod: Açık', () => { GM_setValue('mode', 'live'); alert('Bonus İptal AÇIK.'); });
 GM_registerMenuCommand('Durum', () => {
     const rows = Object.entries(GM_getValue('book', {})).filter(([, v]) => v.result !== 'kurulumda mevcuttu').sort((a, b) => b[1].at - a[1].at);
-    const party = (v) => v.party ? ` · party ${v.party}` : '';
+    const party = (v) => ` · party ${v.party || '?'}`;
     const last = rows.slice(0, 10).map(([id, v]) => `${id}${party(v)}: ${v.result || `aranıyor (${v.tries || 0})`}`).join('\n');
     // Deneme bonusu var ama kazanç bonusu iptal edilebilir durumda değil (panelde Cancel çıkmıyor, ör. Spent)
     const spent = rows.filter(([, v]) => v.spent).slice(0, 15).map(([id, v]) => `${v.party} (işlem ${id}): ${v.spent}`).join('\n');
@@ -376,6 +376,10 @@ ID: ${pid}`);
                 log(`ilk kurulum: ${txs.length} kayıt görüldü sayıldı, işlenmedi.`);
                 return;
             }
+            // Party ID'si kaydedilmemiş eski kayıtları rapordan tamamla (Durum listesi için)
+            const bk = book(); let fill = false;
+            for (const tx of txs) if (bk[tx.tranId] && !bk[tx.tranId].party) { bk[tx.tranId].party = tx.partyId; fill = true; }
+            if (fill) GM_setValue('book', bk);
             for (const tx of txs) {
                 try { await handle(tx); }
                 catch (e) {
