@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.3.3
+// @version      1.3.4
 // @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. Tampermonkey menüsünden Açık / Kapalı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -208,6 +208,23 @@ function gtSide() {
             wins,
         };
     }
+    /** Slack mesajı için ad soyad ve kullanıcı adı (okunamazsa '—'; iptali engellemez). */
+    const USER_KEYS = ['userName', 'username', 'login', 'loginName', 'nickName', 'nickname', 'alias', 'screenName'];
+    async function playerInfo(pid) {
+        const [prof, det] = await Promise.all([`players/${pid}/full-profile`, `players/${pid}/detail`].map(u => ics(u).catch(() => null)));
+        const full = (o) => [o?.firstName, o?.lastName].filter(Boolean).join(' ').trim();
+        const src = { ...(det || {}), ...(prof || {}) };
+        const user = USER_KEYS.map(k => src[k]).find(v => typeof v === 'string' && v.trim());
+        return { name: full(prof) || full(det) || '—', user: user ? user.trim() : '—' };
+    }
+    const cancelText = (p, x, pid) => `:no_entry: *Deneme Bonusu İptal*
+
+*Adı Soyadı:* ${esc(p.name)}
+${MESSAGE(x)}
+
+ID: ${pid}
+Kullanıcı Adı: ${esc(p.user)}`;
+
     async function cancelBonus(pid, bonusId) {
         const r = await ics(`player-bonus/${bonusId}`, {}, 'DELETE');
         if (r && typeof r === 'object' && r.status && r.status !== 'OK') throw new Error(`panel yanıtı: ${r.status}${r.message ? ' — ' + r.message : ''}`);
@@ -312,7 +329,7 @@ function gtSide() {
         if (over) return payoutFlow(tx, m.pick, x, info);
         try {
             await cancelBonus(tx.partyId, m.pick.id);
-            enqueue(tx.tranId, `${MESSAGE(x)}\nID: ${tx.partyId}`);
+            enqueue(tx.tranId, cancelText(await playerInfo(tx.partyId), x, tx.partyId));
             setBook(tx.tranId, { final: true, result: `iptal: ${info}` });
             log(`${tx.tranId}: İPTAL → ${info}, kazanç ${x}`);
         } catch (e) {
