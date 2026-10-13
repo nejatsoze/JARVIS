@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Oyuncu Kartı — Party ID yazılınca Slack thread'ine
 // @namespace    palentis.oyuncu-kart
-// @version      1.3.4
+// @version      1.3.5
 // @description  C08RY9N9Y3W kanalında bir mesajda Party ID (8 hane) geçince ya da mesaj "info ad@mail.com" ise (mail ile arama) o mesajın thread'ine oyuncu kartı bırakır: isim, VIP, KYC, üyelik süresi, çevrimiçi durumu, dikkat satırı (KYC, aynı IP, son yatırımdan sonra bonus, haftalık net eksi), bakiye, bekleyen çekim, son yatırım, son başarılı çekim, finans tablosu, son 7 gün oyunlar, son bonuslar, son giriş cihazı. Kart resim olarak çizilir (koyu başlık, kırmızı dikkat bandı, mavi 4 sütun para şeridi, yeşil finans). Her kelimenin baş harfi büyük. Panel linki yok. 🔄 tepkisiyle kart yenilenir. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -225,10 +225,11 @@ function gtSide() {
         const r = rows.sort((a, b) => (Number(b.datetime) || 0) - (Number(a.datetime) || 0))[0];
         return r ? Number(r.balance ?? (Number(r.balanceReal || 0) + Number(r.balancePlayableBonus || 0))) : null;
     }
+    const SKIP = /freespin\s*zuma/i;   // deneme bonusunun kazanç bonusu: kartta gösterilmez
     async function bonuses(pid) {
         const list = asList(await ics(`player-bonus/${pid}`, { currency: 'undefined' }));
         return list.map(b => ({ name: b.planName || b.name || 'Bonus', amount: Number(b.amount) || 0, at: when(b.triggerDate) }))
-            .filter(b => b.at).sort((a, b) => b.at - a.at);
+            .filter(b => b.at && !SKIP.test(b.name)).sort((a, b) => b.at - a.at);
     }
     async function games(pid) {
         const list = asList(await ics('player-game-play', { partyId: pid, startDate: ymd(dayOffset(-7)), endDate: ymd(dayOffset(1)), currency: 'undefined' }));
@@ -236,6 +237,7 @@ function gtSide() {
         const by = new Map();
         for (const g of list) {
             const raw0 = String(g.gameName || g.game || '—').trim();
+            if (SKIP.test(raw0)) continue;
             const name = /^(single|combo)$/i.test(raw0) ? 'Spor Bahsi' : raw0;   // spor kuponları tek satırda toplanır
             const bet = Number(pick(g, ['totalBet', 'bet', 'bets', 'betAmount', 'stake', 'totalBets', 'turnover'])) || 0;
             const win = Number(pick(g, ['totalWin', 'win', 'wins', 'winAmount', 'totalWins', 'payout'])) || 0;
