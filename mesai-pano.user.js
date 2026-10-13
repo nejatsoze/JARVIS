@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mesai Panosu — canlı giriş / mola / çıkış tablosu
 // @namespace    palentis.mesai-pano
-// @version      1.1.1
+// @version      1.1.3
 // @description  C08PZGND15G kanalındaki giriş, mola (m1 10, m2 30, m10, m30, ym, Mola) ve çıkış mesajlarını okuyup haftalık vardiya programıyla birleştirir; C0C87GMFWSZ'deki tek bir mesajı dakikada bir tablo resmi (PNG, 2x) olarak günceller; resim thread'e değil doğrudan mesajın içine konur. Haftalık program Tampermonkey menüsünden tablo yapıştırılarak girilir.
 // @match        https://app.slack.com/*
 // @grant        GM_getValue
@@ -34,6 +34,8 @@
  *
  * PROGRAM: menü → "Haftalık programı yapıştır". Excel / Sheets'ten tablo hücreleri kopyalanıp
  * yapıştırılır (ekip satırları, gün başlıkları, "OFF", "14:00 - 02:00").
+ * Gece vardiyası: Pazartesi sütunundaki "02:00 - 10:00" / "00:00 - 12:00" Pazartesiyi Salıya bağlayan
+ * gecedir, yani Salı 02:00 / 00:00'da başlar (NIGHT_BEFORE_H'den önce başlayanlar bir gün kaydırılır).
  */
 
 (() => {
@@ -47,6 +49,7 @@ const CONFIG = {
     LOOKBACK_H: 30,
     LATE_GRACE_MIN: 5,
     YM_MIN: 30,
+    NIGHT_BEFORE_H: 6,       // programda bu saatten önce başlayan vardiya (00:00, 02:00…) o günü ertesi güne bağlayan gecedir
     WIDTH: 900,
 };
 
@@ -258,8 +261,9 @@ function shiftFor(person, sched, now) {
                 if (raw === 'OFF') return { off: true, text: 'OFF' };
                 const m = raw.match(/^(\d{1,2}):(\d{2}) - (\d{1,2}):(\d{2})$/);
                 if (!m) return null;
-                const start = dayStart + (+m[1] * 60 + +m[2]) * MIN;
-                let end = dayStart + (+m[3] * 60 + +m[4]) * MIN;
+                const base = dayStart + (+m[1] < CONFIG.NIGHT_BEFORE_H ? DAY : 0);   // gece vardiyası: ertesi gün
+                const start = base + (+m[1] * 60 + +m[2]) * MIN;
+                let end = base + (+m[3] * 60 + +m[4]) * MIN;
                 if (end <= start) end += DAY;
                 return { start, end, text: raw };
             }
@@ -315,7 +319,7 @@ async function buildModel() {
             r.status = 'on'; r.label = 'MESAİDE';
         } else if (shift?.off) {
             r.status = 'off'; r.label = 'OFF';
-        } else if (shift && now < shift.start) {
+        } else if (shift && now < shift.start && !(s && s.state === 'out' && recent && shift.start - now > 8 * 3600e3)) {   // yeni çıkan kişi, gece başlayacak sonraki vardiyası yüzünden "başlıyor"a düşmesin
             r.status = 'wait'; r.label = `${trSuffix(hm(shift.start), 'de')} başlıyor`;
             r.inAt = r.outAt = r.breaks = '';   // önceki vardiyanın saatleri karışmasın
         } else if (s && s.state === 'out' && recent) {
