@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.3.5
+// @version      1.4.0
 // @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. Tampermonkey menüsünden Açık / Kapalı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -57,8 +57,8 @@ const CONFIG = {
 };
 
 const CANCELLABLE = ['ACTIVE', 'QUEUED', 'SPENT ACTIVE', 'PENDING'];   // panelin isCancellableBonus listesi
-const MESSAGE_WIN = (x) => `Deneme Bonusu freespinleri ile bakiyenizi 25.000 TL ve üzerine ulaştırdığınız için 2.000 TL çekilebilir bakiye hesabınıza eklenmiştir. Bonus kazancınız: ${x} TL`;
-const MESSAGE = (x) => `Deneme Bonusu freespinleri ile bakiyenizi 25.000 TL ve üzerine ulaştırabilirseniz 2.000 TL çekim yapabilirsiniz. Bonus kazancınız: ${x} TL olduğu için bonus iptal edilmiştir.`;
+const MESSAGE_WIN = (x) => `Deneme Bonusu freespinleri ile bakiyenizi 25.000 TL ve üzerine ulaştırdığınız için 2.000 TL çekilebilir bakiye hesabınıza eklenmiştir. Bonus kazancınız: *${x} TL*`;
+const MESSAGE = (x) => `Deneme Bonusu freespinleri ile bakiyenizi 25.000 TL ve üzerine ulaştırabilirseniz 2.000 TL çekim yapabilirsiniz. Bonus kazancınız: *${x} TL* olduğu için bonus iptal edilmiştir.`;
 
 const HOST = 'https://core-secundus.gmntc.com';
 const W = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
@@ -217,13 +217,15 @@ function gtSide() {
         const user = USER_KEYS.map(k => src[k]).find(v => typeof v === 'string' && v.trim());
         return { name: full(prof) || full(det) || '—', user: user ? user.trim() : '—' };
     }
-    const cancelText = (p, x, pid) => `:no_entry: *Deneme Bonusu İptal*
+    /** Ortak Slack düzeni: emoji + kalın başlık, ad soyad, gövde, ID ve kullanıcı adı, varsa en altta italik not. */
+    const card = (head, p, body, pid, note) => `${head}
 
 *Adı Soyadı:* ${esc(p.name)}
-${MESSAGE(x)}
+${body}
 
 *ID:* ${pid}
-*Kullanıcı Adı:* ${esc(p.user)}`;
+*Kullanıcı Adı:* ${esc(p.user)}${note ? `\n\n_${esc(note)}_` : ''}`;
+    const cancelText = (p, x, pid) => card(':no_entry: *Deneme Bonusu İptal*', p, MESSAGE(x), pid);
 
     async function cancelBonus(pid, bonusId) {
         const r = await ics(`player-bonus/${bonusId}`, {}, 'DELETE');
@@ -311,7 +313,8 @@ ${MESSAGE(x)}
         if (m.already) { setBook(tx.tranId, { final: true, result: 'zaten iptal (başkası)' }); log(`${tx.tranId}: bonus zaten iptal edilmiş`); return; }
         if (m.ambiguous) {
             setBook(tx.tranId, { final: true, result: 'birden fazla eşleşen bonus — dokunulmadı' });
-            enqueue(tx.tranId + '-amb', `:warning: Bonus iptal: ${tx.partyId} için birden fazla eşleşen bonus var, dokunulmadı (Transaction ID ${tx.tranId}).`);
+            enqueue(tx.tranId + '-amb', card(':warning: *Deneme Bonusu İptal Edilemedi*', await playerInfo(tx.partyId),
+                `Birden fazla eşleşen bonus bulundu, hiçbirine dokunulmadı. Bonus kazancı: *${money(tx.credit)} TL*`, tx.partyId, `İşlem ${tx.tranId}`));
             return;
         }
         if (!m.pick) {
@@ -340,7 +343,8 @@ ${MESSAGE(x)}
             const ct = (entry?.cancelTries || 0) + 1;
             if (ct < 3) { setBook(tx.tranId, { cancelTries: ct, result: `iptal denemesi ${ct}: ${e.message}` }); warn(`${tx.tranId}: iptal denemesi ${ct} başarısız`, e.message); return; }
             setBook(tx.tranId, { final: true, result: `iptal başarısız: ${e.message}` });
-            enqueue(tx.tranId + '-err', `:warning: Bonus iptal edilemedi — ${esc(e.message)}\nID: ${tx.partyId}\nBonus: ${esc(info)}`);
+            enqueue(tx.tranId + '-err', card(':warning: *Deneme Bonusu İptal Edilemedi*', await playerInfo(tx.partyId),
+                `Bonus kazancı: *${x} TL* — bonus elle iptal edilmeli.`, tx.partyId, `Hata: ${e.message} · ${info}`));
             warn(`${tx.tranId}: iptal başarısız`, e);
         }
     }
@@ -367,16 +371,13 @@ ${MESSAGE(x)}
             await addPayout(pid);
             done.push(`+${money(CONFIG.PAYOUT)} TL eklendi`);
 
-            enqueue(tx.tranId, `${MESSAGE_WIN(x)}
-ID: ${pid}`);
+            enqueue(tx.tranId, card(':moneybag: *Deneme Bonusu Çekilebilir Bakiye*', await playerInfo(pid), MESSAGE_WIN(x), pid));
             setBook(tx.tranId, { final: true, result: `limit üstü: ${done.join(', ')}` });
             log(`${tx.tranId}: limit üstü tamam → ${done.join(', ')}`);
         } catch (e) {
             setBook(tx.tranId, { final: true, result: `limit üstü yarım kaldı (${done.join(', ') || 'hiçbir adım'}): ${e.message}` });
-            enqueue(tx.tranId + '-err', `:warning: Deneme bonusu (limit üstü) işlemi tamamlanamadı — ${esc(e.message)}
-Yapılanlar: ${esc(done.join(', ') || 'hiçbiri')}
-Kazanç: ${x} TL
-ID: ${pid}`);
+            enqueue(tx.tranId + '-err', card(':warning: *Deneme Bonusu Çekilebilir Bakiye — Tamamlanamadı*', await playerInfo(pid),
+                `Bonus kazancı: *${x} TL*\n*Yapılanlar:* ${esc(done.join(', ') || 'hiçbiri')} — kalan adımlar elle yapılmalı.`, pid, `Hata: ${e.message}`));
             warn(`${tx.tranId}: limit üstü akış durdu`, done, e);
         }
     }
