@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.2.0
+// @version      1.2.1
 // @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. VARSAYILAN DENEME MODU: hiçbir bonusu iptal etmez, sadece kararı Slack'e yazar. Tampermonkey menüsünden Kapalı / Deneme / Canlı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -71,6 +71,20 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 const MODES = { off: 'Kapalı', dry: 'Deneme', live: 'Canlı' };
 const mode = () => GM_getValue('mode', 'dry');
+
+// Mod ve Durum her iki sitede de menüde (Teşhis yalnız GT'de)
+GM_registerMenuCommand('Mod: Kapalı', () => { GM_setValue('mode', 'off'); alert('Bonus İptal KAPALI.'); });
+GM_registerMenuCommand('Mod: Deneme (iptal etmez, Slack\'e yazar)', () => { GM_setValue('mode', 'dry'); alert('Bonus İptal DENEME modunda: hiçbir bonus iptal edilmez.'); });
+GM_registerMenuCommand('Mod: Canlı (gerçekten iptal eder)', () => {
+    if (!confirm('CANLI mod: 25.000 TL altı freespin kazançlarının bonusu GERÇEKTEN iptal edilecek.\n\nDiğer bot kapalı mı? Devam edilsin mi?')) return;
+    GM_setValue('mode', 'live'); alert('Bonus İptal CANLI.');
+});
+GM_registerMenuCommand('Durum', () => {
+    const last = Object.entries(GM_getValue('book', {})).filter(([, v]) => v.result !== 'kurulumda mevcuttu')
+        .sort((a, b) => b[1].at - a[1].at).slice(0, 10).map(([id, v]) => `${id}: ${v.result || `aranıyor (${v.tries || 0})`}`).join('\n');
+    const s = GM_getValue('slackStatus', null);
+    alert(`Mod: ${MODES[mode()]}\nSlack: ${s ? s.msg : 'hiç bağlanmadı'}\n\nSon kayıtlar:\n${last || '—'}`);
+});
 
 if (location.hostname === 'app.slack.com') slackSide();
 else gtSide();
@@ -392,18 +406,6 @@ ID: ${pid}`);
         finally { busy = false; }
     }
 
-    GM_registerMenuCommand('Mod: Kapalı', () => { GM_setValue('mode', 'off'); alert('Bonus İptal KAPALI.'); });
-    GM_registerMenuCommand('Mod: Deneme (iptal etmez, Slack\'e yazar)', () => { GM_setValue('mode', 'dry'); alert('Bonus İptal DENEME modunda: hiçbir bonus iptal edilmez.'); });
-    GM_registerMenuCommand('Mod: Canlı (gerçekten iptal eder)', () => {
-        if (!confirm('CANLI mod: 25.000 TL altı freespin kazançlarının bonusu GERÇEKTEN iptal edilecek.\n\nDiğer bot kapalı mı? Devam edilsin mi?')) return;
-        GM_setValue('mode', 'live'); alert('Bonus İptal CANLI.');
-    });
-    GM_registerMenuCommand('Durum', () => {
-        const last = Object.entries(book()).filter(([, v]) => v.result !== 'kurulumda mevcuttu')
-            .sort((a, b) => b[1].at - a[1].at).slice(0, 10).map(([id, v]) => `${id}: ${v.result || `aranıyor (${v.tries || 0})`}`).join('\n');
-        const s = GM_getValue('slackStatus', null);
-        alert(`Mod: ${MODES[mode()]}\nSlack: ${s ? s.msg : 'hiç bağlanmadı'}\n\nSon kayıtlar:\n${last || '—'}`);
-    });
     GM_registerMenuCommand('Teşhis: son platform bonusunu değerlendir', async () => {
         try {
             const [tx] = await fetchPlatformBonuses();
