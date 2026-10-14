@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.5.7
+// @version      1.5.8
 // @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. Tampermonkey menüsünden Açık / Kapalı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -223,7 +223,8 @@ function gtSide() {
     /** Slack mesajı için ad soyad ve kullanıcı adı (okunamazsa '—'; iptali engellemez). */
     const USER_KEYS = ['userName', 'username', 'login', 'loginName', 'nickName', 'nickname', 'alias', 'screenName'];
     async function playerInfo(pid) {
-        const [prof, det] = await Promise.all([`players/${pid}/full-profile`, `players/${pid}/detail`].map(u => ics(u).catch(() => null)));
+        const capped = (pr) => Promise.race([pr.catch(() => null), sleep(10000).then(() => null)]);   // en fazla 10 sn
+        const [prof, det] = await Promise.all([`players/${pid}/full-profile`, `players/${pid}/detail`].map(u => capped(ics(u))));
         const full = (o) => [o?.firstName, o?.lastName].filter(Boolean).join(' ').trim();
         const src = { ...(det || {}), ...(prof || {}) };
         const user = USER_KEYS.map(k => src[k]).find(v => typeof v === 'string' && v.trim());
@@ -402,9 +403,10 @@ ${body}
             await addPayout(pid);
             done.push(`+${money(CONFIG.PAYOUT)} TL eklendi`);
 
-            enqueue(tx.tranId, card(':moneybag: *Deneme Bonusu Çekilebilir Bakiye*', await playerInfo(pid), MESSAGE_WIN(x), pid));
+            // Önce kayıt kapanır; mesaj ana akışı bekletmez (ad/kullanıcı adı sorgusu takılsa bile bot donmaz)
             setBook(tx.tranId, { final: true, result: `limit üstü: ${done.join(', ')}` });
             log(`${tx.tranId}: limit üstü tamam → ${done.join(', ')}`);
+            playerInfo(pid).then((p) => enqueue(tx.tranId, card(':moneybag: *Deneme Bonusu Çekilebilir Bakiye*', p, MESSAGE_WIN(x), pid)));
         } catch (e) {
             setBook(tx.tranId, { final: true, result: `limit üstü yarım kaldı (${done.join(', ') || 'hiçbir adım'}): ${e.message}` });
             enqueue(tx.tranId + '-err', card(':warning: *Deneme Bonusu Çekilebilir Bakiye — Tamamlanamadı*', await playerInfo(pid),
