@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.5.6
+// @version      1.5.7
 // @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. Tampermonkey menüsünden Açık / Kapalı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -89,10 +89,7 @@ GM_registerMenuCommand('Durum', () => {
     const q = GM_listValues().filter(k => k.startsWith('q:')).map(k => GM_getValue(k, null)).filter(Boolean);
     const qInfo = q.length ? `${q.length} mesaj (en eskisi ${Math.round((Date.now() - Math.min(...q.map(x => x.at))) / 60000)} dk önce)` : 'boş';
     const drop = GM_getValue('dropped', []).slice(-5).map(d => `${d.party || '?'} (${new Date(d.at).toLocaleTimeString('tr-TR')})`).join(', ');
-    const g = GM_getValue('gtStatus', null);
-    const gAge = g ? Math.round((Date.now() - g.at) / 60000) : null;
-    const gLine = g ? `${g.msg} (${new Date(g.at).toLocaleTimeString('tr-TR')}${gAge >= 3 ? ` — ${gAge} dk'dır GT sekmesi çalışmıyor!` : ''})` : 'hiç çalışmadı — açık GT sekmesi yok';
-    alert(`Sürüm: ${VER}${stale() ? ' — ESKİ SEKME, F5 ile yenileyin!' : ''}\nMod: ${MODES[mode()]}\nGT: ${gLine}\nSlack: ${s ? s.msg : 'hiç bağlanmadı'}${s ? ` (${new Date(s.at).toLocaleTimeString('tr-TR')})` : ''}\nSlack kuyruğu: ${qInfo}\n\nSon kayıtlar:\n${last || '—'}\n\nİptal edilemeyen (Spent vb.) — party ID:\n${spent || '—'}${drop ? `\n\nEski sekmeden gelip gönderilmeyen mesajlar (party):\n${drop}` : ''}`);
+    alert(`Sürüm: ${VER}${stale() ? ' — ESKİ SEKME, F5 ile yenileyin!' : ''}\nMod: ${MODES[mode()]}\nSlack: ${s ? s.msg : 'hiç bağlanmadı'}${s ? ` (${new Date(s.at).toLocaleTimeString('tr-TR')})` : ''}\nSlack kuyruğu: ${qInfo}\n\nSon kayıtlar:\n${last || '—'}\n\nİptal edilemeyen (Spent vb.) — party ID:\n${spent || '—'}${drop ? `\n\nEski sekmeden gelip gönderilmeyen mesajlar (party):\n${drop}` : ''}`);
 });
 
 if (location.hostname === 'app.slack.com') slackSide();
@@ -254,14 +251,10 @@ ${body}
         markOurs(bonusId);   // istekten ÖNCE: yanıt kaybolsa bile kendi iptalimiz sayılır
         const r = await ics(`player-bonus/${bonusId}`, {}, 'DELETE');
         if (r && typeof r === 'object' && r.status && r.status !== 'OK') throw new Error(`panel yanıtı: ${r.status}${r.message ? ' — ' + r.message : ''}`);
-        // Doğrula: listede artık Canceled olmalı (panel durumu birkaç saniye gecikebilir)
-        let b = null;
-        for (let i = 0; i < 4; i++) {
-            await sleep(1500);
-            b = (await playerBonuses(pid)).find(x => String(x.id) === String(bonusId));
-            if (!b || /cancel/i.test(b.status)) return;
-        }
-        throw new Error(`iptal sonrası durum hâlâ ${b.status}`);
+        // Doğrula: listede artık Canceled olmalı
+        await sleep(1500);
+        const b = (await playerBonuses(pid)).find(x => String(x.id) === String(bonusId));
+        if (b && !/cancel/i.test(b.status)) throw new Error(`iptal sonrası durum hâlâ ${b.status}`);
     }
 
     /* ── Limit üstü: sağlayıcı kısıtı ve 2.000 TL (panelin kendi istekleri, konsol kaydıyla doğrulandı) ── */
@@ -376,13 +369,6 @@ ${body}
         } catch (e) {
             // Bonus bu arada iptal edildiyse (başka sekme/kopya ya da elle) sessizce geç; mesajı o taraf atar
             const now = await playerBonuses(tx.partyId).then(l => l.find(b => String(b.id) === String(m.pick.id))).catch(() => null);
-            // İptal isteğini biz gönderdik ve bonus iptal görünüyor: iptal bizim — mesaj normal şekilde gider
-            if (now && /cancel/i.test(now.status) && ours()[m.pick.id]) {
-                enqueue(tx.tranId, cancelText(await playerInfo(tx.partyId), x, tx.partyId));
-                setBook(tx.tranId, { final: true, result: `iptal: ${info} (panel geç doğruladı: ${e.message})` });
-                log(`${tx.tranId}: İPTAL (geç doğrulandı) → ${info}`);
-                return;
-            }
             if (now && /cancel/i.test(now.status)) { await adopt(tx); setBook(tx.tranId, { final: true, result: `zaten iptal: ${info} — mesajı yeni biçime çevrilecek` }); log(`${tx.tranId}: ${info} zaten iptal edilmiş`); return; }
             // Geçici panel hatası olabilir: Slack'e yazmadan önce sonraki turlarda tekrar dene
             const ct = (entry?.cancelTries || 0) + 1;
@@ -434,8 +420,7 @@ ${body}
         const lead = GM_getValue('leader', null);
         if (lead && lead.owner !== ME && Date.now() - lead.at < 3 * CONFIG.POLL_SEC * 1000) return;
         GM_setValue('leader', { owner: ME, at: Date.now() });
-        const gt = (msg) => GM_setValue('gtStatus', { msg, at: Date.now() });
-        if (!token()) { gt('GT oturumu yok — panele giriş yapılmamış ya da oturum düşmüş'); return; }
+        if (!token()) return;   // giriş yapılmamış sekme
 
         busy = true;
         try {
@@ -450,7 +435,6 @@ ${body}
             const bk = book(); let fill = false;
             for (const tx of txs) if (bk[tx.tranId] && !bk[tx.tranId].party) { bk[tx.tranId].party = tx.partyId; fill = true; }
             if (fill) GM_setValue('book', bk);
-            gt(`rapor okundu: bugün ${txs.length} platform bonusu`);
             for (const tx of txs) {
                 try { await handle(tx); }
                 catch (e) {
@@ -459,7 +443,7 @@ ${body}
                     setBook(tx.tranId, tries >= 10 ? { tries, final: true, result: `hata: ${e.message}` } : { tries });
                 }
             }
-        } catch (e) { warn('rapor okunamadı:', e.message); gt(`HATA: rapor okunamadı — ${e.message}`); }
+        } catch (e) { warn('rapor okunamadı:', e.message); }
         finally { busy = false; }
     }
 
