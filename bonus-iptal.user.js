@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.5.5
+// @version      1.5.6
 // @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. Tampermonkey menüsünden Açık / Kapalı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -254,10 +254,14 @@ ${body}
         markOurs(bonusId);   // istekten ÖNCE: yanıt kaybolsa bile kendi iptalimiz sayılır
         const r = await ics(`player-bonus/${bonusId}`, {}, 'DELETE');
         if (r && typeof r === 'object' && r.status && r.status !== 'OK') throw new Error(`panel yanıtı: ${r.status}${r.message ? ' — ' + r.message : ''}`);
-        // Doğrula: listede artık Canceled olmalı
-        await sleep(1500);
-        const b = (await playerBonuses(pid)).find(x => String(x.id) === String(bonusId));
-        if (b && !/cancel/i.test(b.status)) throw new Error(`iptal sonrası durum hâlâ ${b.status}`);
+        // Doğrula: listede artık Canceled olmalı (panel durumu birkaç saniye gecikebilir)
+        let b = null;
+        for (let i = 0; i < 4; i++) {
+            await sleep(1500);
+            b = (await playerBonuses(pid)).find(x => String(x.id) === String(bonusId));
+            if (!b || /cancel/i.test(b.status)) return;
+        }
+        throw new Error(`iptal sonrası durum hâlâ ${b.status}`);
     }
 
     /* ── Limit üstü: sağlayıcı kısıtı ve 2.000 TL (panelin kendi istekleri, konsol kaydıyla doğrulandı) ── */
@@ -372,6 +376,13 @@ ${body}
         } catch (e) {
             // Bonus bu arada iptal edildiyse (başka sekme/kopya ya da elle) sessizce geç; mesajı o taraf atar
             const now = await playerBonuses(tx.partyId).then(l => l.find(b => String(b.id) === String(m.pick.id))).catch(() => null);
+            // İptal isteğini biz gönderdik ve bonus iptal görünüyor: iptal bizim — mesaj normal şekilde gider
+            if (now && /cancel/i.test(now.status) && ours()[m.pick.id]) {
+                enqueue(tx.tranId, cancelText(await playerInfo(tx.partyId), x, tx.partyId));
+                setBook(tx.tranId, { final: true, result: `iptal: ${info} (panel geç doğruladı: ${e.message})` });
+                log(`${tx.tranId}: İPTAL (geç doğrulandı) → ${info}`);
+                return;
+            }
             if (now && /cancel/i.test(now.status)) { await adopt(tx); setBook(tx.tranId, { final: true, result: `zaten iptal: ${info} — mesajı yeni biçime çevrilecek` }); log(`${tx.tranId}: ${info} zaten iptal edilmiş`); return; }
             // Geçici panel hatası olabilir: Slack'e yazmadan önce sonraki turlarda tekrar dene
             const ct = (entry?.cancelTries || 0) + 1;
