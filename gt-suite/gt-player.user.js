@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Player — oyuncu detayı
 // @namespace    palentis.gt
-// @version      1.0.38
+// @version      1.0.39
 // @description  Oyuncu detay sayfasının tek sahibi: kimlik kartı (KYCAID fotoğrafı, btag, lock/VIP/KYC), Deposits/Withdrawals/NET paneli, giriş kayıtları + IP konumu, son 24 saat oyunları, bakiye sıfırlama butonları, duplicate (IP) ve bonus/deposit/withdrawal (PT) özeti, yorum popup'ı. Eski alanları temizler. GT Core üzerine kurulur — "GT Accounting Panel" scriptinin yerini alır.
 // @match        https://core-secundus.gmntc.com/*
 // @noframes
@@ -709,6 +709,7 @@ active-queued-optedin-bonus a.fa-times:hover{background:#fdecec; color:#d70015 !
 /* IP: profil açılınca arka planda aranır; başka hesap varsa kırmızı + nabız + sayı rozeti. */
 #gt-lookup .gt-group.ip-hit{overflow:visible}
 #gt-lookup .gt-group.ip-hit > .gt-btn:first-child{border-radius:8px 0 0 8px}
+#gt-lookup .gt-group.ip-hit > .gt-btn:last-child{border-radius:0 8px 8px 0}
 #gt-lookup .gt-btn.ip-hit{position:relative; padding-left:10px; background:#fef3f2; color:#b42318; animation:gt-ip-pulse 2s ease-in-out infinite}
 #gt-lookup .gt-btn.ip-hit:hover{background:#fee4e2}
 #gt-lookup .gt-btn.ip-hit svg{display:none}
@@ -1596,7 +1597,7 @@ GT.define({
         const PERSON_ICON = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>`;
 
         /** IP ve NAME sonuçları aynı kartla gösteriliyor. */
-        function renderAccounts(modal, rows, { tone, note }) {
+        function renderAccounts(modal, rows, { tone, note, dob = false }) {
             modal.html = `
             <div style="margin-bottom:12px;color:var(--gt-muted);font-size:13px">
               <b style="color:var(--gt-ink)">${rows.length} hesap</b> bulundu${note ? ` · ${esc(note)}` : ''}</div>
@@ -1608,7 +1609,8 @@ GT.define({
                   <span class="gt-num" style="background:${tone};color:#fff;width:28px;height:28px;border-radius:8px;
                         display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600">${i + 1}</span>
                   <div><div style="font-weight:600">${esc(r.id)}</div>
-                       <div style="color:var(--gt-muted);font-size:12px;margin-top:2px">${esc(r.first)} ${esc(r.last)}</div>
+                       <div style="color:var(--gt-muted);font-size:12px;margin-top:2px">${esc(r.first)} ${esc(r.last)}${dob
+                           ? '<span class="dob" style="color:#9aa1ab;font-size:11px;margin-left:6px"></span>' : ''}</div>
                        <div class="plans" style="margin-top:4px"><span style="color:#ccc;font-size:10px">⏳</span></div></div>
                 </div>
                 <span class="arrow" style="color:${tone};font-size:12px;pointer-events:none">→</span>
@@ -1624,6 +1626,12 @@ GT.define({
                 setTimeout(() => goSearch(row.dataset.party), 250);
             });
 
+            if (dob) for (const r of rows) {
+                profile(r.id).then((p) => {
+                    const el = modal.body.querySelector(`[data-party="${r.id}"] .dob`);
+                    if (el && p?.birthDate) el.textContent = `· ${p.birthDate.replace(/-/g, '.')}`;
+                });
+            }
             for (const r of rows) {
                 bonusPlanNames(r.id).then(names => {
                     const box = modal.body.querySelector(`[data-party="${r.id}"] .plans`);
@@ -1648,19 +1656,24 @@ GT.define({
 
         /** Aynı ad + soyada kayıtlı hesaplar. Sunucu gevşek eşleşme
          *  döndürebildiği için sonucu normalleştirilmiş tam eşleşmeye süzüyoruz. */
+        async function sameName() {
+            const all = await duplicateRows(pid, { checkFirstName: 'true', checkLastName: 'true' });
+            const self = all.find(r => r.id === String(pid)) || all[0];
+            if (!self) return { all, self: null, matches: [] };
+            const first = normalizeName(self.first);
+            const last = normalizeName(self.last);
+            const matches = all
+                .filter(r => normalizeName(r.first) === first && normalizeName(r.last) === last)
+                .sort((a, b) => (a.id === self.id ? -1 : b.id === self.id ? 1 : 0));
+            return { all, self, matches };
+        }
+
         async function showSameName() {
             const modal = ui.modal({ title: 'Aynı isimli hesaplar', icon: '👥', width: 650 }).open();
             modal.html = ui.spinner('Aranıyor…');
             try {
-                const all = await duplicateRows(pid, { checkFirstName: 'true', checkLastName: 'true' });
-                const self = all.find(r => r.id === String(pid)) || all[0];
+                const { all, self, matches } = await sameName();
                 if (!self) { modal.html = ui.empty('Kayıt bulunamadı.'); return; }
-
-                const first = normalizeName(self.first);
-                const last = normalizeName(self.last);
-                const matches = all
-                    .filter(r => normalizeName(r.first) === first && normalizeName(r.last) === last)
-                    .sort((a, b) => (a.id === self.id ? -1 : b.id === self.id ? 1 : 0));
 
                 if (matches.length <= 1) {
                     modal.html = ui.empty(`"${self.first} ${self.last}" adına kayıtlı başka hesap yok — ${all.length} kayıt tarandı.`);
@@ -1669,6 +1682,7 @@ GT.define({
                 renderAccounts(modal, matches, {
                     tone: 'var(--gt-success)',
                     note: `"${self.first} ${self.last}" · ${all.length} kayıt tarandı`,
+                    dob: true,
                 });
             } catch (e) { modal.html = ui.error(e.message); }
         }
@@ -1757,6 +1771,19 @@ GT.define({
             .then((rows) => { ipOthers = rows.filter(r => r.id !== String(pid)).length; paintIp(); })
             .catch(() => {});
 
+        // NAME: aynı mantık — aynı ad soyadlı başka hesap varsa IP'deki kırmızı nabız + sayı rozeti
+        let nameBtn = null, nameOthers = 0;
+        const paintName = () => {
+            if (!nameBtn || !nameOthers) return;
+            nameBtn.classList.add('ip-hit');
+            nameBtn.parentElement?.classList.add('ip-hit');   // rozet grubun dışına taşabilsin
+            nameBtn.title = `Aynı ad soyadla ${nameOthers} başka hesap (Alt+N)`;
+            if (!nameBtn.querySelector('.ip-badge')) nameBtn.append(h('span', { class: 'ip-badge' }, String(nameOthers)));
+        };
+        sameName()
+            .then(({ matches }) => { nameOthers = Math.max(0, matches.length - 1); paintName(); })
+            .catch(() => {});
+
         ctx.mount(
             () => $$('mat-label').find(el => /Select Tag|Etiket Seç/.test(el.textContent))
                     ?.closest('.mat-form-field-infix, .mat-mdc-form-field-infix, .mat-form-field-flex'),
@@ -1768,9 +1795,10 @@ GT.define({
                     h('span', { class: 'gt-group' },
                         ipBtn,
                         lookupBtn(ICON.search, 'PT', 'Bonus + yatırım + çekim özeti', null, showSummary),
-                        lookupBtn(PERSON_ICON, 'NAME', 'Aynı ad soyadlı hesaplar', 'alt+n', showSameName)),
+                        nameBtn = lookupBtn(PERSON_ICON, 'NAME', 'Aynı ad soyadlı hesaplar', 'alt+n', showSameName)),
                     label);
                 paintIp();
+                paintName();
                 return root;
             },
         );
