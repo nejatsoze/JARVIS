@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      1.5.8
+// @version      2.0.0
 // @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. Tampermonkey menüsünden Açık / Kapalı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -18,27 +18,32 @@
 
 /*
  * AKIŞ
- *   1. POLL_SEC'te bir /j/reports/TransactionReport.action formu arka planda
- *      Transaction Type = Platform Bonus, bugünün tarihiyle gönderilir (sayfayı açık
- *      tutmak gerekmez; herhangi bir GT sekmesi yeter).
- *   2. Yeni PLTFRM_BON satırı (Transaction ID ile) için oyuncunun bonus listesinde
- *      (GET /ics/player-bonus/{party}) işlem saatinde açılmış kazanç bonusu (ör. "Freespin Zuma",
- *      tutarı = kazanç) aranır. Yalnızca oyuncunun ondan önceki LOOKBACK_H saat içinde bir
- *      TARGET_PLANS (deneme) bonusu varsa (durumu fark etmez, genelde "Spent") ve kazanç bonusu
- *      iptal edilebilir durumdaysa (Active / Queued / Spent Active / Pending) iptal edilir.
- *      Deneme bonusu yoksa hiçbir mesaj gitmez, sadece Durum/konsola yazılır.
- *   3. DELETE /ics/player-bonus/{bonusId} (panelin Cancel butonunun isteği),
- *      ardından listeden durumunun Canceled olduğu doğrulanır ve Slack'e mesaj gider.
- *   4. Credit >= LIMIT (25.000) ise ayrıca: GET/PUT /ics/player-lock-provider/{party} ile tüm
- *      sağlayıcılar kısıtlanır, POST /ics/accounts/adjustments ile "Çekilebilir Deneme Bonusu"
- *      notuyla 2.000 TL MAN_ADJUST eklenir (staffId oturum JWT'sinden). Çift ödeme kalkanı:
- *      bot kaydı + son 30 günde aynı tutarda MAN_ADJUST kontrolü.
+ *   1. POLL_SEC'te bir, oturumu açık GT sekmelerinden YALNIZ BİRİ (lider) Transaction Report'u
+ *      (Transaction Type = Platform Bonus, bugün) arka planda çeker.
+ *   2. Yeni PLTFRM_BON satırı için oyuncunun bonus listesinde işlem saatinde açılmış kazanç bonusu
+ *      (ör. "Freespin Zuma", tutar = kazanç) aranır. Yalnızca oyuncunun ondan önceki LOOKBACK_H saat
+ *      içinde bir TARGET_PLANS (deneme) bonusu varsa ve kazanç bonusu iptal edilebilir durumdaysa
+ *      (Active / Queued / Spent Active / Pending) işlem yapılır. Deneme bonusu yoksa hiçbir şey olmaz.
+ *   3. Kazanç < LIMIT: DELETE /ics/player-bonus/{id} (panelin Cancel isteği) → durum Canceled
+ *      olana kadar birkaç kez doğrulanır → Slack'e iptal mesajı.
+ *   4. Kazanç ≥ LIMIT: çift ödeme kontrolü → bonus iptali → tüm sağlayıcı kısıtı → 2.000 TL
+ *      MAN_ADJUST ("Çekilebilir Deneme Bonusu") → Slack'e 💰 mesajı. Bir adım başarısız olursa
+ *      sonrakiler yapılmaz, Slack'e hangi adımların yapıldığı yazılır.
+ *
+ * DAYANIKLILIK (2.0.0'da baştan yazıldı)
+ *   · Her panel / Slack isteğinin zaman aşımı var: takılan bir istek botu dondurmaz.
+ *   · Oturumu olmayan (giriş yapılmamış / oturumu düşmüş) sekme liderliği almaz; hata alan lider
+ *     liderliği bırakır, sağlıklı başka sekme devralır.
+ *   · Defter tur başında bir kez okunur: gün içinde kayıt arttıkça bot yavaşlamaz.
+ *   · Botun gönderdiği iptal isteği panelde geç görünse bile iptal bizim sayılır ve mesaj gider.
+ *   · Slack'te bir mesaj gönderilemezse diğerlerini bekletmez; 5 denemeden sonra Durum'a düşer.
+ *   · Durum: sürüm, GT tarafının son çalışması (oturum / rapor hatası), Slack, kuyruk, son kayıtlar.
  *
  * GÜVENLİK
- *   · Eşleşen bonus tek ve kesin değilse iptal yok.
- *   · Bonus zaten iptal edilmişse (diğer bot) sessizce geçilir.
- *   · İlk çalışmada listede zaten olan kayıtlar "görüldü" sayılır, işlenmez.
- *   · Birden fazla GT sekmesi açıksa yalnızca biri çalışır.
+ *   · Eşleşen bonus tek ve kesin değilse iptal yok (Slack'e uyarı).
+ *   · Bonusu bot dışında biri iptal ettiyse sessizce geçilir.
+ *   · İlk kurulumda listede zaten olan kayıtlar işlenmez.
+ *   · Güncellemeden sonra yenilenmemiş eski sürüm sekmesi hiçbir şey yapmaz.
  */
 
 (() => {
@@ -51,9 +56,15 @@ const CONFIG = {
     PAYOUT: 2000,                         // limit üstünde eklenen çekilebilir tutar
     PAYOUT_NOTE: 'Çekilebilir Deneme Bonusu',
     TARGET_PLANS: ['Zumabet Hosgeldin Freesin'],   // deneme bonusu planı (kazancından açılan bonus iptal edilir)
-    LOOKBACK_H: 24,                       // bonus, platform bonusundan en fazla bu kadar saat önce açılmış olmalı
-    MATCH_MIN: 5,                         // saat farkı payı (dk)
+    LOOKBACK_H: 24,                       // deneme bonusu, kazançtan en fazla bu kadar saat önce açılmış olmalı
+    MATCH_MIN: 5,                         // kazanç bonusu ile işlem saati arasındaki pay (dk)
     FIND_RETRY: 4,                        // bonus henüz görünmüyorsa kaç tur daha aransın
+    CANCEL_RETRY: 3,                      // iptal isteği hata verirse kaç tur denensin (sonra Slack'e uyarı)
+    VERIFY_TRIES: 4, VERIFY_GAP_MS: 1500, // iptal sonrası "Canceled" doğrulaması (panel birkaç sn gecikebilir)
+    HTTP_TIMEOUT_MS: 20000,               // hiçbir istek bundan uzun bekletemez
+    INFO_TIMEOUT_MS: 10000,               // mesajdaki ad / kullanıcı adı sorgusu
+    LEADER_TTL_MS: 90000,                 // lider bu süre sessiz kalırsa başka sekme devralır
+    SLACK_MAX_FAILS: 5,                   // bir Slack mesajı en fazla kaç kez denensin
 };
 
 const CANCELLABLE = ['ACTIVE', 'QUEUED', 'SPENT ACTIVE', 'PENDING'];   // panelin isCancellableBonus listesi
@@ -66,30 +77,41 @@ const TAG = '[Bonus İptal]';
 const log = (...a) => console.log(TAG, ...a);
 const warn = (...a) => console.warn(TAG, ...a);
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const clock = (t) => new Date(t).toLocaleTimeString('tr-TR');
 
+/* ── sürüm: güncellemeden sonra yenilenmemiş eski sekmeler çalışmasın ── */
 const VER = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '?';
 const newer = (a, b) => { const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
-// Güncellemeden sonra yenilenmemiş eski sekmeler çalışmasın: en yeni sürüm kendini kaydeder
 if (newer(VER, GM_getValue('ver', '0'))) GM_setValue('ver', VER);
 const stale = () => newer(GM_getValue('ver', '0'), VER);
 
 const MODES = { off: 'Kapalı', live: 'Açık' };
-const mode = () => GM_getValue('mode', 'live') === 'off' ? 'off' : 'live';   // deneme modu kaldırıldı: eski 'dry' kaydı = Açık
+const mode = () => GM_getValue('mode', 'live') === 'off' ? 'off' : 'live';
 
-// Mod ve Durum her iki sitede de menüde (Teşhis yalnız GT'de)
+/* ── menü (her iki sitede) ── */
 GM_registerMenuCommand('Mod: Kapalı', () => { GM_setValue('mode', 'off'); alert('Bonus İptal KAPALI.'); });
 GM_registerMenuCommand('Mod: Açık', () => { GM_setValue('mode', 'live'); alert('Bonus İptal AÇIK.'); });
 GM_registerMenuCommand('Durum', () => {
     const rows = Object.entries(GM_getValue('book', {})).filter(([, v]) => v.result !== 'kurulumda mevcuttu').sort((a, b) => b[1].at - a[1].at);
-    const party = (v) => ` · party ${v.party || '?'}`;
-    const last = rows.slice(0, 10).map(([id, v]) => `${id}${party(v)}: ${v.result || `aranıyor (${v.tries || 0})`}`).join('\n');
-    // Deneme bonusu var ama kazanç bonusu iptal edilebilir durumda değil (panelde Cancel çıkmıyor, ör. Spent)
-    const spent = rows.filter(([, v]) => v.spent).slice(0, 15).map(([id, v]) => `${v.party} (işlem ${id}): ${v.spent}`).join('\n');
+    const last = rows.slice(0, 10).map(([id, v]) => `${id} · party ${v.party || '?'}: ${v.result || `aranıyor (${v.tries || 0})`}`).join('\n');
+    const spent = rows.filter(([, v]) => v.spent).slice(0, 10).map(([id, v]) => `${v.party} (işlem ${id}): ${v.spent}`).join('\n');
+    const g = GM_getValue('gtStatus', null);
+    const gAge = g ? Math.round((Date.now() - g.at) / 60000) : null;
+    const gLine = g ? `${g.msg} (${clock(g.at)}${gAge >= 3 ? ` — ${gAge} dk'dır çalışan GT sekmesi yok!` : ''})` : 'hiç çalışmadı — oturumu açık GT sekmesi yok';
     const s = GM_getValue('slackStatus', null);
     const q = GM_listValues().filter(k => k.startsWith('q:')).map(k => GM_getValue(k, null)).filter(Boolean);
-    const qInfo = q.length ? `${q.length} mesaj (en eskisi ${Math.round((Date.now() - Math.min(...q.map(x => x.at))) / 60000)} dk önce)` : 'boş';
-    const drop = GM_getValue('dropped', []).slice(-5).map(d => `${d.party || '?'} (${new Date(d.at).toLocaleTimeString('tr-TR')})`).join(', ');
-    alert(`Sürüm: ${VER}${stale() ? ' — ESKİ SEKME, F5 ile yenileyin!' : ''}\nMod: ${MODES[mode()]}\nSlack: ${s ? s.msg : 'hiç bağlanmadı'}${s ? ` (${new Date(s.at).toLocaleTimeString('tr-TR')})` : ''}\nSlack kuyruğu: ${qInfo}\n\nSon kayıtlar:\n${last || '—'}\n\nİptal edilemeyen (Spent vb.) — party ID:\n${spent || '—'}${drop ? `\n\nEski sekmeden gelip gönderilmeyen mesajlar (party):\n${drop}` : ''}`);
+    const qLine = q.length ? `${q.length} mesaj (en eskisi ${Math.round((Date.now() - Math.min(...q.map(x => x.at))) / 60000)} dk önce)` : 'boş';
+    const failed = GM_getValue('failed', []).slice(-5).map(f => `${f.id} (${clock(f.at)}): ${f.err}`).join('\n');
+    alert([
+        `Sürüm: ${VER}${stale() ? ' — ESKİ SEKME, F5 ile yenileyin!' : ''}`,
+        `Mod: ${MODES[mode()]}`,
+        `GT: ${gLine}`,
+        `Slack: ${s ? `${s.msg} (${clock(s.at)})` : 'hiç bağlanmadı — açık Slack sekmesi yok'}`,
+        `Slack kuyruğu: ${qLine}`,
+        ...(failed ? ['', 'Gönderilemeyen mesajlar:', failed] : []),
+        '', 'Son kayıtlar:', last || '—',
+        '', 'İptal edilemeyen (Spent vb.) — party ID:', spent || '—',
+    ].join('\n'));
 });
 
 if (location.hostname === 'app.slack.com') slackSide();
@@ -101,6 +123,7 @@ else gtSide();
 function gtSide() {
     const ME = Math.random().toString(36).slice(2);
 
+    /* ── oturum ve istekler ── */
     function token() {
         for (const key of ['service_auth_token', 'auth_token', 'session_auth_token']) {
             try {
@@ -116,20 +139,32 @@ function gtSide() {
         return null;
     }
     const need = () => { const t = token(); if (!t) throw new Error('oturum token yok'); return t; };
+
+    /** Zaman aşımlı fetch: panel bir isteğe hiç cevap vermezse bot o noktada sonsuza kadar beklemez. */
+    async function http(url, init = {}) {
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), CONFIG.HTTP_TIMEOUT_MS);
+        try { return await fetch(url, { credentials: 'include', ...init, signal: ac.signal }); }
+        catch (e) { throw e.name === 'AbortError' ? new Error(`panel ${CONFIG.HTTP_TIMEOUT_MS / 1000} sn içinde cevap vermedi`) : e; }
+        finally { clearTimeout(timer); }
+    }
     async function ics(path, params = {}, method = 'GET', body) {
         const t = need();
         const url = `${HOST}/ics/${path}?${new URLSearchParams({ sessionKey: t, uType: 'staff', ...params })}`;
         const headers = { Accept: 'application/json', Authorization: `Bearer ${t}` };
         if (body !== undefined) headers['Content-Type'] = 'application/json';
-        const res = await fetch(url, { method, credentials: 'include', headers, body: body === undefined ? undefined : JSON.stringify(body) });
+        const res = await http(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
         if (!res.ok) throw new Error(`HTTP ${res.status} — ${method} ${path.split('?')[0]}`);
         const text = await res.text();
         try { return JSON.parse(text); } catch { return text; }
     }
+
+    /* ── yardımcılar ── */
     const asList = (d) => Array.isArray(d) ? d : (Object.values(d || {}).find(Array.isArray) || []);
     const clean = (el) => (el?.textContent || '').replace(/\s+/g, ' ').trim();
     const pad = (n) => String(n).padStart(2, '0');
     const dmy = (d) => `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}`;
+    const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
     const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const money = (n) => Number(n).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     function num(s) {
@@ -140,18 +175,18 @@ function gtSide() {
         else if (comma >= 0) t = /,\d{1,2}$/.test(t) ? t.replace(',', '.') : t.replace(/,/g, '');
         return parseFloat(t);
     }
-    /** "2026-10-09 21:05:55.37" → dakika cinsinden karşılaştırma için ms (saat dilimi iki tarafta aynı kabul edilir) */
+    /** "2026-10-09 21:05:55.37" → karşılaştırma için ms (saat dilimi iki tarafta aynı kabul edilir) */
     const stamp = (s) => { const m = String(s).match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):?(\d{2})?/); return m ? Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)) : NaN; };
+    const isCancelled = (b) => /cancel/i.test(String(b?.status || ''));
 
     /* ── Transaction Report: formu panelden al, PLTFRM_BON + bugün ile gönder ── */
     async function fetchPlatformBonuses() {
         const t = need();
         const base = `${HOST}/j/reports/TransactionReport.action`;
-        const page = await fetch(`${base}?${new URLSearchParams({ embeddedInCore4: 'true', cmslanguage: 'en', token: t })}`, { credentials: 'include' });
+        const page = await http(`${base}?${new URLSearchParams({ embeddedInCore4: 'true', cmslanguage: 'en', token: t })}`);
         if (!page.ok) throw new Error('rapor formu HTTP ' + page.status);
-        const fdoc = new DOMParser().parseFromString(await page.text(), 'text/html');
-        const form = fdoc.querySelector('#tranType')?.form;
-        if (!form) throw new Error('rapor formu bulunamadı (oturum düşmüş olabilir)');
+        const form = new DOMParser().parseFromString(await page.text(), 'text/html').querySelector('#tranType')?.form;
+        if (!form) throw new Error('rapor formu gelmedi — panel oturumu düşmüş olabilir, panele yeniden giriş yapın');
 
         const now = new Date();
         const from = new Date(now.getTime() - 2 * 3600e3);   // gece yarısı geçişinde dünü de kapsa
@@ -163,14 +198,12 @@ function gtSide() {
         body.set('currency', 'TRY');
         body.set('execute', 'Go');
 
-        const res = await fetch(new URL(form.getAttribute('action') || base, HOST), {
-            method: 'POST', credentials: 'include',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString(),
+        const res = await http(new URL(form.getAttribute('action') || base, HOST), {
+            method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString(),
         });
         if (!res.ok) throw new Error('rapor HTTP ' + res.status);
-        const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
-        const table = doc.getElementById('transaction_report');
-        if (!table) throw new Error('transaction_report tablosu yok');
+        const table = new DOMParser().parseFromString(await res.text(), 'text/html').getElementById('transaction_report');
+        if (!table) throw new Error('rapor tablosu gelmedi');
 
         const rows = [...table.rows];
         const head = rows.find(r => /PARTY ID/i.test(clean(r)) && /TRANSACTION ID/i.test(clean(r)));
@@ -185,52 +218,51 @@ function gtSide() {
             const tranId = col(r, 'TRANSACTION ID'), partyId = col(r, 'PARTY ID');
             if (!/^\d+$/.test(tranId) || !/^\d+$/.test(partyId)) continue;
             const credit = num(col(r, 'CREDIT'));
-            // İptal edilen bonusun ters kaydı (borç / sıfır alacak) yeni bir kazanç değildir: atla
-            if (Number.isFinite(credit) && credit <= 0) continue;
+            if (Number.isFinite(credit) && credit <= 0) continue;   // iptalin ters kaydı (borç) kazanç değildir
             out.push({ tranId, partyId, at: col(r, 'TRANSACTION DATE'), credit });
         }
         return out;
     }
 
-    /* ── Bonus eşleştirme ve iptal ── */
-    async function playerBonuses(pid) {
-        return asList(await ics(`player-bonus/${pid}`, { currency: 'undefined' }));
-    }
+    /* ── bonus eşleştirme ── */
+    const playerBonuses = async (pid) => asList(await ics(`player-bonus/${pid}`, { currency: 'undefined' }));
+
     /** Kural: freespin kazancı (PLTFRM_BON) oyuncuya ayrı bir bonus olarak düşer (ör. "Freespin Zuma"; açılış saati =
      *  işlem saati, tutar = kazanç). İptal edilen bu kazanç bonusudur — yalnızca oyuncunun ondan önce LOOKBACK_H içinde
      *  açılmış bir TARGET_PLANS (deneme) bonusu varsa (durumu fark etmez, genelde "Spent").
      *  { pick, already, ambiguous, candidates (deneme bonusları), wins (kazanç bonusu adayları) } */
     function matchBonus(list, tx) {
         const t = stamp(tx.at);
-        const pad = CONFIG.MATCH_MIN * 60000;
+        const padMs = CONFIG.MATCH_MIN * 60000;
         const plan = (b) => CONFIG.TARGET_PLANS.some(p => String(b.planName || '').trim().toLowerCase() === p.toLowerCase());
         const bt = (b) => stamp(b.triggerDate);
         const amt = (b) => { for (const k of ['amount', 'bonusAmount', 'initialAmount']) { const v = num(b[k]); if (Number.isFinite(v) && v > 0) return v; } return NaN; };
-        const trial = list.filter(b => plan(b) && Number.isFinite(t) && bt(b) <= t + pad && bt(b) >= t - CONFIG.LOOKBACK_H * 3600e3 - pad);
-        let wins = list.filter(b => !plan(b) && Number.isFinite(t) && Math.abs(bt(b) - t) <= pad);
-        // Tutar okunabiliyorsa kazançla aynı olanlar (aynı dakikada başka bonus açılmışsa ayırt eder)
-        const same = wins.filter(b => Math.abs(amt(b) - tx.credit) < 0.01);
+        const trial = list.filter(b => plan(b) && Number.isFinite(t) && bt(b) <= t + padMs && bt(b) >= t - CONFIG.LOOKBACK_H * 3600e3 - padMs);
+        let wins = list.filter(b => !plan(b) && Number.isFinite(t) && Math.abs(bt(b) - t) <= padMs);
+        const same = wins.filter(b => Math.abs(amt(b) - tx.credit) < 0.01);   // tutar okunabiliyorsa aynı dakikadaki başka bonusu ayırır
         if (same.length) wins = same;
         const open = trial.length ? wins.filter(b => CANCELLABLE.includes(String(b.status || '').toUpperCase())) : [];
         return {
             pick: open.length === 1 ? open[0] : null,
             ambiguous: open.length > 1,
-            already: !!trial.length && !open.length && wins.some(b => /cancel/i.test(b.status)),
+            already: !!trial.length && !open.length && wins.some(isCancelled),
             candidates: trial,
             wins,
         };
     }
-    /** Slack mesajı için ad soyad ve kullanıcı adı (okunamazsa '—'; iptali engellemez). */
+
+    /* ── Slack mesajları ── */
     const USER_KEYS = ['userName', 'username', 'login', 'loginName', 'nickName', 'nickname', 'alias', 'screenName'];
+    /** Ad soyad + kullanıcı adı. Asla hata fırlatmaz, en fazla INFO_TIMEOUT_MS bekler (okunamayan '—'). */
     async function playerInfo(pid) {
-        const capped = (pr) => Promise.race([pr.catch(() => null), sleep(10000).then(() => null)]);   // en fazla 10 sn
+        const capped = (pr) => Promise.race([pr.catch(() => null), sleep(CONFIG.INFO_TIMEOUT_MS).then(() => null)]);
         const [prof, det] = await Promise.all([`players/${pid}/full-profile`, `players/${pid}/detail`].map(u => capped(ics(u))));
         const full = (o) => [o?.firstName, o?.lastName].filter(Boolean).join(' ').trim();
         const src = { ...(det || {}), ...(prof || {}) };
         const user = USER_KEYS.map(k => src[k]).find(v => typeof v === 'string' && v.trim());
         return { name: full(prof) || full(det) || '—', user: user ? user.trim() : '—' };
     }
-    /** Ortak Slack düzeni: emoji + kalın başlık, ad soyad, gövde, ID ve kullanıcı adı, varsa en altta italik not. */
+    /** Ortak düzen: emoji + kalın başlık, ad soyad, gövde, ID ve kullanıcı adı, varsa en altta italik not. */
     const card = (head, p, body, pid, note) => `${head}
 
 *Adı Soyadı:* ${esc(p.name)}
@@ -239,26 +271,53 @@ ${body}
 
 *ID:* ${pid}
 *Kullanıcı Adı:* ${esc(p.user)}${note ? `\n\n_${esc(note)}_` : ''}`;
-    const cancelText = (p, x, pid) => card(':no_entry: *Deneme Bonusu İptal*', p, MESSAGE(x), pid);
 
-    /** Bu botun iptal ettiği bonuslar (tekrar görünen kayıtlarda "başkası iptal etti" sanılmasın) */
+    function enqueue(key, text) {
+        GM_setValue('q:' + key, { text, at: Date.now(), v: VER });
+        GM_setValue('ping', Date.now());
+    }
+    /** Mesaj işlem kaydını bekletmez: önce defter kapanır, mesaj arkadan kuyruğa girer. */
+    const notify = (key, head, pid, body, note) => playerInfo(pid).then(p => enqueue(key, card(head, p, body, pid, note)));
+
+    /* ── defter: tur başında bir kez okunur, değişince yazılır ── */
+    const Book = {
+        d: {}, dirty: false,
+        load() { this.d = GM_getValue('book', {}); this.dirty = false; },
+        get(id) { return this.d[id]; },
+        set(id, v) { this.d[id] = { ...(this.d[id] || {}), ...v, at: Date.now() }; this.dirty = true; },
+        save() {
+            if (!this.dirty) return;
+            const week = Date.now() - 7 * 864e5;
+            for (const k of Object.keys(this.d)) if (this.d[k].at < week) delete this.d[k];
+            GM_setValue('book', this.d);
+            this.dirty = false;
+        },
+    };
+    const finish = (id, result, extra = {}) => { Book.set(id, { final: true, result, ...extra }); Book.save(); };
+
+    /** Bu botun iptal isteği gönderdiği bonuslar (panelde geç görünse de, tekrar karşılaşınca da "bizim" sayılır). */
     const ours = () => GM_getValue('cancelled', {});
     function markOurs(bonusId) {
         const c = ours(), week = Date.now() - 7 * 864e5;
         for (const k of Object.keys(c)) if (c[k] < week) delete c[k];
-        c[bonusId] = Date.now(); GM_setValue('cancelled', c);
+        c[bonusId] = Date.now();
+        GM_setValue('cancelled', c);
     }
+
+    /* ── panel işlemleri ── */
+    /** İptal + doğrulama. Panel durumu geç güncelleyebildiği için VERIFY_TRIES kez bakılır. */
     async function cancelBonus(pid, bonusId) {
         markOurs(bonusId);   // istekten ÖNCE: yanıt kaybolsa bile kendi iptalimiz sayılır
         const r = await ics(`player-bonus/${bonusId}`, {}, 'DELETE');
         if (r && typeof r === 'object' && r.status && r.status !== 'OK') throw new Error(`panel yanıtı: ${r.status}${r.message ? ' — ' + r.message : ''}`);
-        // Doğrula: listede artık Canceled olmalı
-        await sleep(1500);
-        const b = (await playerBonuses(pid)).find(x => String(x.id) === String(bonusId));
-        if (b && !/cancel/i.test(b.status)) throw new Error(`iptal sonrası durum hâlâ ${b.status}`);
+        let b = null;
+        for (let i = 0; i < CONFIG.VERIFY_TRIES; i++) {
+            await sleep(CONFIG.VERIFY_GAP_MS);
+            b = (await playerBonuses(pid)).find(x => String(x.id) === String(bonusId));
+            if (!b || isCancelled(b)) return;
+        }
+        throw new Error(`iptal sonrası durum hâlâ ${b.status}`);
     }
-
-    /* ── Limit üstü: sağlayıcı kısıtı ve 2.000 TL (panelin kendi istekleri, konsol kaydıyla doğrulandı) ── */
 
     /** Oturumdaki personel no (JWT içindeki staffid) — düzeltme kaydı bu kişi adına düşer. */
     function staffId() {
@@ -286,8 +345,6 @@ ${body}
 
     /** Bu oyuncuya son 30 günde aynı tutarda manuel düzeltme yapılmış mı? (çift ödeme kalkanı) */
     async function alreadyPaid(pid) {
-        const pad2 = (n) => String(n).padStart(2, '0');
-        const ymd = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
         const from = new Date(Date.now() - 30 * 864e5), to = new Date(Date.now() + 864e5);
         const rows = asList(await ics('player-transactions/page', {
             partyid: pid, startDate: `${ymd(from)} 0:0:0.000`, endDate: `${ymd(to)} 23:59:0.000`,
@@ -306,155 +363,170 @@ ${body}
         if (r && typeof r === 'object' && r.status && !/^(OK|SUCCESS)$/i.test(r.status)) throw new Error(`panel yanıtı: ${r.status}${r.message ? ' — ' + r.message : ''}`);
     }
 
-    /* ── Slack ── */
-    function enqueue(key, text, extra = {}) {
-        GM_setValue('q:' + key, { text, at: Date.now(), v: VER, ...extra });
-        GM_setValue('ping', Date.now());
-    }
-
-    /* ── Defter ── */
-    const book = () => GM_getValue('book', {});
-    function setBook(id, v) {
-        const b = book();
-        b[id] = { ...(b[id] || {}), ...v, at: Date.now() };
-        const week = Date.now() - 7 * 864e5;
-        for (const k of Object.keys(b)) if (b[k].at < week) delete b[k];
-        GM_setValue('book', b);
-    }
-
-    /** Bonusu başka bir kaynak (aynı Slack hesabıyla çalışan eski bot) iptal edip eski biçimle yazdıysa:
-     *  Slack tarafı o mesajı bulup yeni biçimle günceller; bulunamazsa hiçbir şey göndermez. */
-    async function adopt(tx) {
-        if (tx.credit >= CONFIG.LIMIT) return;
-        enqueue(tx.tranId + '-adopt', cancelText(await playerInfo(tx.partyId), money(tx.credit), tx.partyId), { adopt: tx.partyId });
-    }
-
+    /* ── bir işlem ── */
     async function handle(tx) {
-        const entry = book()[tx.tranId];
-        if (entry?.final) return;
-        if (!entry?.party) setBook(tx.tranId, { party: tx.partyId });
-        if (!Number.isFinite(tx.credit)) { setBook(tx.tranId, { final: true, result: 'tutar okunamadı' }); return; }
-        const over = tx.credit >= CONFIG.LIMIT;   // limit üstü: iptal + kısıt + 2.000 TL
+        const entry = Book.get(tx.tranId);
+        if (entry?.final) return false;
+        if (!entry?.party) Book.set(tx.tranId, { party: tx.partyId });
+        if (!Number.isFinite(tx.credit)) { finish(tx.tranId, 'tutar okunamadı'); return true; }
 
-        const list = await playerBonuses(tx.partyId);
-        const m = matchBonus(list, tx);
-        const tries = (entry?.tries || 0) + 1;
-        if (m.already && m.wins.some(b => /cancel/i.test(b.status) && ours()[b.id])) {
-            setBook(tx.tranId, { final: true, result: 'bizim iptal ettiğimiz bonus — tekrar kayıt, atlandı' }); return;
+        const m = matchBonus(await playerBonuses(tx.partyId), tx);
+        const x = money(tx.credit);
+
+        if (m.already) {
+            const done = m.wins.find(b => isCancelled(b) && String(b.id) === String(entry?.attempt));
+            if (done) {   // bu işlem için iptal isteğini biz gönderdik, panel sonradan Canceled gösterdi: başarılı iptal
+                finish(tx.tranId, `iptal: ${done.planName} #${done.id} (panel geç doğruladı)`);
+                notify(tx.tranId, ':no_entry: *Deneme Bonusu İptal*', tx.partyId, MESSAGE(x));
+                return true;
+            }
+            const mine = m.wins.some(b => isCancelled(b) && ours()[b.id]);
+            finish(tx.tranId, mine ? 'bizim iptal ettiğimiz bonus — tekrar kayıt, atlandı' : 'zaten iptal (bot dışında) — dokunulmadı');
+            return true;
         }
-        if (m.already) { await adopt(tx); setBook(tx.tranId, { final: true, result: 'zaten iptal (başkası) — mesajı yeni biçime çevrilecek' }); log(`${tx.tranId}: bonus zaten iptal edilmiş`); return; }
         if (m.ambiguous) {
-            setBook(tx.tranId, { final: true, result: 'birden fazla eşleşen bonus — dokunulmadı' });
-            enqueue(tx.tranId + '-amb', card(':warning: *Deneme Bonusu İptal Edilemedi*', await playerInfo(tx.partyId),
-                `Birden fazla eşleşen bonus bulundu, hiçbirine dokunulmadı. Bonus kazancı: *${money(tx.credit)} TL*`, tx.partyId, `İşlem ${tx.tranId}`));
-            return;
+            finish(tx.tranId, 'birden fazla eşleşen bonus — dokunulmadı');
+            notify(tx.tranId + '-amb', ':warning: *Deneme Bonusu İptal Edilemedi*', tx.partyId,
+                `Birden fazla eşleşen bonus bulundu, hiçbirine dokunulmadı. Bonus kazancı: *${x} TL*`, `İşlem ${tx.tranId}`);
+            return true;
         }
         if (!m.pick) {
-            if (tries < CONFIG.FIND_RETRY) { setBook(tx.tranId, { tries }); return; }   // bonus henüz oluşmamış olabilir
+            const tries = (entry?.tries || 0) + 1;
+            if (tries < CONFIG.FIND_RETRY) { Book.set(tx.tranId, { tries }); Book.save(); return true; }   // bonus henüz oluşmamış olabilir
             const seen = `deneme: ${m.candidates.map(b => `#${b.id} ${b.status}`).join(', ') || 'yok'} · kazanç bonusu: ${m.wins.map(b => `#${b.id} ${b.status}`).join(', ') || 'yok'}`;
             const spent = m.candidates.length && m.wins.length ? m.wins.map(b => `${b.planName} #${b.id} ${b.status}`).join(', ') : undefined;
-            setBook(tx.tranId, { final: true, result: `iptal edilebilir bonus yok (${seen})`, spent });
-            // Deneme bonusu değil (ya da artık iptal edilemez): Slack'e bir şey gitmez, sadece defter + konsol
-            log(`${tx.tranId}: iptal edilebilir bonus bulunamadı`, m.candidates);
-            return;
+            finish(tx.tranId, `iptal edilebilir bonus yok (${seen})`, { spent });   // deneme bonusu değil ya da iptal edilemez: mesaj yok
+            return true;
         }
 
-        const x = money(tx.credit);
         const info = `${m.pick.planName} #${m.pick.id}`;
-        if (over) return payoutFlow(tx, m.pick, x, info);
+        if (tx.credit >= CONFIG.LIMIT) { await payoutFlow(tx, m.pick, x, info); return true; }
+
+        Book.set(tx.tranId, { attempt: m.pick.id }); Book.save();   // sonraki turda "geç doğrulanan bizim iptalimiz" diye tanınsın
         try {
             await cancelBonus(tx.partyId, m.pick.id);
-            enqueue(tx.tranId, cancelText(await playerInfo(tx.partyId), x, tx.partyId));
-            setBook(tx.tranId, { final: true, result: `iptal: ${info}` });
-            log(`${tx.tranId}: İPTAL → ${info}, kazanç ${x}`);
         } catch (e) {
-            // Bonus bu arada iptal edildiyse (başka sekme/kopya ya da elle) sessizce geç; mesajı o taraf atar
+            // İsteği biz gönderdik ve bonus artık iptal görünüyor: iptal bizimdir, mesaj normal gider
             const now = await playerBonuses(tx.partyId).then(l => l.find(b => String(b.id) === String(m.pick.id))).catch(() => null);
-            if (now && /cancel/i.test(now.status)) { await adopt(tx); setBook(tx.tranId, { final: true, result: `zaten iptal: ${info} — mesajı yeni biçime çevrilecek` }); log(`${tx.tranId}: ${info} zaten iptal edilmiş`); return; }
-            // Geçici panel hatası olabilir: Slack'e yazmadan önce sonraki turlarda tekrar dene
-            const ct = (entry?.cancelTries || 0) + 1;
-            if (ct < 3) { setBook(tx.tranId, { cancelTries: ct, result: `iptal denemesi ${ct}: ${e.message}` }); warn(`${tx.tranId}: iptal denemesi ${ct} başarısız`, e.message); return; }
-            setBook(tx.tranId, { final: true, result: `iptal başarısız: ${e.message}` });
-            enqueue(tx.tranId + '-err', card(':warning: *Deneme Bonusu İptal Edilemedi*', await playerInfo(tx.partyId),
-                `Bonus kazancı: *${x} TL* — bonus elle iptal edilmeli.`, tx.partyId, `Hata: ${e.message} · ${info}`));
-            warn(`${tx.tranId}: iptal başarısız`, e);
+            if (!(now && isCancelled(now) && ours()[m.pick.id])) {
+                const ct = (entry?.cancelTries || 0) + 1;
+                if (ct < CONFIG.CANCEL_RETRY) { Book.set(tx.tranId, { cancelTries: ct, result: `iptal denemesi ${ct}: ${e.message}` }); Book.save(); warn(`${tx.tranId}: iptal denemesi ${ct}`, e.message); return true; }
+                finish(tx.tranId, `iptal başarısız: ${e.message}`);
+                notify(tx.tranId + '-err', ':warning: *Deneme Bonusu İptal Edilemedi*', tx.partyId,
+                    `Bonus kazancı: *${x} TL* — bonus elle iptal edilmeli.`, `Hata: ${e.message} · ${info}`);
+                return true;
+            }
+            warn(`${tx.tranId}: doğrulama gecikti ama bonus iptal edilmiş`, e.message);
         }
+        finish(tx.tranId, `iptal: ${info}`);
+        notify(tx.tranId, ':no_entry: *Deneme Bonusu İptal*', tx.partyId, MESSAGE(x));
+        log(`${tx.tranId}: İPTAL → ${info}, kazanç ${x}`);
+        return true;
     }
 
-    /** Limit üstü akış. Sıra: çift ödeme kontrolü → bonus iptali → tüm sağlayıcı kısıtı → 2.000 TL.
-     *  Bir adım başarısız olursa sonrakiler yapılmaz, Slack'e hangi adımların yapıldığı yazılır. */
+    /** Limit üstü: çift ödeme kontrolü → bonus iptali → tüm sağlayıcı kısıtı → 2.000 TL. Adım başarısızsa durur. */
     async function payoutFlow(tx, bonus, x, info) {
         const pid = tx.partyId;
-        const paidBook = GM_getValue('paid', {});
+        const paid = GM_getValue('paid', {});
         const done = [];
         try {
-            if (paidBook[pid]) throw new Error('bu oyuncuya daha önce ödeme yapılmış (bot kaydı)');
+            if (paid[pid]) throw new Error('bu oyuncuya daha önce ödeme yapılmış (bot kaydı)');
             if (await alreadyPaid(pid)) throw new Error(`son 30 günde ${money(CONFIG.PAYOUT)} TL manuel düzeltme zaten var`);
 
-            await cancelBonus(pid, bonus.id);
-            done.push('bonus iptal');
+            try { await cancelBonus(pid, bonus.id); }
+            catch (e) {   // doğrulama gecikmesi: bir süre daha bak, iptal görünürse devam
+                let ok = false;
+                for (let i = 0; i < CONFIG.VERIFY_TRIES * 2 && !ok; i++) {
+                    await sleep(CONFIG.VERIFY_GAP_MS * 2);
+                    const now = await playerBonuses(pid).then(l => l.find(b => String(b.id) === String(bonus.id))).catch(() => null);
+                    ok = !!now && isCancelled(now);
+                }
+                if (!ok) throw e;
+            }
+            done.push(`bonus iptal (${info})`);
 
             const lock = await lockAllProviders(pid);
             done.push(lock.already ? 'sağlayıcılar zaten kısıtlı' : `${lock.count} sağlayıcı kısıtlandı`);
 
-            // Kayıt POST'tan ÖNCE: istek gidip yanıt kaybolsa bile ikinci kez ödeme yapılmaz
-            paidBook[pid] = Date.now();
-            GM_setValue('paid', paidBook);
+            paid[pid] = Date.now();   // POST'tan ÖNCE: istek gidip yanıt kaybolsa bile ikinci kez ödeme yapılmaz
+            GM_setValue('paid', paid);
             await addPayout(pid);
             done.push(`+${money(CONFIG.PAYOUT)} TL eklendi`);
 
-            // Önce kayıt kapanır; mesaj ana akışı bekletmez (ad/kullanıcı adı sorgusu takılsa bile bot donmaz)
-            setBook(tx.tranId, { final: true, result: `limit üstü: ${done.join(', ')}` });
+            finish(tx.tranId, `limit üstü: ${done.join(', ')}`);
+            notify(tx.tranId, ':moneybag: *Deneme Bonusu Çekilebilir Bakiye*', pid, MESSAGE_WIN(x));
             log(`${tx.tranId}: limit üstü tamam → ${done.join(', ')}`);
-            playerInfo(pid).then((p) => enqueue(tx.tranId, card(':moneybag: *Deneme Bonusu Çekilebilir Bakiye*', p, MESSAGE_WIN(x), pid)));
         } catch (e) {
-            setBook(tx.tranId, { final: true, result: `limit üstü yarım kaldı (${done.join(', ') || 'hiçbir adım'}): ${e.message}` });
-            enqueue(tx.tranId + '-err', card(':warning: *Deneme Bonusu Çekilebilir Bakiye — Tamamlanamadı*', await playerInfo(pid),
-                `Bonus kazancı: *${x} TL*\n*Yapılanlar:* ${esc(done.join(', ') || 'hiçbiri')} — kalan adımlar elle yapılmalı.`, pid, `Hata: ${e.message}`));
+            finish(tx.tranId, `limit üstü yarım kaldı (${done.join(', ') || 'hiçbir adım'}): ${e.message}`);
+            notify(tx.tranId + '-err', ':warning: *Deneme Bonusu Çekilebilir Bakiye — Tamamlanamadı*', pid,
+                `Bonus kazancı: *${x} TL*\n*Yapılanlar:* ${esc(done.join(', ') || 'hiçbiri')} — kalan adımlar elle yapılmalı.`, `Hata: ${e.message}`);
             warn(`${tx.tranId}: limit üstü akış durdu`, done, e);
         }
     }
 
-    let busy = false;
-    async function tick() {
-        if (busy || mode() === 'off' || stale()) return;   // eski sürüm sekmesi: hiçbir şey yapma
-        // Birden fazla GT sekmesi: tek lider çalışsın
+    /* ── döngü: tek lider sekme ── */
+    const gtStatus = (msg) => GM_setValue('gtStatus', { msg, at: Date.now() });
+    const isLeader = () => GM_getValue('leader', null)?.owner === ME;
+    function claimLeader() {
         const lead = GM_getValue('leader', null);
-        if (lead && lead.owner !== ME && Date.now() - lead.at < 3 * CONFIG.POLL_SEC * 1000) return;
+        if (lead && lead.owner !== ME && Date.now() - lead.at < CONFIG.LEADER_TTL_MS) return false;
         GM_setValue('leader', { owner: ME, at: Date.now() });
-        if (!token()) return;   // giriş yapılmamış sekme
+        return true;
+    }
+    const releaseLeader = () => { if (isLeader()) GM_deleteValue('leader'); };
 
-        busy = true;
+    let busy = false, busySince = 0;
+    async function tick() {
+        if (busy) {
+            if (Date.now() - busySince < 5 * 60000) return;
+            warn('5 dakikadır biten tur yok — sıfırlanıyor');   // her istek zaman aşımlı; yine de son emniyet
+            busy = false;
+        }
+        if (mode() === 'off' || stale()) return;
+        // Oturumu olmayan sekme liderliği almaz (alırsa sağlıklı sekmeyi de bekletirdi)
+        if (!token()) { if (isLeader()) { releaseLeader(); gtStatus('GT oturumu yok — panele giriş yapılmamış ya da oturum düşmüş'); } return; }
+        if (!claimLeader()) return;
+
+        busy = true; busySince = Date.now();
         try {
             const txs = await fetchPlatformBonuses();
+            Book.load();
             if (!GM_getValue('seeded', false)) {
-                for (const tx of txs) setBook(tx.tranId, { final: true, result: 'kurulumda mevcuttu' });
+                for (const tx of txs) Book.set(tx.tranId, { final: true, result: 'kurulumda mevcuttu', party: tx.partyId });
+                Book.save();
                 GM_setValue('seeded', true);
-                log(`ilk kurulum: ${txs.length} kayıt görüldü sayıldı, işlenmedi.`);
+                gtStatus(`ilk kurulum: ${txs.length} kayıt görüldü sayıldı`);
                 return;
             }
-            // Party ID'si kaydedilmemiş eski kayıtları rapordan tamamla (Durum listesi için)
-            const bk = book(); let fill = false;
-            for (const tx of txs) if (bk[tx.tranId] && !bk[tx.tranId].party) { bk[tx.tranId].party = tx.partyId; fill = true; }
-            if (fill) GM_setValue('book', bk);
+            for (const tx of txs) if (Book.get(tx.tranId) && !Book.get(tx.tranId).party) Book.set(tx.tranId, { party: tx.partyId });
+            let worked = 0;
             for (const tx of txs) {
-                try { await handle(tx); }
+                GM_setValue('leader', { owner: ME, at: Date.now() });   // uzun turda liderlik düşmesin
+                try { if (await handle(tx)) worked++; }
                 catch (e) {
-                    const tries = (book()[tx.tranId]?.tries || 0) + 1;
+                    const tries = (Book.get(tx.tranId)?.tries || 0) + 1;
                     warn(`${tx.tranId}: işlenemedi`, e.message);
-                    setBook(tx.tranId, tries >= 10 ? { tries, final: true, result: `hata: ${e.message}` } : { tries });
+                    Book.set(tx.tranId, tries >= 10 ? { tries, final: true, result: `hata: ${e.message}` } : { tries, result: `hata (${tries}): ${e.message}` });
+                    Book.save();
                 }
             }
-        } catch (e) { warn('rapor okunamadı:', e.message); }
-        finally { busy = false; }
+            Book.save();
+            gtStatus(`çalışıyor — bugün ${txs.length} platform bonusu${worked ? `, bu tur ${worked} işlem` : ''}`);
+        } catch (e) {
+            warn('tur başarısız:', e.message);
+            gtStatus(`HATA: ${e.message}`);
+            releaseLeader();   // sağlıklı başka sekme varsa o devralsın
+        } finally { busy = false; }
     }
 
+    /* ── teşhis menüleri ── */
     GM_registerMenuCommand('Test: örnek iptal mesajı gönder (iptal yapmaz)', async () => {
         try {
             const [tx] = await fetchPlatformBonuses();
             if (!tx) { alert('Bugün platform bonus kaydı yok; örnek için bir oyuncu bulunamadı.'); return; }
             const p = await playerInfo(tx.partyId);
-            enqueue('test-' + Date.now(), `:test_tube: _TEST — bu betiğin (${VER}) mesaj biçimi, hiçbir bonus iptal edilmedi_\n\n` + cancelText(p, money(tx.credit), tx.partyId));
+            enqueue('test-' + Date.now(), `:test_tube: _TEST — bu betiğin (${VER}) mesaj biçimi, hiçbir bonus iptal edilmedi_\n\n` +
+                card(':no_entry: *Deneme Bonusu İptal*', p, MESSAGE(money(tx.credit)), tx.partyId));
             alert(`Örnek mesaj kuyruğa alındı (oyuncu ${tx.partyId}: ${p.name} / ${p.user}). Birkaç saniye içinde Slack kanalında görünmeli.`);
         } catch (e) { alert('Test hatası: ' + e.message); }
     });
@@ -463,7 +535,7 @@ ${body}
             const [tx] = await fetchPlatformBonuses();
             if (!tx) { alert('Bugün platform bonus kaydı yok.'); return; }
             const m = matchBonus(await playerBonuses(tx.partyId), tx);
-            const rec = book()[tx.tranId];
+            const rec = GM_getValue('book', {})[tx.tranId];
             const lines = [
                 `Transaction ${tx.tranId} · Party ${tx.partyId} · ${tx.at} · ${money(tx.credit)} TL`,
                 tx.credit < CONFIG.LIMIT ? 'Limit altı → bonus iptali + mesaj' : `Limit üstü → bonus iptali + tüm sağlayıcı kısıtı + ${money(CONFIG.PAYOUT)} TL`,
@@ -475,25 +547,26 @@ ${body}
                 `Mod: ${MODES[mode()]}`,
             ];
             if (!m.pick || mode() === 'off') { alert([...lines, '', 'Teşhis yalnızca değerlendirir: iptal edilmedi, Slack\'e yazılmadı.'].join('\n')); return; }
-            const what = `${m.pick.planName} #${m.pick.id} iptal edilip Slack'e yazılsın mı?`;
-            if (!confirm([...lines, '', `Bu işlem şimdi işlensin mi? ${what}`].join('\n'))) return;
+            if (!confirm([...lines, '', `Bu işlem şimdi işlensin mi? ${m.pick.planName} #${m.pick.id} iptal edilip Slack'e yazılsın mı?`].join('\n'))) return;
             while (busy) await sleep(500);
-            busy = true;
+            busy = true; busySince = Date.now();
             try {
-                const b = book(); delete b[tx.tranId]; GM_setValue('book', b);
+                Book.load();
+                delete Book.d[tx.tranId]; Book.dirty = true;
                 await handle(tx);
+                Book.save();
             } finally { busy = false; }
-            alert(`Sonuç: ${book()[tx.tranId]?.result || 'işlenemedi'}`);
+            alert(`Sonuç: ${GM_getValue('book', {})[tx.tranId]?.result || 'işlenemedi'}`);
         } catch (e) { alert('Teşhis hatası: ' + e.message); }
     });
 
     setInterval(tick, CONFIG.POLL_SEC * 1000);
     setTimeout(tick, 4000);
-    log(`hazır. Mod: ${MODES[mode()]}`);
+    log(`hazır (${VER}). Mod: ${MODES[mode()]}`);
 }
 
 /* ════════════════════════════════════════════════════════════
-   SLACK TARAFI (Otomatik Red ile aynı yöntem)
+   SLACK TARAFI
    ════════════════════════════════════════════════════════════ */
 function slackSide() {
     let token = null, busy = false;
@@ -516,33 +589,43 @@ function slackSide() {
         const body = new URLSearchParams({ token: tok, ...params }).toString();
         const init = { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body };
         const url = `${location.origin}/api/${method}`;
-        let res;
-        try { res = await W.fetch(url, typeof cloneInto === 'function' ? cloneInto(init, W) : init); }
-        catch { res = await fetch(url, init); }
+        const go = async () => {
+            try { return await W.fetch(url, typeof cloneInto === 'function' ? cloneInto(init, W) : init); }
+            catch { return fetch(url, init); }
+        };
+        const res = await Promise.race([go(), sleep(CONFIG.HTTP_TIMEOUT_MS).then(() => { throw new Error(`Slack ${CONFIG.HTTP_TIMEOUT_MS / 1000} sn içinde cevap vermedi`); })]);
         if (res.status === 429) return { ok: false, error: 'ratelimited', retry: (+res.headers.get('retry-after') || 5) * 1000 };
         return JSON.parse(await res.text());
     }
     async function resolveToken() {
         const cands = collectTokens();
         if (!cands.length) throw new Error('Slack oturum anahtarı bulunamadı');
+        const errs = [];
         for (const t of cands) {
-            try { const r = await call('conversations.info', { channel: CONFIG.CHANNEL }, t); if (r.ok) { token = t; return; } } catch { /* sonraki */ }
+            try { const r = await call('conversations.info', { channel: CONFIG.CHANNEL }, t); if (r.ok) { token = t; return; } errs.push(r.error); }
+            catch (e) { errs.push(e.message); }
         }
-        throw new Error(`hiçbir oturum ${CONFIG.CHANNEL} kanalını göremiyor`);
+        throw new Error(`hiçbir oturum ${CONFIG.CHANNEL} kanalını göremiyor [${[...new Set(errs)].join(', ')}]`);
     }
+    const PERMANENT = /channel_not_found|not_in_channel|is_archived|msg_too_long|no_text|restricted_action|invalid_blocks/;
     /** Aynı işlem için daha önce mesaj gittiyse (ör. Teşhis'ten yeniden işlenince) yenisi atılmaz, eskisi güncellenir. */
     async function send(text, prev) {
         for (let i = 0; i < 4; i++) {
             const r = prev
                 ? await call('chat.update', { channel: CONFIG.CHANNEL, ts: prev, text })
                 : await call('chat.postMessage', { channel: CONFIG.CHANNEL, text, unfurl_links: 'false', unfurl_media: 'false' });
-            if (!r.ok && prev && /message_not_found|cant_update_message|edit_window_closed/.test(r.error)) { prev = null; continue; }
             if (r.ok) return r;
+            if (prev && /message_not_found|cant_update_message|edit_window_closed/.test(r.error)) { prev = null; continue; }
             if (r.error === 'ratelimited') { await sleep(r.retry); continue; }
             if (/invalid_auth|not_authed|token_revoked/.test(r.error)) { token = null; await resolveToken(); continue; }
             throw new Error(r.error || 'bilinmeyen hata');
         }
         throw new Error('4 denemede gönderilemedi');
+    }
+    function giveUp(id, v, err) {
+        const f = GM_getValue('failed', []);
+        f.push({ id, at: Date.now(), err, text: String(v.text).slice(0, 300) });
+        GM_setValue('failed', f.slice(-20));
     }
     async function flush() {
         if (busy) return;
@@ -558,46 +641,32 @@ function slackSide() {
             if (!token) await resolveToken();
             const items = keys.map(k => [k, GM_getValue(k, null)]).filter(([, v]) => v).sort((a, b) => a[1].at - b[1].at);
             for (const [k, v] of items) {
-                if (Date.now() - v.at > 24 * 3600e3) { GM_deleteValue(k); continue; }
-                // Sürüm damgası yok = güncellenmemiş eski GT sekmesinden eski biçimde mesaj: gönderme, Durum'a yaz
-                if (!v.v) {
-                    const d = GM_getValue('dropped', []);
-                    d.push({ party: (String(v.text).match(/ID:\*?\s*(\d+)/) || [])[1], at: Date.now() });
-                    GM_setValue('dropped', d.slice(-20));
-                    GM_deleteValue(k);
-                    status('UYARI: eski sürüm GT sekmesi açık — tüm GT sekmelerini F5 ile yenileyin');
-                    continue;
-                }
-                GM_setValue('slackLock', { owner: ME, at: Date.now() });
-                if (v.adopt) {
-                    // Eski biçimli mesajı (bizim hesaptan, aynı ID'li, yeni başlıksız) bul ve güncelle; yoksa 15 dk bekle, sonra bırak
-                    const old = await findOld(v.adopt);
-                    if (old) { await send(v.text, old); GM_deleteValue(k); status(`eski mesaj yeni biçime çevrildi ${v.adopt}`); }
-                    else if (Date.now() - v.at > 15 * 60000) GM_deleteValue(k);
-                    continue;
-                }
-                const sent = GM_getValue('sent', {});
                 const id = k.slice(2);
-                const r = await send(v.text, sent[id]?.ts);
-                const week = Date.now() - 7 * 864e5;
-                for (const x of Object.keys(sent)) if (sent[x].at < week) delete sent[x];
-                sent[id] = { ts: r.ts || sent[id]?.ts, at: Date.now() };
-                GM_setValue('sent', sent);
-                GM_deleteValue(k);
-                status(`son gönderim ${k.slice(2)}`);
+                if (Date.now() - v.at > 24 * 3600e3) { giveUp(id, v, '24 saat gönderilemedi'); GM_deleteValue(k); continue; }
+                if (!v.v || v.adopt) { GM_deleteValue(k); continue; }   // eski sürümlerden kalan kayıtlar
+                GM_setValue('slackLock', { owner: ME, at: Date.now() });
+                try {
+                    const sent = GM_getValue('sent', {});
+                    const r = await send(v.text, sent[id]?.ts);
+                    const week = Date.now() - 7 * 864e5;
+                    for (const x of Object.keys(sent)) if (sent[x].at < week) delete sent[x];
+                    sent[id] = { ts: r.ts || sent[id]?.ts, at: Date.now() };
+                    GM_setValue('sent', sent);
+                    GM_deleteValue(k);
+                    status(`son gönderim ${id}`);
+                } catch (e) {
+                    // Bu mesaj diğerlerini bekletmez: sayılır, kalıcı hatada ya da SLACK_MAX_FAILS'te bırakılır
+                    const fails = (v.fails || 0) + 1;
+                    warn(`${id} gönderilemedi (${fails}):`, e.message);
+                    status(`HATA (${id}): ${e.message}`);
+                    if (PERMANENT.test(e.message) || fails >= CONFIG.SLACK_MAX_FAILS) { giveUp(id, v, e.message); GM_deleteValue(k); }
+                    else GM_setValue(k, { ...v, fails });
+                    if (!token) break;   // oturum yoksa diğerlerini de deneme
+                }
                 await sleep(1200);
             }
-        } catch (e) { warn('gönderilemedi:', e.message); status(`HATA: ${e.message}`); }
+        } catch (e) { warn('Slack:', e.message); status(`HATA: ${e.message}`); }
         finally { busy = false; GM_deleteValue('slackLock'); }
-    }
-    let me = null;
-    async function findOld(pid) {
-        if (!me) { const a = await call('auth.test', {}); me = a.ok ? a.user_id : null; }
-        const h = await call('conversations.history', { channel: CONFIG.CHANNEL, limit: '50' });
-        if (!h.ok) throw new Error(h.error);
-        const re = new RegExp(`ID:\\*?\\s*${pid}\\b`);
-        const m = (h.messages || []).find(x => x.user === me && re.test(x.text || '') && !/Deneme Bonusu İptal\*/.test(x.text || ''));
-        return m ? m.ts : null;
     }
     GM_addValueChangeListener('ping', () => flush());
     setInterval(flush, 20000);
