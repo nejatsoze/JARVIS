@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Slack Çekim Bildirimi
 // @namespace    palentis.slack-cekim
-// @version      1.1.0
-// @description  Pending Withdrawals listesine yeni bir çekim düşünce Party ID, çekim tutarı/yöntemi, son yatırım tutarı/yöntemi ve son yatırımdan bu yana max bakiyeyi Slack kanalına (şu an test kanalı C0C80H6L4CD) senin adınla gönderir; talep onaylanınca mesaja ✅, reddedilince ❌ tepkisi ve red sebebini thread cevabı olarak ekler. Mesajı açık Slack sekmesi atar; iki sekme Tampermonkey deposu üzerinden haberleşir. Webhook / n8n gerekmez.
+// @version      1.1.1
+// @description  Pending Withdrawals listesine yeni bir çekim düşünce Party ID, çekim tutarı/yöntemi, son yatırım tutarı/yöntemi ve son yatırımdan bu yana max bakiyeyi Slack kanalına (C0C81S6KVMK) senin adınla gönderir; talep onaylanınca mesaja ✅, reddedilince ❌ tepkisi ve red sebebini thread cevabı olarak ekler. Mesajı açık Slack sekmesi atar; iki sekme Tampermonkey deposu üzerinden haberleşir. Webhook / n8n gerekmez.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
 // @grant        GM_getValue
@@ -38,7 +38,7 @@
 'use strict';
 
 const CONFIG = {
-    CHANNEL: 'C0C80H6L4CD',     // test kanalı; asıl kanal C0BMBT1A6KX şimdilik kapalı (geri almak için buraya yaz)
+    CHANNEL: 'C0C81S6KVMK',     // bildirim kanalı
     POLL_SEC: 30,              // arka plan liste yoklaması; 0 = kapalı (sadece sayfadaki tablo)
     MAX_AGE_MIN: 180,          // bundan eski talepler bildirilmez (tarayıcı uzun süre kapalı kaldıysa yığın gitmesin)
     DEPOSIT_DAYS: 90,          // son yatırım bu kadar gün geriye aranır
