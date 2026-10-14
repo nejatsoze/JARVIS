@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dekont Aktar — Slack'ten Megapay / Hemen Pay Telegram grubuna
 // @namespace    palentis.dekont-aktar
-// @version      1.3.0
+// @version      1.3.1
 // @description  C0BMBT1A6KX kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesaja oyuncu bilgileriyle (Party ID, ad soyad) ve [Megapay] [Hemen Pay] butonlarıyla cevap verir. Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -483,13 +483,16 @@ function slackSide() {
         setTimeout(() => d.remove(), 4500);
     }
 
+    /** Slack emojiyi resme çevirir (metinde yalnız "Kopyala" kalır): baştaki emoji/işaretler yok sayılır. */
+    const isCopyBtn = (el) => !!el && /^[^\p{L}]*Kopyala$/u.test((el.textContent || '').trim());
+
     /** Slack'teki bağlantı butonu: hangi hedef, hangi oyuncu? (oyuncu, butonun mesajındaki "Oyuncu Bilgileri" altındaki ilk numara) */
     function locate(el) {
         const btn = el.closest('a, button');
         if (!btn) return null;
         const label = (btn.textContent || '').trim();
         const href = btn.getAttribute('href') || '';
-        const target = label === CONFIG.COPY_LABEL ? { id: 'copy', label: 'Kopyala' }
+        const target = isCopyBtn(btn) ? { id: 'copy', label: 'Kopyala' }
             : CONFIG.TARGETS.find(t => label === t.label || (href && href.includes(t.url)));
         if (!target) return null;
         let box = btn;
@@ -567,14 +570,14 @@ function slackSide() {
     }
     // Fare butona gelince dekontu önceden hazırla (tıklamada pano izni süresi dolmasın)
     document.addEventListener('pointerover', (e) => {
-        if (!e.target.closest?.('a, button') || (e.target.closest('a, button').textContent || '').trim() !== CONFIG.COPY_LABEL) return;
+        if (!isCopyBtn(e.target.closest?.('a, button'))) return;
         const l = locate(e.target);
         if (l?.target.id === 'copy') preparePng(l.entry);
     }, true);
     // Kopyala butonunu Megapay + Hemen Pay'in toplam genişliğine yay
     function widenCopy(root) {
         for (const b of root.querySelectorAll?.('button, a') || []) {
-            if (b.dataset.dkWide || (b.textContent || '').trim() !== CONFIG.COPY_LABEL) continue;
+            if (b.dataset.dkWide || !isCopyBtn(b)) continue;
             let box = b.parentElement, row = null;
             for (let i = 0; i < 10 && box && !row; i++, box = box.parentElement) {
                 const bs = [...box.querySelectorAll('button, a')].filter(x => CONFIG.TARGETS.some(t => (x.textContent || '').trim() === t.label));
