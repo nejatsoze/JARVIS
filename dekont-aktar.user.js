@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dekont Aktar — Slack'ten Megapay / Hemen Pay Telegram grubuna
 // @namespace    palentis.dekont-aktar
-// @version      1.2.8
+// @version      1.3.0
 // @description  C0BMBT1A6KX kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesaja oyuncu bilgileriyle (Party ID, ad soyad) ve [Megapay] [Hemen Pay] butonlarıyla cevap verir. Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -44,6 +44,7 @@ const CONFIG = {
         { id: 'megapay', label: 'Megapay', url: 'https://t.me/c/2515555411/3', hash: '#-2515555411', topic: { id: 3, name: 'Megapay Havale' } },
         { id: 'hemenpay', label: 'Hemen Pay', url: 'https://web.telegram.org/k/#-4487917824', hash: '#-4487917824' },
     ],
+    COPY_LABEL: '📋 Kopyala',                            // dekont + oyuncu bilgilerini birlikte panoya alan geniş buton
     EMAIL_RE: /([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/,
     USER_RE: /(?:^|\s)["“”„](?=[A-Za-z0-9_.-]*[A-Za-z])([A-Za-z0-9_.-]{3,40})/,   // "Ahmetokatan → kullanıcı adı (en az bir harf: "100 TL" sayılmaz)
     EMAIL_FIELD: '2',                                   // panel oyuncu araması: alan 2 = e-posta
@@ -448,6 +449,7 @@ function slackSide() {
                 const blocks = [
                     { type: 'section', text: { type: 'mrkdwn', text: `*Oyuncu Bilgileri:*\n• \`${v.pid}\`\n• Ad Soyad : ${esc(v.name)}` } },
                     { type: 'actions', elements: CONFIG.TARGETS.map(t => ({ type: 'button', action_id: `dk_${t.id}`, text: { type: 'plain_text', text: t.label }, url: t.url })) },
+                    { type: 'actions', elements: [{ type: 'button', action_id: 'dk_copy', value: 'copy', text: { type: 'plain_text', text: CONFIG.COPY_LABEL, emoji: true } }] },
                 ];
                 const r = await api('chat.postMessage', { channel: CONFIG.CHANNEL, thread_ts: v.thread, text: infoText(v), blocks: JSON.stringify(blocks), unfurl_links: 'false' });
                 const map = GM_getValue('replies', {});   // cevap ts → oyuncu + o mesajın dekontu
@@ -487,7 +489,8 @@ function slackSide() {
         if (!btn) return null;
         const label = (btn.textContent || '').trim();
         const href = btn.getAttribute('href') || '';
-        const target = CONFIG.TARGETS.find(t => label === t.label || (href && href.includes(t.url)));
+        const target = label === CONFIG.COPY_LABEL ? { id: 'copy', label: 'Kopyala' }
+            : CONFIG.TARGETS.find(t => label === t.label || (href && href.includes(t.url)));
         if (!target) return null;
         let box = btn;
         for (let i = 0; i < 12 && box && !/Oyuncu Bilgileri/.test(box.textContent || ''); i++) box = box.parentElement;
@@ -504,6 +507,7 @@ function slackSide() {
         const l = locate(e.target);
         if (!l) return;
         e.preventDefault(); e.stopImmediatePropagation();
+        if (l.target.id === 'copy') { copyAll(l.entry); return; }
         // Telegram sekmesine "orada mısın?" (arka plandaki sekmede zamanlayıcılar yavaşladığı için kalp atışına değil cevaba bakılır)
         const id = Math.random().toString(36).slice(2);
         let answered = false;
@@ -522,6 +526,73 @@ function slackSide() {
         try { await navigator.clipboard.writeText(infoText(entry)); } catch { /* yok say */ }
         toast(`Telegram sekmesi cevap vermedi. Telegram Web sekmesini F5 ile yenileyip tekrar basın. (Bilgiler panoya kopyalandı.)`, false);
     }
+
+    /* ── 📋 Kopyala: dekont (PNG) + oyuncu bilgileri tek seferde panoya ──
+       Pano yazımı kullanıcı tıklamasının ardından birkaç saniye içinde yapılmalı; bu yüzden görsel fareyle
+       butonun üstüne gelince önceden hazırlanır. Firefox'ta pano nesneleri sayfanın kurucularıyla oluşturulur. */
+    const pngCache = new Map();   // cevap ts → Promise<{ u8, dataUrl } | null>
+    function preparePng(entry) {
+        if (!entry.file?.url) return Promise.resolve(null);
+        if (!pngCache.has(entry.reply)) {
+            pngCache.set(entry.reply, (async () => {
+                const blob = await fetchBlob(entry.file.url);
+                const bmp = await createImageBitmap(blob);
+                const c = document.createElement('canvas');
+                c.width = bmp.width; c.height = bmp.height;
+                c.getContext('2d').drawImage(bmp, 0, 0);
+                const png = await new Promise((r) => c.toBlob(r, 'image/png'));
+                return { u8: new Uint8Array(await png.arrayBuffer()), dataUrl: c.toDataURL('image/png') };
+            })().catch((e) => { pngCache.delete(entry.reply); warn('dekont hazırlanamadı:', e.message); return null; }));
+        }
+        return pngCache.get(entry.reply);
+    }
+    const htmlEsc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    async function copyAll(entry) {
+        const text = infoText(entry);
+        const img = await preparePng(entry);
+        const P = W, pg = (o) => (typeof cloneInto === 'function' ? cloneInto(o, P, { wrapReflectors: true }) : o);
+        const pblob = (part, type) => new P.Blob(pg([part]), pg({ type }));
+        try {
+            const data = { 'text/plain': pblob(text, 'text/plain'),
+                'text/html': pblob(`${img ? `<img src="${img.dataUrl}"><br>` : ''}${htmlEsc(text).replace(/\n/g, '<br>')}`, 'text/html') };
+            if (img) data['image/png'] = pblob(img.u8, 'image/png');
+            await P.navigator.clipboard.write(pg([new P.ClipboardItem(pg(data))]));
+            tr(`kopyalandı ${entry.pid}${img ? ' (dekont + bilgiler)' : ' (yalnız bilgiler)'}`);
+            toast(img ? `📋 Dekont ve bilgiler panoya kopyalandı (${entry.pid})` : `📋 Bilgiler panoya kopyalandı (${entry.pid}) — bu mesajda dekont yok`);
+        } catch (e) {
+            warn('pano yazılamadı:', e.message);
+            try { await navigator.clipboard.writeText(text); } catch { /* yok say */ }
+            toast(img ? 'Dekont kopyalanamadı, yalnız bilgiler kopyalandı — bir kez daha basın (görsel artık hazır).' : `Bilgiler kopyalandı (${entry.pid})`, !img);
+        }
+    }
+    // Fare butona gelince dekontu önceden hazırla (tıklamada pano izni süresi dolmasın)
+    document.addEventListener('pointerover', (e) => {
+        if (!e.target.closest?.('a, button') || (e.target.closest('a, button').textContent || '').trim() !== CONFIG.COPY_LABEL) return;
+        const l = locate(e.target);
+        if (l?.target.id === 'copy') preparePng(l.entry);
+    }, true);
+    // Kopyala butonunu Megapay + Hemen Pay'in toplam genişliğine yay
+    function widenCopy(root) {
+        for (const b of root.querySelectorAll?.('button, a') || []) {
+            if (b.dataset.dkWide || (b.textContent || '').trim() !== CONFIG.COPY_LABEL) continue;
+            let box = b.parentElement, row = null;
+            for (let i = 0; i < 10 && box && !row; i++, box = box.parentElement) {
+                const bs = [...box.querySelectorAll('button, a')].filter(x => CONFIG.TARGETS.some(t => (x.textContent || '').trim() === t.label));
+                if (bs.length >= 2) row = bs;
+            }
+            if (!row) continue;
+            const w = row.at(-1).getBoundingClientRect().right - row[0].getBoundingClientRect().left;
+            if (w < 40) continue;   // henüz çizilmedi
+            b.dataset.dkWide = '1';
+            Object.assign(b.style, { width: `${Math.round(w)}px`, maxWidth: 'none', justifyContent: 'center' });
+        }
+    }
+    let widenQueued = false;
+    new MutationObserver(() => {
+        if (widenQueued) return;
+        widenQueued = true;
+        setTimeout(() => { widenQueued = false; widenCopy(document); }, 400);   // Slack sık değişir: en fazla 400 ms'de bir bak
+    }).observe(document.documentElement, { childList: true, subtree: true });
 
     /** Telegram sekmesine iş bırak, sonucu bekle. */
     const sending = new Set();
