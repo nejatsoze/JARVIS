@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Slack Araçları (Okundu + Watcher + Ayna)
 // @namespace    palentis.slack.tools
-// @version      2.1.3
-// @description  Üç aracı tek script'te toplar: tümünü okundu işaretle, kanal watcher (Mola bildirimi) ve kanal aynalama. Ortak, taşınabilir buton adası. Ayna yalnız ana mesajları aktarır (thread cevapları aktarılmaz); 2.1.0'a geçişte birikmiş kuyruk bir kez sıfırlanır.
+// @version      2.2.0
+// @description  Dört aracı tek script'te toplar: tümünü okundu işaretle, kanal watcher (Mola bildirimi), kanal aynalama ve C08TKRJQ96G'ye otomatik tepki (👀 / 🔍). Ortak, taşınabilir buton adası. Ayna yalnız ana mesajları aktarır (thread cevapları aktarılmaz); 2.1.0'a geçişte birikmiş kuyruk bir kez sıfırlanır.
 // @match        https://app.slack.com/*
 // @match        https://*.slack.com/*
 // @grant        none
@@ -1343,6 +1343,95 @@
   })();
 
   // ============================================================
+  // MODÜL 4: OTOMATİK TEPKİ (C08TKRJQ96G'ye gelen ana mesajlara emoji)
+  // ============================================================
+  const AutoReact = (() => {
+    const CHANNEL = 'C08TKRJQ96G';
+    const POLL_MS = 8000;
+    // Adadaki buton tıklandıkça sırayla: Kapalı → 👀 → 🔍 → Kapalı
+    const MODES = [
+      { id: 'off', emoji: null, label: '⚪️ Tepki: Kapalı', color: '#8E8E93' },
+      { id: 'eyes', emoji: 'eyes', label: '👀 Tepki', color: '#007AFF' },
+      { id: 'mag_right', emoji: 'mag_right', label: '🔍 Tepki', color: '#007AFF' },
+    ];
+    const MODE_KEY = 'slackTools.react.mode';
+    const LOCK_NAME = `slackTools.react.leader.${CHANNEL}`;
+    const log = (...a) => console.log('[OtoTepki]', ...a);
+
+    const modeId = () => { try { return localStorage.getItem(MODE_KEY) || 'off'; } catch (_) { return 'off'; } };
+    const mode = () => MODES.find((m) => m.id === modeId()) || MODES[0];
+
+    let token = null, me = null, lastTs = null, busy = false, isLeader = false, btn = null;
+
+    async function resolve() {
+      const cfg = readLocalConfig();
+      const toks = Object.values(cfg.teams || {}).map((t) => t && t.token).filter(Boolean);
+      for (const t of toks) {
+        const r = await slackFetch('conversations.info', { channel: CHANNEL }, t).catch(() => null);
+        if (r && r.ok) {
+          token = t;
+          const a = await slackFetch('auth.test', {}, t).catch(() => null);
+          me = a && a.ok ? a.user_id : null;
+          return true;
+        }
+      }
+      return false;
+    }
+
+    async function poll() {
+      const m = mode();
+      if (!isLeader || busy || !m.emoji) return;
+      busy = true;
+      try {
+        if (!token && !(await resolve())) { log(`${CHANNEL} kanalı görülemiyor`); return; }
+        if (!lastTs) { lastTs = (Date.now() / 1000).toFixed(6); return; }   // yalnız açıldıktan sonra gelenler
+        const r = await slackFetch('conversations.history', { channel: CHANNEL, oldest: lastTs, limit: 50 }, token);
+        if (!r.ok) { if (/invalid_auth|not_authed|token_revoked/.test(r.error)) token = null; log('history:', r.error); return; }
+        const msgs = (r.messages || []).sort((a, b) => Number(a.ts) - Number(b.ts));
+        for (const msg of msgs) {
+          lastTs = msg.ts;
+          if (msg.thread_ts && msg.thread_ts !== msg.ts) continue;              // thread cevabı
+          if (msg.bot_id || (msg.subtype && msg.subtype !== 'file_share')) continue;   // bot / sistem mesajı
+          if (me && msg.user === me) continue;                                   // kendi mesajın
+          const a = await slackFetch('reactions.add', { channel: CHANNEL, timestamp: msg.ts, name: m.emoji }, token);
+          if (!a.ok && a.error !== 'already_reacted') log('reactions.add:', a.error);
+          await sleep(400);
+        }
+      } catch (e) { log('hata:', e.message || e); }
+      finally { busy = false; }
+    }
+
+    function render() {
+      if (!btn) return;
+      const m = mode();
+      btn.textContent = m.label;
+      btn.style.backgroundColor = m.color;
+      btn.title = 'Otomatik tepki (C08TKRJQ96G ana mesajları)\ntıkla: Kapalı → 👀 → 🔍';
+    }
+
+    function start() {
+      btn = Island.button();
+      btn.addEventListener('click', () => {
+        const i = MODES.findIndex((m) => m.id === modeId());
+        const next = MODES[(i + 1) % MODES.length];
+        try { localStorage.setItem(MODE_KEY, next.id); } catch (_) {}
+        lastTs = null;   // mod değişince yalnız bundan sonraki mesajlar
+        render();
+        log('mod:', next.id);
+      });
+      window.addEventListener('storage', (e) => { if (e.key === MODE_KEY) { lastTs = null; render(); } });
+      render();
+      Island.add(btn, 4);
+
+      const lead = () => { isLeader = true; poll(); setInterval(poll, POLL_MS); };
+      if (navigator.locks && navigator.locks.request) navigator.locks.request(LOCK_NAME, () => new Promise(() => lead()));
+      else lead();
+    }
+
+    return { start };
+  })();
+
+  // ============================================================
   // BAŞLATMA
   // ============================================================
 
@@ -1354,6 +1443,7 @@
 
     try { MarkRead.init(); } catch (e) { console.error('[SlackTools] Okundu modülü:', e); }
     try { Mirror.start(); } catch (e) { console.error('[SlackTools] Ayna modülü:', e); }
+    try { AutoReact.start(); } catch (e) { console.error('[SlackTools] Tepki modülü:', e); }
 
     if (Watcher.applies()) {
       // Slack SPA'sının ve token'ın hazır olmasını bekle
@@ -1362,7 +1452,7 @@
       }, 5000);
     }
 
-    console.log('[SlackTools] v2.1.1 yüklendi.');
+    console.log('[SlackTools] v2.2.0 yüklendi.');
   }
 
   if (document.readyState === 'loading') {
