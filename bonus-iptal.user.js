@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      2.0.0
-// @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; kazanç 25.000 TL'nin altındaysa Zumabet Hosgeldin Freesin'den gelen kazanç bonusunu (ör. Freespin Zuma) iptal eder; 25.000 TL ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve 2.000 TL çekilebilir bakiye ekler. Slack kanalına bildirir. Tampermonkey menüsünden Açık / Kapalı seçilir.
+// @version      2.1.0
+// @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; Zumabet Hosgeldin Freesin (limit 25.000 TL / 2.000 TL) ya da Zumabet-RiskTop (limit 10.000 TL / 1.000 TL) kaynaklı kazanç bonusunu (ör. Freespin Zuma) limit altındaysa iptal eder; limit ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve programın çekilebilir tutarını ekler. Slack kanalına bildirir. Tampermonkey menüsünden Açık / Kapalı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
 // @grant        GM_getValue
@@ -21,14 +21,16 @@
  *   1. POLL_SEC'te bir, oturumu açık GT sekmelerinden YALNIZ BİRİ (lider) Transaction Report'u
  *      (Transaction Type = Platform Bonus, bugün) arka planda çeker.
  *   2. Yeni PLTFRM_BON satırı için oyuncunun bonus listesinde işlem saatinde açılmış kazanç bonusu
- *      (ör. "Freespin Zuma", tutar = kazanç) aranır. Yalnızca oyuncunun ondan önceki LOOKBACK_H saat
- *      içinde bir TARGET_PLANS (deneme) bonusu varsa ve kazanç bonusu iptal edilebilir durumdaysa
- *      (Active / Queued / Spent Active / Pending) işlem yapılır. Deneme bonusu yoksa hiçbir şey olmaz.
- *   3. Kazanç < LIMIT: DELETE /ics/player-bonus/{id} (panelin Cancel isteği) → durum Canceled
+ *      (ör. "Freespin Zuma", tutar = kazanç) aranır ve hangi programdan geldiğine bakılır (PROGRAMS):
+ *        · Etkinlik: kazanç bonusunun hemen altındaki (ondan hemen önce açılan) bonusun adında
+ *          "Zumabet-RiskTop" geçiyor → limit 10.000 TL, ödeme 1.000 TL "Çekilebilir Etkinlik Bonusu".
+ *        · Deneme: son LOOKBACK_H saatte "Zumabet Hosgeldin Freesin" var → limit 25.000 TL,
+ *          ödeme 2.000 TL "Çekilebilir Deneme Bonusu".
+ *      İkisi de yoksa ya da kazanç bonusu iptal edilebilir durumda değilse hiçbir şey olmaz.
+ *   3. Kazanç < limit: DELETE /ics/player-bonus/{id} (panelin Cancel isteği) → durum Canceled
  *      olana kadar birkaç kez doğrulanır → Slack'e iptal mesajı.
- *   4. Kazanç ≥ LIMIT: çift ödeme kontrolü → bonus iptali → tüm sağlayıcı kısıtı → 2.000 TL
- *      MAN_ADJUST ("Çekilebilir Deneme Bonusu") → Slack'e 💰 mesajı. Bir adım başarısız olursa
- *      sonrakiler yapılmaz, Slack'e hangi adımların yapıldığı yazılır.
+ *   4. Kazanç ≥ limit: çift ödeme kontrolü → bonus iptali → tüm sağlayıcı kısıtı → programın tutarı
+ *      MAN_ADJUST → Slack'e 💰 mesajı. Bir adım başarısız olursa sonrakiler yapılmaz, Slack'e yazılır.
  *
  * DAYANIKLILIK (2.0.0'da baştan yazıldı)
  *   · Her panel / Slack isteğinin zaman aşımı var: takılan bir istek botu dondurmaz.
@@ -52,11 +54,7 @@
 const CONFIG = {
     CHANNEL: 'C0C0N8PP37U',
     POLL_SEC: 30,
-    LIMIT: 25000,                         // altı: iptal + mesaj · üstü (dahil): iptal + tüm sağlayıcı kısıtı + 2.000 TL
-    PAYOUT: 2000,                         // limit üstünde eklenen çekilebilir tutar
-    PAYOUT_NOTE: 'Çekilebilir Deneme Bonusu',
-    TARGET_PLANS: ['Zumabet Hosgeldin Freesin'],   // deneme bonusu planı (kazancından açılan bonus iptal edilir)
-    LOOKBACK_H: 24,                       // deneme bonusu, kazançtan en fazla bu kadar saat önce açılmış olmalı
+    LOOKBACK_H: 24,                       // program bonusu, kazançtan en fazla bu kadar saat önce açılmış olmalı
     MATCH_MIN: 5,                         // kazanç bonusu ile işlem saati arasındaki pay (dk)
     FIND_RETRY: 4,                        // bonus henüz görünmüyorsa kaç tur daha aransın
     CANCEL_RETRY: 3,                      // iptal isteği hata verirse kaç tur denensin (sonra Slack'e uyarı)
@@ -68,8 +66,19 @@ const CONFIG = {
 };
 
 const CANCELLABLE = ['ACTIVE', 'QUEUED', 'SPENT ACTIVE', 'PENDING'];   // panelin isCancellableBonus listesi
-const MESSAGE_WIN = (x) => `Deneme Bonusu freespinleri ile bakiyenizi 25.000 TL ve üzerine ulaştırdığınız için 2.000 TL çekilebilir bakiye hesabınıza eklenmiştir. Bonus kazancınız: *${x} TL*`;
-const MESSAGE = (x) => `Deneme Bonusu freespinleri ile bakiyenizi 25.000 TL ve üzerine ulaştırabilirseniz 2.000 TL çekim yapabilirsiniz. Bonus kazancınız: *${x} TL* olduğu için bonus iptal edilmiştir.`;
+/** Kazancın geldiği programa göre limit / ödeme / açıklama / mesaj adı.
+ *  prev: kazanç bonusunun hemen altındaki (ondan hemen önce açılan) bonus bu programınsa seçilir.
+ *  window: son LOOKBACK_H saatte bu programın bonusu varsa seçilir. Sıra önemli: önce Etkinlik. */
+const PROGRAMS = [
+    { id: 'etkinlik', title: 'Etkinlik', how: 'prev', is: (n) => n.includes('zumabet-risktop'),
+      limit: 10000, payout: 1000, note: 'Çekilebilir Etkinlik Bonusu' },
+    { id: 'deneme', title: 'Deneme', how: 'window', is: (n) => n === 'zumabet hosgeldin freesin',
+      limit: 25000, payout: 2000, note: 'Çekilebilir Deneme Bonusu' },
+];
+const isProgramBonus = (b) => PROGRAMS.some(p => p.is(String(b.planName || '').trim().toLowerCase()));
+const tl = (n) => `${Number(n).toLocaleString('tr-TR')} TL`;
+const MESSAGE_WIN = (P, x) => `${P.title} Bonusu freespinleri ile bakiyenizi ${tl(P.limit)} ve üzerine ulaştırdığınız için ${tl(P.payout)} çekilebilir bakiye hesabınıza eklenmiştir. Bonus kazancınız: *${x} TL*`;
+const MESSAGE = (P, x) => `${P.title} Bonusu freespinleri ile bakiyenizi ${tl(P.limit)} ve üzerine ulaştırabilirseniz ${tl(P.payout)} çekim yapabilirsiniz. Bonus kazancınız: *${x} TL* olduğu için bonus iptal edilmiştir.`;
 
 const HOST = 'https://core-secundus.gmntc.com';
 const W = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
@@ -228,25 +237,36 @@ function gtSide() {
     const playerBonuses = async (pid) => asList(await ics(`player-bonus/${pid}`, { currency: 'undefined' }));
 
     /** Kural: freespin kazancı (PLTFRM_BON) oyuncuya ayrı bir bonus olarak düşer (ör. "Freespin Zuma"; açılış saati =
-     *  işlem saati, tutar = kazanç). İptal edilen bu kazanç bonusudur — yalnızca oyuncunun ondan önce LOOKBACK_H içinde
-     *  açılmış bir TARGET_PLANS (deneme) bonusu varsa (durumu fark etmez, genelde "Spent").
-     *  { pick, already, ambiguous, candidates (deneme bonusları), wins (kazanç bonusu adayları) } */
+     *  işlem saati, tutar = kazanç). İptal edilen bu kazanç bonusudur — yalnızca bir programdan (PROGRAMS) geliyorsa.
+     *  { program, pick, already, ambiguous, candidates (program bonusları), wins (kazanç bonusu adayları) } */
     function matchBonus(list, tx) {
         const t = stamp(tx.at);
         const padMs = CONFIG.MATCH_MIN * 60000;
-        const plan = (b) => CONFIG.TARGET_PLANS.some(p => String(b.planName || '').trim().toLowerCase() === p.toLowerCase());
         const bt = (b) => stamp(b.triggerDate);
+        const name = (b) => String(b.planName || '').trim().toLowerCase();
         const amt = (b) => { for (const k of ['amount', 'bonusAmount', 'initialAmount']) { const v = num(b[k]); if (Number.isFinite(v) && v > 0) return v; } return NaN; };
-        const trial = list.filter(b => plan(b) && Number.isFinite(t) && bt(b) <= t + padMs && bt(b) >= t - CONFIG.LOOKBACK_H * 3600e3 - padMs);
-        let wins = list.filter(b => !plan(b) && Number.isFinite(t) && Math.abs(bt(b) - t) <= padMs);
+        const none = { program: null, pick: null, already: false, ambiguous: false, candidates: [], wins: [] };
+        if (!Number.isFinite(t)) return none;
+        let wins = list.filter(b => !isProgramBonus(b) && Math.abs(bt(b) - t) <= padMs);
         const same = wins.filter(b => Math.abs(amt(b) - tx.credit) < 0.01);   // tutar okunabiliyorsa aynı dakikadaki başka bonusu ayırır
         if (same.length) wins = same;
-        const open = trial.length ? wins.filter(b => CANCELLABLE.includes(String(b.status || '').toUpperCase())) : [];
+        const winIds = new Set(wins.map(b => String(b.id)));
+        const inWindow = (b) => bt(b) <= t + padMs && bt(b) >= t - CONFIG.LOOKBACK_H * 3600e3 - padMs;
+        // Kazancın hemen altındaki bonus: kazanç bonuslarından önce açılmış en yeni bonus
+        const prev = list.filter(b => !winIds.has(String(b.id)) && inWindow(b) && bt(b) <= t + padMs)
+            .sort((a, b) => bt(b) - bt(a) || Number(b.id) - Number(a.id))[0];
+        let program = null, candidates = [];
+        for (const P of PROGRAMS) {
+            const c = P.how === 'prev' ? (prev && P.is(name(prev)) ? [prev] : []) : list.filter(b => P.is(name(b)) && inWindow(b));
+            if (c.length) { program = P; candidates = c; break; }
+        }
+        const open = program ? wins.filter(b => CANCELLABLE.includes(String(b.status || '').toUpperCase())) : [];
         return {
+            program,
             pick: open.length === 1 ? open[0] : null,
             ambiguous: open.length > 1,
-            already: !!trial.length && !open.length && wins.some(isCancelled),
-            candidates: trial,
+            already: !!program && !open.length && wins.some(isCancelled),
+            candidates,
             wins,
         };
     }
@@ -344,21 +364,21 @@ ${body}
     }
 
     /** Bu oyuncuya son 30 günde aynı tutarda manuel düzeltme yapılmış mı? (çift ödeme kalkanı) */
-    async function alreadyPaid(pid) {
+    async function alreadyPaid(pid, P) {
         const from = new Date(Date.now() - 30 * 864e5), to = new Date(Date.now() + 864e5);
         const rows = asList(await ics('player-transactions/page', {
             partyid: pid, startDate: `${ymd(from)} 0:0:0.000`, endDate: `${ymd(to)} 23:59:0.000`,
             pageSize: 200, pageNum: 1, tranTypes: 'MAN_ADJUST', currency: 'TRY',
         }));
-        return rows.some(r => r.tranType === 'MAN_ADJUST' && Math.abs((+r.credit || +r.amount || 0) - CONFIG.PAYOUT) < 0.01);
+        return rows.some(r => r.tranType === 'MAN_ADJUST' && Math.abs((+r.credit || +r.amount || 0) - P.payout) < 0.01);
     }
 
-    async function addPayout(pid) {
+    async function addPayout(pid, P) {
         const sid = staffId();
         if (!sid) throw new Error('personel no (staffid) oturumdan okunamadı');
         const r = await ics('accounts/adjustments', {}, 'POST', {
-            partyId: Number(pid), staffId: sid, tranType: 'MAN_ADJUST', amount: CONFIG.PAYOUT.toFixed(2),
-            comment: CONFIG.PAYOUT_NOTE, tranTag: 0, tranMethod: null, subType: null, triggerBonus: null,
+            partyId: Number(pid), staffId: sid, tranType: 'MAN_ADJUST', amount: P.payout.toFixed(2),
+            comment: P.note, tranTag: 0, tranMethod: null, subType: null, triggerBonus: null,
         });
         if (r && typeof r === 'object' && r.status && !/^(OK|SUCCESS)$/i.test(r.status)) throw new Error(`panel yanıtı: ${r.status}${r.message ? ' — ' + r.message : ''}`);
     }
@@ -372,12 +392,13 @@ ${body}
 
         const m = matchBonus(await playerBonuses(tx.partyId), tx);
         const x = money(tx.credit);
+        const P = m.program || PROGRAMS[PROGRAMS.length - 1];
 
         if (m.already) {
             const done = m.wins.find(b => isCancelled(b) && String(b.id) === String(entry?.attempt));
             if (done) {   // bu işlem için iptal isteğini biz gönderdik, panel sonradan Canceled gösterdi: başarılı iptal
-                finish(tx.tranId, `iptal: ${done.planName} #${done.id} (panel geç doğruladı)`);
-                notify(tx.tranId, ':no_entry: *Deneme Bonusu İptal*', tx.partyId, MESSAGE(x));
+                finish(tx.tranId, `iptal (${P.title}): ${done.planName} #${done.id} (panel geç doğruladı)`);
+                notify(tx.tranId, `:no_entry: *${P.title} Bonusu İptal*`, tx.partyId, MESSAGE(P, x));
                 return true;
             }
             const mine = m.wins.some(b => isCancelled(b) && ours()[b.id]);
@@ -386,21 +407,21 @@ ${body}
         }
         if (m.ambiguous) {
             finish(tx.tranId, 'birden fazla eşleşen bonus — dokunulmadı');
-            notify(tx.tranId + '-amb', ':warning: *Deneme Bonusu İptal Edilemedi*', tx.partyId,
+            notify(tx.tranId + '-amb', `:warning: *${P.title} Bonusu İptal Edilemedi*`, tx.partyId,
                 `Birden fazla eşleşen bonus bulundu, hiçbirine dokunulmadı. Bonus kazancı: *${x} TL*`, `İşlem ${tx.tranId}`);
             return true;
         }
         if (!m.pick) {
             const tries = (entry?.tries || 0) + 1;
             if (tries < CONFIG.FIND_RETRY) { Book.set(tx.tranId, { tries }); Book.save(); return true; }   // bonus henüz oluşmamış olabilir
-            const seen = `deneme: ${m.candidates.map(b => `#${b.id} ${b.status}`).join(', ') || 'yok'} · kazanç bonusu: ${m.wins.map(b => `#${b.id} ${b.status}`).join(', ') || 'yok'}`;
+            const seen = `program: ${m.program ? `${m.program.title} ` : ''}${m.candidates.map(b => `#${b.id} ${b.status}`).join(', ') || 'yok'} · kazanç bonusu: ${m.wins.map(b => `#${b.id} ${b.status}`).join(', ') || 'yok'}`;
             const spent = m.candidates.length && m.wins.length ? m.wins.map(b => `${b.planName} #${b.id} ${b.status}`).join(', ') : undefined;
             finish(tx.tranId, `iptal edilebilir bonus yok (${seen})`, { spent });   // deneme bonusu değil ya da iptal edilemez: mesaj yok
             return true;
         }
 
         const info = `${m.pick.planName} #${m.pick.id}`;
-        if (tx.credit >= CONFIG.LIMIT) { await payoutFlow(tx, m.pick, x, info); return true; }
+        if (tx.credit >= P.limit) { await payoutFlow(tx, P, m.pick, x, info); return true; }
 
         Book.set(tx.tranId, { attempt: m.pick.id }); Book.save();   // sonraki turda "geç doğrulanan bizim iptalimiz" diye tanınsın
         try {
@@ -412,26 +433,27 @@ ${body}
                 const ct = (entry?.cancelTries || 0) + 1;
                 if (ct < CONFIG.CANCEL_RETRY) { Book.set(tx.tranId, { cancelTries: ct, result: `iptal denemesi ${ct}: ${e.message}` }); Book.save(); warn(`${tx.tranId}: iptal denemesi ${ct}`, e.message); return true; }
                 finish(tx.tranId, `iptal başarısız: ${e.message}`);
-                notify(tx.tranId + '-err', ':warning: *Deneme Bonusu İptal Edilemedi*', tx.partyId,
+                notify(tx.tranId + '-err', `:warning: *${P.title} Bonusu İptal Edilemedi*`, tx.partyId,
                     `Bonus kazancı: *${x} TL* — bonus elle iptal edilmeli.`, `Hata: ${e.message} · ${info}`);
                 return true;
             }
             warn(`${tx.tranId}: doğrulama gecikti ama bonus iptal edilmiş`, e.message);
         }
-        finish(tx.tranId, `iptal: ${info}`);
-        notify(tx.tranId, ':no_entry: *Deneme Bonusu İptal*', tx.partyId, MESSAGE(x));
+        finish(tx.tranId, `iptal (${P.title}): ${info}`);
+        notify(tx.tranId, `:no_entry: *${P.title} Bonusu İptal*`, tx.partyId, MESSAGE(P, x));
         log(`${tx.tranId}: İPTAL → ${info}, kazanç ${x}`);
         return true;
     }
 
     /** Limit üstü: çift ödeme kontrolü → bonus iptali → tüm sağlayıcı kısıtı → 2.000 TL. Adım başarısızsa durur. */
-    async function payoutFlow(tx, bonus, x, info) {
+    async function payoutFlow(tx, P, bonus, x, info) {
         const pid = tx.partyId;
         const paid = GM_getValue('paid', {});
+        const paidKey = P.id === 'deneme' ? pid : `${pid}:${P.id}`;   // her program ayrı (deneme eski kayıtla uyumlu)
         const done = [];
         try {
-            if (paid[pid]) throw new Error('bu oyuncuya daha önce ödeme yapılmış (bot kaydı)');
-            if (await alreadyPaid(pid)) throw new Error(`son 30 günde ${money(CONFIG.PAYOUT)} TL manuel düzeltme zaten var`);
+            if (paid[paidKey]) throw new Error(`bu oyuncuya ${P.title} ödemesi daha önce yapılmış (bot kaydı)`);
+            if (await alreadyPaid(pid, P)) throw new Error(`son 30 günde ${money(P.payout)} TL manuel düzeltme zaten var`);
 
             try { await cancelBonus(pid, bonus.id); }
             catch (e) {   // doğrulama gecikmesi: bir süre daha bak, iptal görünürse devam
@@ -448,17 +470,17 @@ ${body}
             const lock = await lockAllProviders(pid);
             done.push(lock.already ? 'sağlayıcılar zaten kısıtlı' : `${lock.count} sağlayıcı kısıtlandı`);
 
-            paid[pid] = Date.now();   // POST'tan ÖNCE: istek gidip yanıt kaybolsa bile ikinci kez ödeme yapılmaz
+            paid[paidKey] = Date.now();   // POST'tan ÖNCE: istek gidip yanıt kaybolsa bile ikinci kez ödeme yapılmaz
             GM_setValue('paid', paid);
-            await addPayout(pid);
-            done.push(`+${money(CONFIG.PAYOUT)} TL eklendi`);
+            await addPayout(pid, P);
+            done.push(`+${money(P.payout)} TL eklendi`);
 
-            finish(tx.tranId, `limit üstü: ${done.join(', ')}`);
-            notify(tx.tranId, ':moneybag: *Deneme Bonusu Çekilebilir Bakiye*', pid, MESSAGE_WIN(x));
+            finish(tx.tranId, `limit üstü (${P.title}): ${done.join(', ')}`);
+            notify(tx.tranId, `:moneybag: *${P.title} Bonusu Çekilebilir Bakiye*`, pid, MESSAGE_WIN(P, x));
             log(`${tx.tranId}: limit üstü tamam → ${done.join(', ')}`);
         } catch (e) {
-            finish(tx.tranId, `limit üstü yarım kaldı (${done.join(', ') || 'hiçbir adım'}): ${e.message}`);
-            notify(tx.tranId + '-err', ':warning: *Deneme Bonusu Çekilebilir Bakiye — Tamamlanamadı*', pid,
+            finish(tx.tranId, `limit üstü (${P.title}) yarım kaldı (${done.join(', ') || 'hiçbir adım'}): ${e.message}`);
+            notify(tx.tranId + '-err', `:warning: *${P.title} Bonusu Çekilebilir Bakiye — Tamamlanamadı*`, pid,
                 `Bonus kazancı: *${x} TL*\n*Yapılanlar:* ${esc(done.join(', ') || 'hiçbiri')} — kalan adımlar elle yapılmalı.`, `Hata: ${e.message}`);
             warn(`${tx.tranId}: limit üstü akış durdu`, done, e);
         }
@@ -526,7 +548,7 @@ ${body}
             if (!tx) { alert('Bugün platform bonus kaydı yok; örnek için bir oyuncu bulunamadı.'); return; }
             const p = await playerInfo(tx.partyId);
             enqueue('test-' + Date.now(), `:test_tube: _TEST — bu betiğin (${VER}) mesaj biçimi, hiçbir bonus iptal edilmedi_\n\n` +
-                card(':no_entry: *Deneme Bonusu İptal*', p, MESSAGE(money(tx.credit)), tx.partyId));
+                card(':no_entry: *Deneme Bonusu İptal*', p, MESSAGE(PROGRAMS[PROGRAMS.length - 1], money(tx.credit)), tx.partyId));
             alert(`Örnek mesaj kuyruğa alındı (oyuncu ${tx.partyId}: ${p.name} / ${p.user}). Birkaç saniye içinde Slack kanalında görünmeli.`);
         } catch (e) { alert('Test hatası: ' + e.message); }
     });
@@ -538,10 +560,11 @@ ${body}
             const rec = GM_getValue('book', {})[tx.tranId];
             const lines = [
                 `Transaction ${tx.tranId} · Party ${tx.partyId} · ${tx.at} · ${money(tx.credit)} TL`,
-                tx.credit < CONFIG.LIMIT ? 'Limit altı → bonus iptali + mesaj' : `Limit üstü → bonus iptali + tüm sağlayıcı kısıtı + ${money(CONFIG.PAYOUT)} TL`,
+                m.program ? `Program: ${m.program.title} (limit ${tl(m.program.limit)}, ödeme ${tl(m.program.payout)})` : 'Program: yok (Hosgeldin / RiskTop bulunamadı)',
+                m.program ? (tx.credit < m.program.limit ? 'Limit altı → bonus iptali + mesaj' : `Limit üstü → bonus iptali + tüm sağlayıcı kısıtı + ${tl(m.program.payout)}`) : '—',
                 `Personel no (oturum): ${staffId() ?? 'OKUNAMADI'}`,
                 `Eşleşen bonus: ${m.pick ? `${m.pick.planName} #${m.pick.id} (${m.pick.status})` : m.already ? 'zaten iptal edilmiş' : m.ambiguous ? 'birden fazla!' : 'yok'}`,
-                `Son ${CONFIG.LOOKBACK_H} saatteki ${CONFIG.TARGET_PLANS.join('/')} bonusları: ${m.candidates.map(b => `${b.planName} #${b.id} ${b.status}`).join(', ') || '—'}`,
+                `Program bonusu: ${m.candidates.map(b => `${b.planName} #${b.id} ${b.status}`).join(', ') || '—'}`,
                 `İşlem saatinde açılan kazanç bonusu: ${m.wins.map(b => `${b.planName} #${b.id} ${b.status}`).join(', ') || '—'}`,
                 `Bot kaydı: ${rec ? (rec.result || `aranıyor (${rec.tries || 0})`) : 'henüz işlenmedi'}`,
                 `Mod: ${MODES[mode()]}`,
