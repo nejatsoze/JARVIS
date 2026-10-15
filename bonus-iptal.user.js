@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bonus İptal — 25.000 TL altı freespin kazancı
 // @namespace    palentis.bonus-iptal
-// @version      2.1.0
+// @version      2.2.0
 // @description  Transaction Report'taki yeni Platform Bonus (PLTFRM_BON) kayıtlarını izler; Zumabet Hosgeldin Freesin (limit 25.000 TL / 2.000 TL) ya da Zumabet-RiskTop (limit 10.000 TL / 1.000 TL) kaynaklı kazanç bonusunu (ör. Freespin Zuma) limit altındaysa iptal eder; limit ve üzerindeyse ayrıca tüm sağlayıcıları kısıtlar ve programın çekilebilir tutarını ekler. Slack kanalına bildirir. Tampermonkey menüsünden Açık / Kapalı seçilir.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -31,6 +31,10 @@
  *      olana kadar birkaç kez doğrulanır → Slack'e iptal mesajı.
  *   4. Kazanç ≥ limit: çift ödeme kontrolü → bonus iptali → tüm sağlayıcı kısıtı → programın tutarı
  *      MAN_ADJUST → Slack'e 💰 mesajı. Bir adım başarısız olursa sonrakiler yapılmaz, Slack'e yazılır.
+ *   5. Kısıt geri açma: botun kısıtladığı oyuncu takibe alınır (o an çekim listesindeki talepler not
+ *      edilir). WATCH_MIN'de bir çekim listesine bakılır; listede YENİ ve Completed bir çekim görülünce
+ *      yalnızca botun kapattığı sağlayıcılar açılır (önceden kapalı olanlara dokunulmaz) ve 💰 mesajının
+ *      altına "🔓 Çekim tamamlandı, sağlayıcılar açıldı." yazılır.
  *
  * DAYANIKLILIK (2.0.0'da baştan yazıldı)
  *   · Her panel / Slack isteğinin zaman aşımı var: takılan bir istek botu dondurmaz.
@@ -63,6 +67,8 @@ const CONFIG = {
     INFO_TIMEOUT_MS: 10000,               // mesajdaki ad / kullanıcı adı sorgusu
     LEADER_TTL_MS: 90000,                 // lider bu süre sessiz kalırsa başka sekme devralır
     SLACK_MAX_FAILS: 5,                   // bir Slack mesajı en fazla kaç kez denensin
+    WATCH_MIN: 5,                         // kısıt açılacak oyuncuların çekim listesine kaç dakikada bir bakılsın
+    WATCH_DAYS: 60,                       // bu kadar gün çekim yapmayan oyuncu takipten düşer (Durum'a yazılır)
 };
 
 const CANCELLABLE = ['ACTIVE', 'QUEUED', 'SPENT ACTIVE', 'PENDING'];   // panelin isCancellableBonus listesi
@@ -111,6 +117,8 @@ GM_registerMenuCommand('Durum', () => {
     const q = GM_listValues().filter(k => k.startsWith('q:')).map(k => GM_getValue(k, null)).filter(Boolean);
     const qLine = q.length ? `${q.length} mesaj (en eskisi ${Math.round((Date.now() - Math.min(...q.map(x => x.at))) / 60000)} dk önce)` : 'boş';
     const failed = GM_getValue('failed', []).slice(-5).map(f => `${f.id} (${clock(f.at)}): ${f.err}`).join('\n');
+    const watch = Object.values(GM_getValue('watch', {}));
+    const opened = GM_getValue('watchDone', []).slice(-5).map(d => `${d.pid} (${d.program}, ${clock(d.at)}): ${d.result}`).join('\n');
     alert([
         `Sürüm: ${VER}${stale() ? ' — ESKİ SEKME, F5 ile yenileyin!' : ''}`,
         `Mod: ${MODES[mode()]}`,
@@ -118,6 +126,8 @@ GM_registerMenuCommand('Durum', () => {
         `Slack: ${s ? `${s.msg} (${clock(s.at)})` : 'hiç bağlanmadı — açık Slack sekmesi yok'}`,
         `Slack kuyruğu: ${qLine}`,
         ...(failed ? ['', 'Gönderilemeyen mesajlar:', failed] : []),
+        '', `Çekim bekleyen, kısıtı açılacak: ${watch.length ? watch.map(e => `${e.pid} (${e.program})`).join(', ') : '—'}`,
+        ...(opened ? ['Son açılanlar:', opened] : []),
         '', 'Son kayıtlar:', last || '—',
         '', 'İptal edilemeyen (Spent vb.) — party ID:', spent || '—',
     ].join('\n'));
@@ -292,8 +302,8 @@ ${body}
 *ID:* ${pid}
 *Kullanıcı Adı:* ${esc(p.user)}${note ? `\n\n_${esc(note)}_` : ''}`;
 
-    function enqueue(key, text) {
-        GM_setValue('q:' + key, { text, at: Date.now(), v: VER });
+    function enqueue(key, text, extra = {}) {
+        GM_setValue('q:' + key, { text, at: Date.now(), v: VER, ...extra });
         GM_setValue('ping', Date.now());
     }
     /** Mesaj işlem kaydını bekletmez: önce defter kapanır, mesaj arkadan kuyruğa girer. */
@@ -356,14 +366,46 @@ ${body}
             .map(p => ({ providerId: p.providerId, providerName: p.providerName }))
             .filter((p, i, a) => p.providerId != null && a.findIndex(q => q.providerId === p.providerId) === i);
         if (!all.length) throw new Error('sağlayıcı listesi boş geldi');
-        if (!(cur.nonLockedProviders || []).length) return { count: all.length, already: true };
+        const closed = (cur.nonLockedProviders || []).map(p => p.providerId).filter(id => id != null);   // botun kapatacakları
+        if (!closed.length) return { count: all.length, already: true, closed };
         await ics(`player-lock-provider/${pid}`, {}, 'PUT', { lockedProviders: all });
         const after = await ics(`player-lock-provider/${pid}`);
         if ((after?.nonLockedProviders || []).length) throw new Error(`kısıt sonrası ${after.nonLockedProviders.length} sağlayıcı hâlâ açık`);
-        return { count: all.length, already: false };
+        return { count: all.length, already: false, closed };
     }
 
     /** Bu oyuncuya son 30 günde aynı tutarda manuel düzeltme yapılmış mı? (çift ödeme kalkanı) */
+    /** Yalnız botun kapattığı sağlayıcıları açar: güncel kısıtlı listeden onlar çıkarılır, kalanlar kısıtlı kalır. */
+    async function unlockProviders(pid, closed) {
+        const ids = new Set(closed.map(String));
+        const cur = await ics(`player-lock-provider/${pid}`);
+        const keep = (cur?.lockedProviders || []).filter(p => !ids.has(String(p.providerId)))
+            .map(p => ({ providerId: p.providerId, providerName: p.providerName }));
+        await ics(`player-lock-provider/${pid}`, {}, 'PUT', { lockedProviders: keep });
+        const after = await ics(`player-lock-provider/${pid}`);
+        const still = (after?.lockedProviders || []).filter(p => ids.has(String(p.providerId))).length;
+        if (still) throw new Error(`açma sonrası ${still} sağlayıcı hâlâ kısıtlı`);
+    }
+
+    /** Oyuncunun çekim talepleri (PlayerWithdrawals sayfası): durum değişince değişmeyen bir anahtar + durum. */
+    async function withdrawals(pid) {
+        const now = new Date();
+        const url = `${HOST}/j/player/PlayerWithdrawals.action?${new URLSearchParams({ embeddedInNewDashboard: 'true', cmslanguage: 'en', token: need(),
+            partyId: pid, startDate: dmy(new Date(now.getTime() - 90 * 864e5)), endDate: dmy(new Date(now.getTime() + 864e5)), execute: 'Go' })}`;
+        const res = await http(url);
+        if (!res.ok) throw new Error('çekim listesi HTTP ' + res.status);
+        const table = new DOMParser().parseFromString(await res.text(), 'text/html').querySelector('#withdrawals');
+        if (!table) throw new Error('çekim listesi gelmedi — panel oturumu düşmüş olabilir');
+        const out = [];
+        for (const row of table.querySelectorAll('tbody tr')) {
+            const c = row.cells;
+            if (c.length < 7) continue;
+            // 2 = işlem tarihi, 4 = durum: ikisi de sonuçlanınca değişir, anahtara girmez
+            out.push({ key: [0, 1, 3, 5, 6].map(i => clean(c[i])).join('|'), completed: /completed/i.test(clean(c[4])) });
+        }
+        return out;
+    }
+
     async function alreadyPaid(pid, P) {
         const from = new Date(Date.now() - 30 * 864e5), to = new Date(Date.now() + 864e5);
         const rows = asList(await ics('player-transactions/page', {
@@ -469,12 +511,19 @@ ${body}
 
             const lock = await lockAllProviders(pid);
             done.push(lock.already ? 'sağlayıcılar zaten kısıtlı' : `${lock.count} sağlayıcı kısıtlandı`);
+            // Çekim takibi için o anki talepler (sonradan gelen ve Completed olan çekim kısıtı açar)
+            const before = lock.closed.length ? await withdrawals(pid).then(l => l.map(w => w.key)).catch(() => null) : null;
 
             paid[paidKey] = Date.now();   // POST'tan ÖNCE: istek gidip yanıt kaybolsa bile ikinci kez ödeme yapılmaz
             GM_setValue('paid', paid);
             await addPayout(pid, P);
             done.push(`+${money(P.payout)} TL eklendi`);
 
+            if (lock.closed.length) {   // bot kapattıysa takibe al; zaten kapalıysa bot sorumlu değil
+                const w = GM_getValue('watch', {});
+                w[`${pid}:${P.id}`] = { pid, tx: tx.tranId, program: P.title, at: Date.now(), closed: lock.closed, before };
+                GM_setValue('watch', w);
+            }
             finish(tx.tranId, `limit üstü (${P.title}): ${done.join(', ')}`);
             notify(tx.tranId, `:moneybag: *${P.title} Bonusu Çekilebilir Bakiye*`, pid, MESSAGE_WIN(P, x));
             log(`${tx.tranId}: limit üstü tamam → ${done.join(', ')}`);
@@ -485,6 +534,38 @@ ${body}
             warn(`${tx.tranId}: limit üstü akış durdu`, done, e);
         }
     }
+
+    /* ── kısıt geri açma: botun kısıtladığı oyuncuların çekimini izle ── */
+    async function checkWatch() {
+        const w = GM_getValue('watch', {});
+        const keys = Object.keys(w);
+        if (!keys.length) return;
+        for (const k of keys) {
+            const e = w[k];
+            try {
+                if (Date.now() - e.at > CONFIG.WATCH_DAYS * 864e5) { e.done = `takipten düştü (${CONFIG.WATCH_DAYS} gün çekim yok)`; continue; }
+                const list = await withdrawals(e.pid);
+                if (!e.before) { e.before = list.map(x => x.key); continue; }   // ilk bakış: o anki talepler not edilir
+                const seen = new Set(e.before);
+                if (!list.some(x => x.completed && !seen.has(x.key))) continue;
+                await unlockProviders(e.pid, e.closed);
+                e.done = 'sağlayıcılar açıldı';
+                enqueue(`${e.tx}-open`, ':unlock: Çekim tamamlandı, sağlayıcılar açıldı.', { thread: e.tx, pid: e.pid });
+                log(`${e.pid}: çekim tamamlandı, sağlayıcılar açıldı`);
+            } catch (err) {
+                e.fails = (e.fails || 0) + 1;
+                warn(`${e.pid}: kısıt açma kontrolü`, err.message);
+                if (e.fails >= 3 && /açma sonrası|HTTP 4/.test(err.message)) {
+                    e.done = `açılamadı: ${err.message}`;
+                    enqueue(`${e.tx}-open-err`, `:warning: Çekim tamamlandı ama sağlayıcılar açılamadı — elle açılmalı.\n_Hata: ${esc(err.message)}_`, { thread: e.tx, pid: e.pid });
+                }
+            }
+        }
+        const fresh = GM_getValue('watch', {});   // bu arada eklenen olduysa koru
+        for (const k of keys) { if (w[k].done) { const d = GM_getValue('watchDone', []); d.push({ pid: w[k].pid, program: w[k].program, at: Date.now(), result: w[k].done }); GM_setValue('watchDone', d.slice(-20)); delete fresh[k]; } else fresh[k] = w[k]; }
+        GM_setValue('watch', fresh);
+    }
+    let lastWatch = 0;
 
     /* ── döngü: tek lider sekme ── */
     const gtStatus = (msg) => GM_setValue('gtStatus', { msg, at: Date.now() });
@@ -533,6 +614,7 @@ ${body}
                 }
             }
             Book.save();
+            if (Date.now() - lastWatch > CONFIG.WATCH_MIN * 60000) { lastWatch = Date.now(); await checkWatch(); }
             gtStatus(`çalışıyor — bugün ${txs.length} platform bonusu${worked ? `, bu tur ${worked} işlem` : ''}`);
         } catch (e) {
             warn('tur başarısız:', e.message);
@@ -632,11 +714,11 @@ function slackSide() {
     }
     const PERMANENT = /channel_not_found|not_in_channel|is_archived|msg_too_long|no_text|restricted_action|invalid_blocks/;
     /** Aynı işlem için daha önce mesaj gittiyse (ör. Teşhis'ten yeniden işlenince) yenisi atılmaz, eskisi güncellenir. */
-    async function send(text, prev) {
+    async function send(text, prev, thread) {
         for (let i = 0; i < 4; i++) {
             const r = prev
                 ? await call('chat.update', { channel: CONFIG.CHANNEL, ts: prev, text })
-                : await call('chat.postMessage', { channel: CONFIG.CHANNEL, text, unfurl_links: 'false', unfurl_media: 'false' });
+                : await call('chat.postMessage', { channel: CONFIG.CHANNEL, text, unfurl_links: 'false', unfurl_media: 'false', ...(thread ? { thread_ts: thread } : {}) });
             if (r.ok) return r;
             if (prev && /message_not_found|cant_update_message|edit_window_closed/.test(r.error)) { prev = null; continue; }
             if (r.error === 'ratelimited') { await sleep(r.retry); continue; }
@@ -670,7 +752,10 @@ function slackSide() {
                 GM_setValue('slackLock', { owner: ME, at: Date.now() });
                 try {
                     const sent = GM_getValue('sent', {});
-                    const r = await send(v.text, sent[id]?.ts);
+                    // Kısıt açma notu 💰 mesajının altına (thread) gider; o mesaj bulunamazsa ID ile ayrı mesaj olur
+                    const parent = v.thread ? sent[v.thread]?.ts : null;
+                    const text = v.thread && !parent ? `${v.text}\n*ID:* ${v.pid}` : v.text;
+                    const r = await send(text, sent[id]?.ts, parent);
                     const week = Date.now() - 7 * 864e5;
                     for (const x of Object.keys(sent)) if (sent[x].at < week) delete sent[x];
                     sent[id] = { ts: r.ts || sent[id]?.ts, at: Date.now() };
