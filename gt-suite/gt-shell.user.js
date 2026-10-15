@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Shell — arayüz iskeleti
 // @namespace    palentis.gt
-// @version      1.0.19
+// @version      1.0.20
 // @description  Her sayfada geçerli arayüz katmanı: varsayılan sayfa yönlendirme, logo yerine hızlı gezinme butonları, kapalı başlayan sidebar, navbar saatleri (GMT+0/+3/+8), alt sekmelerin butonlaştırılması, COMMENTS uyarısı ve bildirim şeritlerinin toast'a dönüşümü. GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://core-ui-secundus.gmntc.com/*
@@ -544,7 +544,7 @@ GT.define({
     },
 });
 
-log('GT Shell v1.0.0 kayıtlı.');
+log(`GT Shell v${(typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '?'} kayıtlı.`);
 
 });
 })();

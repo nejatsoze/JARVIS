@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Transactions — işlem geçmişi
 // @namespace    palentis.gt
-// @version      1.1.5
+// @version      1.1.6
 // @description  Transaction History sayfası: 1. Aşama / 2. Aşama / CRE filtre otomasyonu (Alt+X / Alt+D / Alt+C), "Show Transactions From" yanına bir gün geri (<<) butonu, listenin başı/sonu arasında gidip gelen kaydırma butonu ve CRE'nin yanında Ratio Checker (sabit oran eşiği + GT Sports/Betby oran rozetleri). GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
@@ -870,7 +870,7 @@ GT.define({
     },
 });
 
-log('GT Transactions v1.1.2 kayıtlı.');
+log(`GT Transactions v${(typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '?'} kayıtlı.`);
 
 });
 })();
