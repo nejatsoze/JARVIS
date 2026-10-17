@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dekont Aktar — Slack'ten Megapay / Hemen Pay Telegram grubuna
 // @namespace    palentis.dekont-aktar
-// @version      1.4.0
+// @version      1.4.1
 // @description  C0BMBT1A6KX kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesaja oyuncu bilgileriyle (Party ID, ad soyad) ve [Megapay] [Hemen Pay] butonlarıyla cevap verir. Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir. Telegram'da Megapay / Hemen Pay sohbetlerinde yazma kutusunun üstünde "Talep" butonu ("Talep kt lütfen" gönderir).
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -314,6 +314,7 @@ function telegramSide() {
 
     /* ── "Talep" butonu: Megapay / Hemen Pay sohbetlerinde yazma kutusunun hemen üstünde ── */
     const TALEP_TEXT = 'Talep kt lütfen';
+    const TALEP_BG = '#3390ec';   // Telegram mavisi
     const chatId = (h) => String(h || '').split('?')[0];
     const inTarget = () => CONFIG.TARGETS.some(t => chatId(GM_getValue(`tgHash_${t.id}`, null) || t.hash) === chatId(location.hash));
     let talep = null;
@@ -321,10 +322,10 @@ function telegramSide() {
         const b = document.createElement('button');
         b.id = 'dk-talep'; b.type = 'button'; b.textContent = 'Talep';
         b.title = `"${TALEP_TEXT}" gönder`;
-        Object.assign(b.style, { position: 'fixed', zIndex: 50, height: '22px', padding: '0 10px', border: '0', borderRadius: '11px',
-            background: '#3a3f45', color: '#fff', font: '600 11.5px/22px -apple-system, "Segoe UI", Roboto, sans-serif', cursor: 'pointer',
+        Object.assign(b.style, { position: 'fixed', zIndex: 50, height: '28px', padding: '0 14px', border: '0', borderRadius: '14px',
+            background: TALEP_BG, color: '#fff', font: '600 13px/28px -apple-system, "Segoe UI", Roboto, sans-serif', cursor: 'pointer',
             boxShadow: '0 1px 3px rgba(0,0,0,.25)', opacity: '.92' });
-        const flash = (t, bg) => { b.textContent = t; b.style.background = bg; setTimeout(() => { b.textContent = 'Talep'; b.style.background = '#3a3f45'; }, 1600); };
+        const flash = (t, bg) => { b.textContent = t; b.style.background = bg; setTimeout(() => { b.textContent = 'Talep'; b.style.background = TALEP_BG; }, 1600); };
         b.addEventListener('mousedown', (e) => e.preventDefault());   // yazma kutusunun odağı kaybolmasın
         b.addEventListener('click', async () => {
             const input = mainInput();
@@ -345,8 +346,8 @@ function telegramSide() {
         if (!box) { if (talep) { talep.remove(); talep = null; } return; }
         if (!talep || !talep.isConnected) { talep = talepButton(); document.body.appendChild(talep); }
         const r = box.getBoundingClientRect();
-        talep.style.left = `${Math.round(r.left + 4)}px`;
-        talep.style.top = `${Math.round(r.top - 28)}px`;
+        talep.style.left = `${Math.round(r.right - talep.offsetWidth - 4)}px`;   // yazma kutusunun sağ başı
+        talep.style.top = `${Math.round(r.top - 34)}px`;
     }, 500);
 }
 
