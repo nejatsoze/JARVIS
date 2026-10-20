@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Dekont Aktar — Slack'ten Megapay / Hemen Pay Telegram grubuna
 // @namespace    palentis.dekont-aktar
-// @version      1.4.2
-// @description  C0BMBT1A6KX kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesaja oyuncu bilgileriyle (Party ID, ad soyad) ve [Megapay] [Hemen Pay] butonlarıyla cevap verir. Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir. Telegram'da Megapay / Hemen Pay sohbetlerinde yazma kutusunun üstünde "Talep" butonu ("Talep kt lütfen" gönderir).
+// @version      2.0.0
+// @description  C08TKRJQ96G kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesajın altına YALNIZ SENİN TARAYICINDA görünen bir kart çizer (Slack'e cevap gönderilmez): oyuncu bilgileri (Party ID, ad soyad), [Megapay] [Hemen Pay], [📋 Kopyala], [TALEP] [ONAY] (thread'e gerçek mesaj). Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir. Telegram'da Megapay / Hemen Pay sohbetlerinde yazma kutusunun üstünde "Talep" butonu ("Talep kt lütfen" gönderir).
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
 // @match        https://web.telegram.org/*
@@ -36,7 +36,7 @@
 'use strict';
 
 const CONFIG = {
-    CHANNEL: 'C0BMBT1A6KX',
+    CHANNEL: 'C08TKRJQ96G',
     POLL_SEC: 15,
     TARGETS: [
         // hash: Telegram Web K'daki sohbet adresi (#...). Telegram sekmesinin menüsünden "açık sohbeti hedef yap" ile değiştirilebilir.
@@ -477,26 +477,15 @@ function slackSide() {
                 const v = GM_getValue(k, null);
                 GM_deleteValue(k);
                 if (!v) continue;
-                // aynı mesaja ikinci kopya (ikinci kurulum / sekme) cevap vermesin: Slack sayfasının ortak deposunda sahiplen
-                if (!(await claimReply(`${v.thread}.${v.value}`))) { tr(`atlandı (başka kopya cevaplıyor): ${v.value}`); continue; }
-                if (v.error) {
-                    await api('chat.postMessage', { channel: CONFIG.CHANNEL, thread_ts: v.thread, text: `⚠️ ${v.value}: ${v.error}` });
-                    status(`bulunamadı ${v.value}`);
-                    continue;
-                }
-                const blocks = [
-                    { type: 'section', text: { type: 'mrkdwn', text: `*Oyuncu Bilgileri:*\n• \`${v.pid}\`\n• Ad Soyad : ${esc(v.name)}` } },
-                    { type: 'actions', elements: CONFIG.TARGETS.map(t => ({ type: 'button', action_id: `dk_${t.id}`, text: { type: 'plain_text', text: t.label }, url: t.url })) },
-                    { type: 'actions', elements: [{ type: 'button', action_id: 'dk_copy', value: 'copy', text: { type: 'plain_text', text: CONFIG.COPY_LABEL, emoji: true } }] },
-                ];
-                const r = await api('chat.postMessage', { channel: CONFIG.CHANNEL, thread_ts: v.thread, text: infoText(v), blocks: JSON.stringify(blocks), unfurl_links: 'false' });
-                const map = GM_getValue('replies', {});   // cevap ts → oyuncu + o mesajın dekontu
+                // Cevap Slack'e gönderilmez: dekont mesajının altına YALNIZ bu tarayıcıda görünen kart çizilir
+                const map = GM_getValue('cards', {});
                 for (const t in map) if (Date.now() - map[t].at > 7 * 864e5) delete map[t];
-                map[r.ts] = { pid: v.pid, name: v.name, thread: v.thread, reply: r.ts, file: v.file, at: Date.now() };
-                GM_setValue('replies', map);
-                tr(`cevap gitti ${v.pid}${v.file ? ' (görsel var)' : ' (görsel yok)'}`);
-                status(`cevap gönderildi ${v.pid}`);
-                await sleep(600);
+                map[v.thread] = v.error ? { thread: v.thread, reply: v.thread, value: v.value, error: v.error, at: Date.now() }
+                    : { pid: v.pid, name: v.name, thread: v.thread, reply: v.thread, file: v.file, at: Date.now() };
+                GM_setValue('cards', map);
+                tr(v.error ? `kart: ${v.value} bulunamadı` : `kart hazır ${v.pid}${v.file ? ' (görsel var)' : ' (görsel yok)'}`);
+                status(v.error ? `bulunamadı ${v.value}` : `kart hazır ${v.pid}`);
+                renderCards();
             }
         } catch (e) { warn('gönderilemedi:', e.message); status(`HATA: ${e.message}`); tr(`HATA: ${e.message}`); }
         finally { busy = false; if (again) setTimeout(flush, 200); }
@@ -549,7 +538,10 @@ function slackSide() {
         if (!l) return;
         e.preventDefault(); e.stopImmediatePropagation();
         if (l.target.id === 'copy') { copyAll(l.entry); return; }
-        // Telegram sekmesine "orada mısın?" (arka plandaki sekmede zamanlayıcılar yavaşladığı için kalp atışına değil cevaba bakılır)
+        telegramClick(l.entry, l.target);
+    }, true);
+    /** Telegram sekmesine "orada mısın?" (arka plandaki sekmede zamanlayıcılar yavaşladığı için kalp atışına değil cevaba bakılır) */
+    function telegramClick(entry, target) {
         const id = Math.random().toString(36).slice(2);
         let answered = false;
         const lid = GM_addValueChangeListener('tgPong', (k, o, v) => { if (v?.id === id) answered = true; });
@@ -558,10 +550,10 @@ function slackSide() {
         (async () => {
             while (!answered && Date.now() - t0 < 2500) await sleep(100);
             GM_removeValueChangeListener?.(lid);
-            if (answered) sendViaTelegram(l.entry, l.target);    // tek tık gönderim
-            else copyFallback(l.entry, l.target);                // Telegram sekmesi cevap vermedi
+            if (answered) sendViaTelegram(entry, target);    // tek tık gönderim
+            else copyFallback(entry, target);                // Telegram sekmesi cevap vermedi
         })();
-    }, true);
+    }
     async function copyFallback(entry, target) {
         tr(`${target.label}: Telegram sekmesi cevap vermedi, panoya kopyalandı · ${entry.pid}`);
         try { await navigator.clipboard.writeText(infoText(entry)); } catch { /* yok say */ }
@@ -628,11 +620,73 @@ function slackSide() {
             Object.assign(b.style, { width: `${Math.round(w)}px`, maxWidth: 'none', justifyContent: 'center' });
         }
     }
+
+    /* ── Özel kart: dekont mesajının altında yalnız bu tarayıcıda görünür (Slack'e gönderilmez) ── */
+    const REPLY_TALEP = 'Talep alalım lütfen', REPLY_ONAY = 'Onaylanmıştır';
+    function cardButton(label, { bg = '#fff', fg = '#1d1c1d', border = 'rgba(29,28,29,.3)' } = {}, onClick) {
+        const b = document.createElement('button');
+        b.type = 'button'; b.textContent = label;
+        Object.assign(b.style, { flex: '1 1 0', height: '28px', padding: '0 12px', border: `1px solid ${border}`, borderRadius: '4px', background: bg, color: fg,
+            font: '700 13px/26px Lato, "Segoe UI", sans-serif', cursor: 'pointer', whiteSpace: 'nowrap' });
+        const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
+        b.addEventListener('mousedown', stop);
+        b.addEventListener('click', (e) => { stop(e); onClick(b); });
+        return b;
+    }
+    const flashBtn = (b, text, ms = 1800) => { const old = b.textContent; b.textContent = text; b.disabled = true; setTimeout(() => { b.textContent = old; b.disabled = false; }, ms); };
+    async function threadReply(e, text, b) {
+        flashBtn(b, '…', 1200);
+        try {
+            if (!token) await resolveToken();
+            await api('chat.postMessage', { channel: CONFIG.CHANNEL, thread_ts: e.thread, text });
+            flashBtn(b, '✓ Gönderildi');
+            tr(`thread'e yazıldı: "${text}"${e.pid ? ' · ' + e.pid : ''}`);
+        } catch (err) { toast(`Gönderilemedi: ${err.message}`, false); }
+    }
+    function buildCard(e) {
+        const box = document.createElement('div');
+        box.className = 'dk-card';
+        Object.assign(box.style, { margin: '8px 0 4px', padding: '10px 12px', maxWidth: '420px', boxSizing: 'border-box', background: '#f8fafc',
+            border: '1px solid #d6dbe1', borderLeft: '4px solid #3390ec', borderRadius: '8px', font: '15px/1.46 Lato, "Segoe UI", sans-serif', color: '#1d1c1d' });
+        const lock = document.createElement('div');
+        lock.textContent = '🔒 YALNIZCA SEN GÖRÜYORSUN';
+        Object.assign(lock.style, { fontSize: '11px', fontWeight: '700', color: '#6b7785', letterSpacing: '.2px', marginBottom: '6px' });
+        box.appendChild(lock);
+        const body = document.createElement('div');
+        if (e.error) body.textContent = `⚠️ ${e.value}: ${e.error}`;
+        else body.innerHTML = `<b>Oyuncu Bilgileri:</b><br>• <code style="font:12px Monaco,Menlo,monospace;color:#e01e5a;background:#fff;border:1px solid #e8e8e8;border-radius:3px;padding:1px 3px">${esc(e.pid)}</code><br>• Ad Soyad : ${esc(e.name)}`;
+        box.appendChild(body);
+        const row = (...btns) => { const r = document.createElement('div'); Object.assign(r.style, { display: 'flex', gap: '8px', marginTop: '8px' }); btns.forEach(x => r.appendChild(x)); return r; };
+        if (!e.error) {
+            box.appendChild(row(...CONFIG.TARGETS.map(t => cardButton(t.label, {}, () => telegramClick(e, t)))));
+            const copy = cardButton(CONFIG.COPY_LABEL, {}, () => copyAll(e));
+            copy.addEventListener('pointerenter', () => preparePng(e));
+            box.appendChild(row(copy));
+        }
+        box.appendChild(row(
+            cardButton('TALEP', { bg: '#1264a3', fg: '#fff', border: '#1264a3' }, (b) => threadReply(e, REPLY_TALEP, b)),
+            cardButton('ONAY', { bg: '#007a5a', fg: '#fff', border: '#007a5a' }, (b) => threadReply(e, REPLY_ONAY, b)),
+        ));
+        return box;
+    }
+    function renderCards() {
+        if (!location.pathname.includes(CONFIG.CHANNEL)) return;
+        const map = GM_getValue('cards', {});
+        for (const [ts, e] of Object.entries(map)) {
+            for (const item of document.querySelectorAll(`[data-item-key="${ts}"], [data-msg-ts="${ts}"]`)) {
+                if (item.querySelector('.dk-card')) continue;
+                const host = item.querySelector('[data-qa="message_content"], .c-message_kit__gutter__right') || item;
+                host.appendChild(buildCard(e));
+            }
+        }
+    }
+    GM_addValueChangeListener('cards', () => renderCards());
+
     let widenQueued = false;
     new MutationObserver(() => {
         if (widenQueued) return;
         widenQueued = true;
-        setTimeout(() => { widenQueued = false; widenCopy(document); }, 400);   // Slack sık değişir: en fazla 400 ms'de bir bak
+        setTimeout(() => { widenQueued = false; widenCopy(document); renderCards(); }, 400);   // Slack sık değişir: en fazla 400 ms'de bir bak
     }).observe(document.documentElement, { childList: true, subtree: true });
 
     /** Telegram sekmesine iş bırak, sonucu bekle. */
