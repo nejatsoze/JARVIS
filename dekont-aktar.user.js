@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dekont Aktar — Slack'ten Megapay / Hemen Pay Telegram grubuna
 // @namespace    palentis.dekont-aktar
-// @version      2.1.0
+// @version      2.2.0
 // @description  C08TKRJQ96G kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesajın altına YALNIZ SENİN TARAYICINDA görünen bir kart çizer (Slack'e cevap gönderilmez): oyuncu bilgileri (Party ID, ad soyad), [Megapay] [Hemen Pay], [Altyapıda Sorgula] (C07MNHZ1KDM'ye dekont + bilgiler), [📋 Kopyala] (Telegram Web'de tek Ctrl+V ile görsel + açıklama), [TALEP] [ONAY] (thread'e gerçek mesaj). Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir. Telegram'da Megapay / Hemen Pay sohbetlerinde yazma kutusunun üstünde "Talep" butonu ("Talep kt lütfen" gönderir).
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -327,42 +327,85 @@ function telegramSide() {
         })();
     }, true);
 
-    /* ── "Talep" butonu: Megapay / Hemen Pay sohbetlerinde yazma kutusunun hemen üstünde ── */
-    const TALEP_TEXT = 'Talep kt lütfen';
-    const TALEP_BG = '#3390ec';   // Telegram mavisi
+    /* ── Hızlı mesaj kartı (Talep / Mail KT): Megapay / Hemen Pay sohbetlerinde, tutamaktan sürüklenebilir ── */
+    const QUICK = [
+        { label: 'Talep', text: 'Talep kt lütfen', bg: '#3390ec', hover: '#2a7fd4' },
+        { label: 'Mail KT', text: 'Mail iletilmiştir kt lütfen', bg: '#1f9d6b', hover: '#188a5d' },
+    ];
     const chatId = (h) => String(h || '').split('?')[0];
     const inTarget = () => CONFIG.TARGETS.some(t => chatId(GM_getValue(`tgHash_${t.id}`, null) || t.hash) === chatId(location.hash));
-    let talep = null;
-    function talepButton() {
-        const b = document.createElement('button');
-        b.id = 'dk-talep'; b.type = 'button'; b.textContent = 'Talep';
-        b.title = `"${TALEP_TEXT}" gönder`;
-        Object.assign(b.style, { position: 'fixed', zIndex: 50, height: '28px', padding: '0 14px', border: '0', borderRadius: '14px',
-            background: TALEP_BG, color: '#fff', font: '600 13px/28px -apple-system, "Segoe UI", Roboto, sans-serif', cursor: 'pointer',
-            boxShadow: '0 1px 3px rgba(0,0,0,.25)', opacity: '.92' });
-        const flash = (t, bg) => { b.textContent = t; b.style.background = bg; setTimeout(() => { b.textContent = 'Talep'; b.style.background = TALEP_BG; }, 1600); };
-        b.addEventListener('mousedown', (e) => e.preventDefault());   // yazma kutusunun odağı kaybolmasın
-        b.addEventListener('click', async () => {
-            const input = mainInput();
-            if (!input) return;
-            if ((input.textContent || '').trim()) { flash('Kutu dolu', '#b4123f'); return; }   // yazılmış taslağı bozma
-            typeInto(input, TALEP_TEXT);
-            await tsleep(150);
-            const send = $('.chat-input .btn-send');
-            send ? send.click() : input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
-            flash('✓ Gönderildi', '#1f8b4c');
-        });
-        return b;
+    async function quickSend(q, b) {
+        const flash = (t, bg) => { b.textContent = t; b.style.background = bg; setTimeout(() => { b.textContent = q.label; b.style.background = q.bg; }, 1600); };
+        const input = mainInput();
+        if (!input) return;
+        if ((input.textContent || '').trim()) { flash('Kutu dolu', '#b4123f'); return; }   // yazılmış taslağı bozma
+        typeInto(input, q.text);
+        await tsleep(150);
+        const send = $('.chat-input .btn-send');
+        send ? send.click() : input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+        flash('✓ Gönderildi', '#475467');
     }
-    // Hedef sohbetteyken butonu yazma kutusunun sol üst köşesine hizala; değilse kaldır
+    let card = null;
+    function quickCard() {
+        const box = document.createElement('div');
+        box.id = 'dk-quick';
+        Object.assign(box.style, { position: 'fixed', zIndex: 50, display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 8px 7px 6px',
+            background: '#fff', borderRadius: '14px', boxShadow: '0 4px 16px rgba(16,24,40,.18), 0 0 0 1px rgba(16,24,40,.06)',
+            font: '600 14px/1 -apple-system, "Segoe UI", Roboto, sans-serif', userSelect: 'none' });
+        const grip = document.createElement('div');
+        grip.textContent = '⠿'; grip.title = 'Sürükle: kartı taşı (çift tık: varsayılan yere dön)';
+        Object.assign(grip.style, { cursor: 'grab', color: '#98a2b3', fontSize: '18px', padding: '0 2px' });
+        box.appendChild(grip);
+        for (const q of QUICK) {
+            const b = document.createElement('button');
+            b.type = 'button'; b.textContent = q.label; b.title = `"${q.text}" gönder`;
+            Object.assign(b.style, { height: '36px', padding: '0 18px', border: '0', borderRadius: '10px', background: q.bg, color: '#fff',
+                font: 'inherit', cursor: 'pointer', boxShadow: '0 1px 2px rgba(16,24,40,.12)' });
+            b.addEventListener('mouseenter', () => { if (b.textContent === q.label) b.style.background = q.hover; });
+            b.addEventListener('mouseleave', () => { if (b.textContent === q.label) b.style.background = q.bg; });
+            b.addEventListener('mousedown', (e) => e.preventDefault());   // yazma kutusunun odağı kaybolmasın
+            b.addEventListener('click', () => quickSend(q, b));
+            box.appendChild(b);
+        }
+        // Sürükle-bırak: konum (sağ / alt boşluk) kaydedilir, tüm Telegram sekmelerinde aynı
+        let drag = null;
+        grip.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            const r = box.getBoundingClientRect();
+            drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+            grip.style.cursor = 'grabbing'; e.preventDefault();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!drag) return;
+            const x = Math.min(Math.max(0, e.clientX - drag.dx), innerWidth - box.offsetWidth);
+            const y = Math.min(Math.max(0, e.clientY - drag.dy), innerHeight - box.offsetHeight);
+            box.style.left = `${x}px`; box.style.top = `${y}px`;
+        });
+        document.addEventListener('mouseup', () => {
+            if (!drag) return;
+            drag = null; grip.style.cursor = 'grab';
+            const r = box.getBoundingClientRect();
+            GM_setValue('quickPos', { right: Math.round(innerWidth - r.right), bottom: Math.round(innerHeight - r.bottom) });
+        });
+        grip.addEventListener('dblclick', () => GM_deleteValue('quickPos'));
+        return box;
+    }
+    // Hedef sohbetteyken göster: kayıtlı konum varsa orada, yoksa yazma kutusunun sağ üstünde; değilse kaldır
     setInterval(() => {
         const input = inTarget() && mainInput();
-        const box = input && (input.closest('.chat-input-container, .rows-wrapper') || input);
-        if (!box) { if (talep) { talep.remove(); talep = null; } return; }
-        if (!talep || !talep.isConnected) { talep = talepButton(); document.body.appendChild(talep); }
-        const r = box.getBoundingClientRect();
-        talep.style.left = `${Math.round(r.right - talep.offsetWidth - 4)}px`;   // yazma kutusunun sağ başı
-        talep.style.top = `${Math.round(r.top - 34)}px`;
+        if (!input) { if (card) { card.remove(); card = null; } return; }
+        if (!card || !card.isConnected) { card = quickCard(); document.body.appendChild(card); }
+        if (card.style.cursor === 'grabbing' || card.querySelector('div').style.cursor === 'grabbing') return;   // sürüklenirken dokunma
+        const pos = GM_getValue('quickPos', null);
+        if (pos) {
+            card.style.left = `${Math.max(0, innerWidth - pos.right - card.offsetWidth)}px`;
+            card.style.top = `${Math.max(0, innerHeight - pos.bottom - card.offsetHeight)}px`;
+        } else {
+            const box = input.closest('.chat-input-container, .rows-wrapper') || input;
+            const r = box.getBoundingClientRect();
+            card.style.left = `${Math.round(r.right - card.offsetWidth)}px`;
+            card.style.top = `${Math.round(r.top - card.offsetHeight - 8)}px`;
+        }
     }, 500);
 }
 
@@ -638,6 +681,8 @@ function slackSide() {
 
     /* ── Özel kart: dekont mesajının altında yalnız bu tarayıcıda görünür (Slack'e gönderilmez) ── */
     const REPLY_TALEP = 'Talep alalım lütfen', REPLY_ONAY = 'Onaylanmıştır';
+    const REPLY_MEGA_HH = 'kolaydekontmail@gmail.com adresine banka girişinden itibaren çift cihaz olarak videolu hesap hareketleri rica edelim.';
+    const REPLY_HEMEN_HH = 'desteksupport1@gmail.com adresine banka girişinden itibaren çift cihaz olarak videolu hesap hareketleri rica edelim.';
     const CARD_CSS = `
 .dk-card{margin:8px 0 4px;max-width:440px;box-sizing:border-box;padding:12px 14px;background:#fff;border:1px solid #e4e7ec;border-radius:12px;
   box-shadow:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.08);font:14px/1.45 Lato,"Segoe UI",sans-serif;color:#343a43}
@@ -730,6 +775,10 @@ function slackSide() {
         box.appendChild(row(
             cardButton('TALEP', 'dk-blue', (b) => threadReply(e, REPLY_TALEP, b)),
             cardButton('ONAY', 'dk-green', (b) => threadReply(e, REPLY_ONAY, b)),
+        ));
+        box.appendChild(row(
+            cardButton('Mega HH', '', (b) => threadReply(e, REPLY_MEGA_HH, b)),
+            cardButton('Hemen HH', '', (b) => threadReply(e, REPLY_HEMEN_HH, b)),
         ));
         return box;
     }
