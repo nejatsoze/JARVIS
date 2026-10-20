@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Dekont Aktar — Slack'ten Megapay / Hemen Pay Telegram grubuna
 // @namespace    palentis.dekont-aktar
-// @version      2.0.0
-// @description  C08TKRJQ96G kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesajın altına YALNIZ SENİN TARAYICINDA görünen bir kart çizer (Slack'e cevap gönderilmez): oyuncu bilgileri (Party ID, ad soyad), [Megapay] [Hemen Pay], [📋 Kopyala], [TALEP] [ONAY] (thread'e gerçek mesaj). Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir. Telegram'da Megapay / Hemen Pay sohbetlerinde yazma kutusunun üstünde "Talep" butonu ("Talep kt lütfen" gönderir).
+// @version      2.1.0
+// @description  C08TKRJQ96G kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesajın altına YALNIZ SENİN TARAYICINDA görünen bir kart çizer (Slack'e cevap gönderilmez): oyuncu bilgileri (Party ID, ad soyad), [Megapay] [Hemen Pay], [Altyapıda Sorgula] (C07MNHZ1KDM'ye dekont + bilgiler), [📋 Kopyala] (Telegram Web'de tek Ctrl+V ile görsel + açıklama), [TALEP] [ONAY] (thread'e gerçek mesaj). Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir. Telegram'da Megapay / Hemen Pay sohbetlerinde yazma kutusunun üstünde "Talep" butonu ("Talep kt lütfen" gönderir).
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
 // @match        https://web.telegram.org/*
@@ -44,6 +44,7 @@ const CONFIG = {
         { id: 'megapay', label: 'Megapay', url: 'https://t.me/c/2515555411/3', hash: '#-2515555411', topic: { id: 3, name: 'Megapay Havale' } },
         { id: 'hemenpay', label: 'Hemen Pay', url: 'https://web.telegram.org/k/#-4487917824', hash: '#-4487917824' },
     ],
+    ALTYAPI_CHANNEL: 'C07MNHZ1KDM',                      // "Altyapıda Sorgula": dekont + bilgiler bu Slack kanalına
     COPY_LABEL: '📋 Kopyala',                            // dekont + oyuncu bilgilerini birlikte panoya alan geniş buton
     EMAIL_RE: /([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/,
     USER_RE: /(?:^|\s)["“”„](?=[A-Za-z0-9_.-]*[A-Za-z])([A-Za-z0-9_.-]{3,40})/,   // "Ahmetokatan → kullanıcı adı (en az bir harf: "100 TL" sayılmaz)
@@ -311,6 +312,20 @@ function telegramSide() {
         });
     }
     GM_registerMenuCommand('Hedefleri göster', () => alert(CONFIG.TARGETS.map(t => `${t.label}: ${GM_getValue(`tgHash_${t.id}`, null) || t.hash}${GM_getValue(`tgHash_${t.id}`, null) ? ' (kaydedilmiş)' : ' (varsayılan)'}`).join('\n')));
+
+    /* ── Kopyala ile alınan dekont + bilgiler tek Ctrl+V ile: görsel gönderme penceresi açılınca bilgiler açıklamaya yazılır ── */
+    document.addEventListener('paste', (e) => {
+        const dt = e.clipboardData;
+        if (!dt) return;
+        const text = (dt.getData('text/plain') || '').trim();
+        const hasImg = [...(dt.items || [])].some(i => i.kind === 'file' && /^image\//.test(i.type));
+        if (!hasImg || !/^Oyuncu Bilgileri/.test(text)) return;
+        (async () => {
+            const pop = await waitFor(popup, 5000);
+            const cap = pop && await waitFor(() => [...pop.querySelectorAll('div.input-message-input[contenteditable="true"], .input-field-input[contenteditable="true"]')].find(visible), 3000);
+            if (cap && !(cap.textContent || '').trim()) typeInto(cap, text);
+        })();
+    }, true);
 
     /* ── "Talep" butonu: Megapay / Hemen Pay sohbetlerinde yazma kutusunun hemen üstünde ── */
     const TALEP_TEXT = 'Talep kt lütfen';
@@ -623,17 +638,41 @@ function slackSide() {
 
     /* ── Özel kart: dekont mesajının altında yalnız bu tarayıcıda görünür (Slack'e gönderilmez) ── */
     const REPLY_TALEP = 'Talep alalım lütfen', REPLY_ONAY = 'Onaylanmıştır';
-    function cardButton(label, { bg = '#fff', fg = '#1d1c1d', border = 'rgba(29,28,29,.3)' } = {}, onClick) {
+    const CARD_CSS = `
+.dk-card{margin:8px 0 4px;max-width:440px;box-sizing:border-box;padding:12px 14px;background:#fff;border:1px solid #e4e7ec;border-radius:12px;
+  box-shadow:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.08);font:14px/1.45 Lato,"Segoe UI",sans-serif;color:#343a43}
+.dk-card .dk-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.dk-card .dk-name{font-weight:800;font-size:15px;color:#2b3036}
+.dk-card .dk-id{display:inline-block;margin-top:2px;font:12px/18px ui-monospace,Menlo,monospace;color:#475467;background:#f2f4f7;border-radius:6px;padding:1px 7px}
+.dk-card .dk-lock{flex:none;font-size:10.5px;font-weight:700;color:#667085;background:#f2f4f7;border-radius:999px;padding:3px 9px;letter-spacing:.2px}
+.dk-card .dk-warn{color:#b42318;font-weight:700}
+.dk-card .dk-row{display:flex;gap:8px;margin-top:8px}
+.dk-card .dk-btn{flex:1 1 0;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:34px;padding:0 12px;box-sizing:border-box;
+  border:1px solid #d0d5dd;border-radius:9px;background:#fff;color:#344054;font:700 13px/1 Lato,"Segoe UI",sans-serif;cursor:pointer;white-space:nowrap;
+  box-shadow:0 1px 2px rgba(16,24,40,.05);transition:background-color .12s,border-color .12s,transform .05s}
+.dk-card .dk-btn:hover{background:#f9fafb;border-color:#b9c0cb}
+.dk-card .dk-btn:active{transform:translateY(1px)}
+.dk-card .dk-btn[disabled]{opacity:.7;cursor:default}
+.dk-card .dk-blue{background:#2e90fa;border-color:#2e90fa;color:#fff}
+.dk-card .dk-blue:hover{background:#1570ef;border-color:#1570ef}
+.dk-card .dk-green{background:#12b76a;border-color:#12b76a;color:#fff}
+.dk-card .dk-green:hover{background:#039855;border-color:#039855}
+.dk-card .dk-sep{height:1px;background:#eaecf0;margin:12px 0 4px}`;
+    function ensureCardCss() {
+        if (document.getElementById('dk-card-css')) return;
+        const st = document.createElement('style');
+        st.id = 'dk-card-css'; st.textContent = CARD_CSS;
+        (document.head || document.documentElement).appendChild(st);
+    }
+    function cardButton(label, cls, onClick) {
         const b = document.createElement('button');
-        b.type = 'button'; b.textContent = label;
-        Object.assign(b.style, { flex: '1 1 0', height: '28px', padding: '0 12px', border: `1px solid ${border}`, borderRadius: '4px', background: bg, color: fg,
-            font: '700 13px/26px Lato, "Segoe UI", sans-serif', cursor: 'pointer', whiteSpace: 'nowrap' });
+        b.type = 'button'; b.className = `dk-btn ${cls || ''}`; b.textContent = label;
         const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
         b.addEventListener('mousedown', stop);
-        b.addEventListener('click', (e) => { stop(e); onClick(b); });
+        b.addEventListener('click', (e) => { stop(e); if (!b.disabled) onClick(b); });
         return b;
     }
-    const flashBtn = (b, text, ms = 1800) => { const old = b.textContent; b.textContent = text; b.disabled = true; setTimeout(() => { b.textContent = old; b.disabled = false; }, ms); };
+    const flashBtn = (b, text, ms = 1800) => { const old = b.dataset.label || b.textContent; b.dataset.label = old; b.textContent = text; b.disabled = true; setTimeout(() => { b.textContent = old; b.disabled = false; }, ms); };
     async function threadReply(e, text, b) {
         flashBtn(b, '…', 1200);
         try {
@@ -643,29 +682,54 @@ function slackSide() {
             tr(`thread'e yazıldı: "${text}"${e.pid ? ' · ' + e.pid : ''}`);
         } catch (err) { toast(`Gönderilemedi: ${err.message}`, false); }
     }
+    function putBytes(url, blob) {
+        return new Promise((resolve, reject) => GM_xmlhttpRequest({
+            method: 'POST', url, data: blob, timeout: 60000, headers: { 'Content-Type': blob.type || 'application/octet-stream' },
+            onload: (r) => (r.status >= 200 && r.status < 300 ? resolve() : reject(new Error(`yükleme HTTP ${r.status}`))),
+            onerror: () => reject(new Error('yükleme ağ hatası')), ontimeout: () => reject(new Error('yükleme zaman aşımı')),
+        }));
+    }
+    /** "Altyapıda Sorgula": dekont + oyuncu bilgileri ALTYAPI_CHANNEL'a (görsel dosya olarak, bilgiler açıklamada). */
+    async function altyapiSorgula(e, b) {
+        flashBtn(b, 'Gönderiliyor…', 60000);
+        try {
+            if (!token) await resolveToken();
+            const text = infoText(e);
+            if (e.file?.url) {
+                const blob = await fetchBlob(e.file.url);
+                const name = e.file.name || `dekont.${(blob.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg')}`;
+                const up = await api('files.getUploadURLExternal', { filename: name, length: String(blob.size) });
+                await putBytes(up.upload_url, blob);
+                await api('files.completeUploadExternal', { files: JSON.stringify([{ id: up.file_id, title: name }]), channel_id: CONFIG.ALTYAPI_CHANNEL, initial_comment: text });
+            } else await api('chat.postMessage', { channel: CONFIG.ALTYAPI_CHANNEL, text });
+            b.disabled = false; flashBtn(b, '✓ Gönderildi');
+            tr(`altyapıya gönderildi ${e.pid}${e.file?.url ? ' (dekontlu)' : ''}`);
+            toast(`✓ Altyapıya gönderildi (${e.pid})`);
+        } catch (err) { b.disabled = false; b.textContent = b.dataset.label; toast(`Altyapıya gönderilemedi: ${err.message}`, false); }
+    }
     function buildCard(e) {
+        ensureCardCss();
         const box = document.createElement('div');
         box.className = 'dk-card';
-        Object.assign(box.style, { margin: '8px 0 4px', padding: '10px 12px', maxWidth: '420px', boxSizing: 'border-box', background: '#f8fafc',
-            border: '1px solid #d6dbe1', borderLeft: '4px solid #3390ec', borderRadius: '8px', font: '15px/1.46 Lato, "Segoe UI", sans-serif', color: '#1d1c1d' });
-        const lock = document.createElement('div');
-        lock.textContent = '🔒 YALNIZCA SEN GÖRÜYORSUN';
-        Object.assign(lock.style, { fontSize: '11px', fontWeight: '700', color: '#6b7785', letterSpacing: '.2px', marginBottom: '6px' });
-        box.appendChild(lock);
-        const body = document.createElement('div');
-        if (e.error) body.textContent = `⚠️ ${e.value}: ${e.error}`;
-        else body.innerHTML = `<b>Oyuncu Bilgileri:</b><br>• <code style="font:12px Monaco,Menlo,monospace;color:#e01e5a;background:#fff;border:1px solid #e8e8e8;border-radius:3px;padding:1px 3px">${esc(e.pid)}</code><br>• Ad Soyad : ${esc(e.name)}`;
-        box.appendChild(body);
-        const row = (...btns) => { const r = document.createElement('div'); Object.assign(r.style, { display: 'flex', gap: '8px', marginTop: '8px' }); btns.forEach(x => r.appendChild(x)); return r; };
+        const top = document.createElement('div'); top.className = 'dk-top';
+        const who = document.createElement('div');
+        if (e.error) who.innerHTML = `<span class="dk-warn">⚠️ ${esc(e.value)}</span><div>${esc(e.error)}</div>`;
+        else who.innerHTML = `<div class="dk-name">${esc(e.name)}</div><span class="dk-id">${esc(e.pid)}</span>`;
+        const lock = document.createElement('span'); lock.className = 'dk-lock'; lock.textContent = '🔒 Yalnızca sen';
+        top.append(who, lock);
+        box.appendChild(top);
+        const row = (...btns) => { const r = document.createElement('div'); r.className = 'dk-row'; r.append(...btns); return r; };
         if (!e.error) {
-            box.appendChild(row(...CONFIG.TARGETS.map(t => cardButton(t.label, {}, () => telegramClick(e, t)))));
-            const copy = cardButton(CONFIG.COPY_LABEL, {}, () => copyAll(e));
+            box.appendChild(row(...CONFIG.TARGETS.map(t => cardButton(`✈ ${t.label}`, '', () => telegramClick(e, t)))));
+            box.appendChild(row(cardButton('🔍 Altyapıda Sorgula', '', (b) => altyapiSorgula(e, b))));
+            const copy = cardButton(CONFIG.COPY_LABEL, '', () => copyAll(e));
             copy.addEventListener('pointerenter', () => preparePng(e));
             box.appendChild(row(copy));
         }
+        const sep = document.createElement('div'); sep.className = 'dk-sep'; box.appendChild(sep);
         box.appendChild(row(
-            cardButton('TALEP', { bg: '#1264a3', fg: '#fff', border: '#1264a3' }, (b) => threadReply(e, REPLY_TALEP, b)),
-            cardButton('ONAY', { bg: '#007a5a', fg: '#fff', border: '#007a5a' }, (b) => threadReply(e, REPLY_ONAY, b)),
+            cardButton('TALEP', 'dk-blue', (b) => threadReply(e, REPLY_TALEP, b)),
+            cardButton('ONAY', 'dk-green', (b) => threadReply(e, REPLY_ONAY, b)),
         ));
         return box;
     }
