@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dekont Aktar — Slack'ten Megapay / Hemen Pay Telegram grubuna
 // @namespace    palentis.dekont-aktar
-// @version      1.4.1
+// @version      1.4.2
 // @description  C0BMBT1A6KX kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesaja oyuncu bilgileriyle (Party ID, ad soyad) ve [Megapay] [Hemen Pay] butonlarıyla cevap verir. Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir. Telegram'da Megapay / Hemen Pay sohbetlerinde yazma kutusunun üstünde "Talep" butonu ("Talep kt lütfen" gönderir).
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -669,6 +669,19 @@ function slackSide() {
         const on = GM_getValue('enabled', true) === false;
         GM_setValue('enabled', on);
         alert(`Dekont Aktar ${on ? 'AÇIK' : 'KAPALI'}.`);
+    });
+    /* Deneme: Slack bu oturumla "yalnızca sizin görebildiğiniz" (ephemeral) mesaja izin veriyor mu? */
+    GM_registerMenuCommand('Test: sadece bana görünen mesaj', async () => {
+        try {
+            if (!token) await resolveToken();
+            const blocks = [
+                { type: 'section', text: { type: 'mrkdwn', text: '*🔒 Deneme* — bu mesajı kanalda yalnızca sen görüyorsun.' } },
+                { type: 'actions', elements: CONFIG.TARGETS.map(t => ({ type: 'button', action_id: `dk_test_${t.id}`, text: { type: 'plain_text', text: t.label }, url: t.url })) },
+            ];
+            const r = await call('chat.postEphemeral', { channel: CONFIG.CHANNEL, user: me, text: 'Deneme: yalnızca sen görüyorsun', blocks: JSON.stringify(blocks) });
+            alert(r.ok ? `Slack kabul etti. ${CONFIG.CHANNEL} kanalında "Yalnızca siz görebilirsiniz" notlu bir mesaj ve iki buton görmelisin.`
+                       : `Slack izin vermedi: ${r.error}`);
+        } catch (e) { alert('Test hatası: ' + e.message); }
     });
     GM_registerMenuCommand('Durum', () => {
         const s = GM_getValue('slackStatus', null);
