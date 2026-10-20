@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Slack Araçları (Okundu + Watcher + Ayna)
 // @namespace    palentis.slack.tools
-// @version      2.2.0
-// @description  Dört aracı tek script'te toplar: tümünü okundu işaretle, kanal watcher (Mola bildirimi), kanal aynalama ve C08TKRJQ96G'ye otomatik tepki (👀 / 🔍). Ortak, taşınabilir buton adası. Ayna yalnız ana mesajları aktarır (thread cevapları aktarılmaz); 2.1.0'a geçişte birikmiş kuyruk bir kez sıfırlanır.
+// @version      2.3.0
+// @description  Dört aracı tek script'te toplar: tümünü okundu işaretle, kanal watcher (Mola bildirimi), kanal aynalama (şimdilik kapalı) ve C08TKRJQ96G'ye otomatik tepki (👀 ve 🔍 ayrı butonlar). Ortak, taşınabilir buton adası. Ayna yalnız ana mesajları aktarır (thread cevapları aktarılmaz); 2.1.0'a geçişte birikmiş kuyruk bir kez sıfırlanır.
 // @match        https://app.slack.com/*
 // @match        https://*.slack.com/*
 // @grant        none
@@ -1348,12 +1348,13 @@
   const AutoReact = (() => {
     const CHANNEL = 'C08TKRJQ96G';
     const POLL_MS = 8000;
-    // Adadaki buton tıklandıkça sırayla: Kapalı → 👀 → 🔍 → Kapalı
+    // Adada iki ayrı buton: 👀 ve 🔍. Biri açıkken diğerine basmak ona geçirir; açık olana basmak kapatır.
     const MODES = [
-      { id: 'off', emoji: null, label: '⚪️ Tepki: Kapalı', color: '#8E8E93' },
-      { id: 'eyes', emoji: 'eyes', label: '👀 Tepki', color: '#007AFF' },
-      { id: 'mag_right', emoji: 'mag_right', label: '🔍 Tepki', color: '#007AFF' },
+      { id: 'off', emoji: null },
+      { id: 'eyes', emoji: 'eyes', icon: '👀', name: 'Göz' },
+      { id: 'mag_right', emoji: 'mag_right', icon: '🔍', name: 'Büyüteç' },
     ];
+    const ON = '#007AFF', OFF = '#3A3F45';
     const MODE_KEY = 'slackTools.react.mode';
     const LOCK_NAME = `slackTools.react.leader.${CHANNEL}`;
     const log = (...a) => console.log('[OtoTepki]', ...a);
@@ -1361,7 +1362,8 @@
     const modeId = () => { try { return localStorage.getItem(MODE_KEY) || 'off'; } catch (_) { return 'off'; } };
     const mode = () => MODES.find((m) => m.id === modeId()) || MODES[0];
 
-    let token = null, me = null, lastTs = null, busy = false, isLeader = false, btn = null;
+    let token = null, me = null, lastTs = null, busy = false, isLeader = false;
+    const btns = {};
 
     async function resolve() {
       const cfg = readLocalConfig();
@@ -1402,26 +1404,33 @@
     }
 
     function render() {
-      if (!btn) return;
-      const m = mode();
-      btn.textContent = m.label;
-      btn.style.backgroundColor = m.color;
-      btn.title = 'Otomatik tepki (C08TKRJQ96G ana mesajları)\ntıkla: Kapalı → 👀 → 🔍';
+      const cur = modeId();
+      for (const [id, b] of Object.entries(btns)) {
+        const m = MODES.find((x) => x.id === id);
+        const on = cur === id;
+        b.textContent = m.icon;
+        b.style.backgroundColor = on ? ON : OFF;
+        b.style.opacity = on ? '1' : '.75';
+        b.title = `Otomatik ${m.name} tepkisi (C08TKRJQ96G ana mesajları): ${on ? 'AÇIK — tıkla: kapat' : 'kapalı — tıkla: aç'}`;
+      }
     }
 
     function start() {
-      btn = Island.button();
-      btn.addEventListener('click', () => {
-        const i = MODES.findIndex((m) => m.id === modeId());
-        const next = MODES[(i + 1) % MODES.length];
-        try { localStorage.setItem(MODE_KEY, next.id); } catch (_) {}
-        lastTs = null;   // mod değişince yalnız bundan sonraki mesajlar
-        render();
-        log('mod:', next.id);
-      });
+      for (const m of MODES.filter((x) => x.emoji)) {
+        const b = Island.button();
+        b.style.fontSize = '14px';
+        b.addEventListener('click', () => {
+          const next = modeId() === m.id ? 'off' : m.id;
+          try { localStorage.setItem(MODE_KEY, next); } catch (_) {}
+          lastTs = null;   // değişince yalnız bundan sonraki mesajlar
+          render();
+          log('mod:', next);
+        });
+        btns[m.id] = b;
+        Island.add(b, m.id === 'eyes' ? 4 : 5);
+      }
       window.addEventListener('storage', (e) => { if (e.key === MODE_KEY) { lastTs = null; render(); } });
       render();
-      Island.add(btn, 4);
 
       const lead = () => { isLeader = true; poll(); setInterval(poll, POLL_MS); };
       if (navigator.locks && navigator.locks.request) navigator.locks.request(LOCK_NAME, () => new Promise(() => lead()));
@@ -1435,14 +1444,16 @@
   // BAŞLATMA
   // ============================================================
 
+  // Ayna kapalı (Dekont Aktar artık C08TKRJQ96G'yi doğrudan izliyor). Açmak için true yap.
+  const MIRROR_ENABLED = false;
   // Ayna: Slack kendi WebSocket'ini açmadan ÖNCE kanca kurulmalı (document-start)
-  Mirror.hookWebSocket();
+  if (MIRROR_ENABLED) Mirror.hookWebSocket();
 
   function boot() {
     Island.mount();
 
     try { MarkRead.init(); } catch (e) { console.error('[SlackTools] Okundu modülü:', e); }
-    try { Mirror.start(); } catch (e) { console.error('[SlackTools] Ayna modülü:', e); }
+    if (MIRROR_ENABLED) { try { Mirror.start(); } catch (e) { console.error('[SlackTools] Ayna modülü:', e); } }
     try { AutoReact.start(); } catch (e) { console.error('[SlackTools] Tepki modülü:', e); }
 
     if (Watcher.applies()) {
@@ -1452,7 +1463,7 @@
       }, 5000);
     }
 
-    console.log('[SlackTools] v2.2.0 yüklendi.');
+    console.log('[SlackTools] v2.3.0 yüklendi.');
   }
 
   if (document.readyState === 'loading') {
