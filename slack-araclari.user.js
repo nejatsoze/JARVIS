@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Slack Araçları (Okundu + Watcher + Ayna)
 // @namespace    palentis.slack.tools
-// @version      2.3.0
+// @version      2.3.1
 // @description  Dört aracı tek script'te toplar: tümünü okundu işaretle, kanal watcher (Mola bildirimi), kanal aynalama (şimdilik kapalı) ve C08TKRJQ96G'ye otomatik tepki (👀 ve 🔍 ayrı butonlar). Ortak, taşınabilir buton adası. Ayna yalnız ana mesajları aktarır (thread cevapları aktarılmaz); 2.1.0'a geçişte birikmiş kuyruk bir kez sıfırlanır.
 // @match        https://app.slack.com/*
 // @match        https://*.slack.com/*
@@ -247,11 +247,23 @@
     const TEAM_ID = 'T07MA8JLR2R'; // yalnız bu workspace'te çalışır
 
     const WATCHED_CHANNELS = [
-      'C08QRR8ER1B', 'C08PFJSK00P', 'C08TKRJQ96G', 'C08PZGLQ3J6',
-      'C0A9YJRFY1L', 'C08SFHYL0CQ', 'C07LYJ4HK0F', 'C08PUFUTT3P',
-      'C08Q00NMW5R', 'C08QALM34FM', 'D08R9AXBZJL', 'C08QH2ZG7R7',
-      'C08PUFTL869', 'D08R9AW6RK2', 'C08PN8ZJL2J', 'C08Q00L6WD9',
-      'C0C81S6KVMK',
+      'C08PN8ZJL2J', // casino-sorunları
+      'C08PFJSK00P', // bonus-kontrol
+      'C08TKRJQ96G', // finansal-sorunlar
+      'C08PZGLQ3J6', // canlı-destek
+      'C0A9YJRFY1L', // inisiyatif talepleri
+      'C08SFHYL0CQ', // admin
+      'C07LYJ4HK0F', // zumabet
+      'C08Q00NMW5R', // kupon sorunları
+      'C08QALM34FM', // çekim-iptal
+      'D08R9AW6RK2', // joseph (DM)
+      'C08QH2ZG7R7', // domain change
+      'C08PUFTL869', // çevrim-kontrol
+      'C08Q00L6WD9', // şifre yenileme 2fa
+      'C0C81S6KVMK', // çekim talepleri
+      'C0C86EMQRBK', // botyazılım
+      'C0C8B1YR5SA', // shift takibi
+      'C08PUFUTT3P', // (adı belirtilmedi — listede vardı, korundu)
     ];
 
     const TARGET_CHANNEL = 'C08PZGND15G';
