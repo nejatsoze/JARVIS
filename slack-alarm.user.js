@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Slack Alarm - 3 Kademeli Toggle
 // @namespace    palentis-slack-alarm
-// @version      3.0.2
+// @version      3.1.0
 // @description  Sidebar'da hedef kanal/kişi okunmamış olduğunda alarm çalar. 0: kapalı · I: her yeni mesajda iki kez · II: okunana kadar tekrar. Kademe tüm sekmelerde senkron.
 // @match        https://app.slack.com/*
 // @noframes
@@ -13,18 +13,26 @@
 
     // ============ HEDEFLER ============
     // I ve II aynı listeyi izler; kademeler sadece ne kadar çalacağını belirler.
+    // Slack Araçları'ndaki Watcher ile aynı liste. Önce kanal kimliğiyle (Slack sidebar'ı kimliği taşır),
+    // bulunamazsa adla eşleşir (adlar gevşek karşılaştırılır: büyük/küçük, Türkçe harf, boşluk/tire fark etmez).
     const HEDEFLER = [
-        'admin', 'Anderson', 'Joseph', 'Minerva', 'çekim-talepleri',
-        'finansal-sorunlar',
-        'canlıdestek-ortak',
-        'bonus-kontrol',
-        'çevrim-kontrol',
-        'sifre-yenileme-2fa',
-        'cekim-iptal',
-        'casino-sorunları',
-        'kupon-sorunları',
-        'cekim-talepleri',
-        'canlı-destek',
+        { id: 'C08PN8ZJL2J', adlar: ['casino-sorunları'] },
+        { id: 'C08PFJSK00P', adlar: ['bonus-kontrol'] },
+        { id: 'C08TKRJQ96G', adlar: ['finansal-sorunlar'] },
+        { id: 'C08PZGLQ3J6', adlar: ['canlı-destek'] },
+        { id: 'C08PUFUTT3P', adlar: ['canlı destek - call center', 'canlıdestek-ortak'] },
+        { id: 'C0A9YJRFY1L', adlar: ['inisiyatif talepleri'] },
+        { id: 'C08SFHYL0CQ', adlar: ['admin'] },
+        { id: 'C07LYJ4HK0F', adlar: ['zumabet'] },
+        { id: 'C08Q00NMW5R', adlar: ['kupon sorunları'] },
+        { id: 'C08QALM34FM', adlar: ['çekim-iptal'] },
+        { id: 'D08R9AW6RK2', adlar: ['Joseph'] },
+        { id: 'C08QH2ZG7R7', adlar: ['domain change'] },
+        { id: 'C08PUFTL869', adlar: ['çevrim-kontrol'] },
+        { id: 'C08Q00L6WD9', adlar: ['sifre yenileme 2fa'] },
+        { id: 'C0C81S6KVMK', adlar: ['çekim talepleri'] },
+        { id: 'C0C86EMQRBK', adlar: ['botyazılım'] },
+        { id: 'C0C8B1YR5SA', adlar: ['shift takibi'] },
     ];
 
     // calma: yeni bir okunmamış mesaj başına en fazla kaç kez çalacağı.
@@ -86,6 +94,31 @@
     // Karşılaştırma için normalize: baştaki #, fazla boşluk ve büyük/küçük harf farkı silinir.
     function normalize(metin) {
         return (metin || '').replace(/^#/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+    }
+
+    /** Gevşek ad: "Çekim Talepleri" = "cekim-talepleri" */
+    function gevsek(metin) {
+        return String(metin || '').toLocaleLowerCase('tr-TR')
+            .replace(/ç/g, 'c').replace(/ğ/g, 'g').replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ş/g, 's').replace(/ü/g, 'u')
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+    }
+    /** Sidebar satırının kanal kimliği (Slack sürümüne göre farklı özniteliklerde durur) */
+    const ID_RE = /^[CDG][A-Z0-9]{8,}$/;
+    function kanalId(satir) {
+        for (let n = satir, i = 0; n && i < 4; n = n.parentElement, i++) {
+            for (const at of ['data-qa-channel-sidebar-channel-id', 'data-channel-id', 'data-item-key', 'data-qa-channel-id']) {
+                const v = n.getAttribute && n.getAttribute(at);
+                if (v && ID_RE.test(v)) return v;
+            }
+        }
+        const el = satir.querySelector && satir.querySelector('[data-qa-channel-sidebar-channel-id], [data-channel-id], [data-item-key]');
+        for (const at of ['data-qa-channel-sidebar-channel-id', 'data-channel-id', 'data-item-key']) {
+            const v = el && el.getAttribute(at);
+            if (v && ID_RE.test(v)) return v;
+        }
+        const a = satir.querySelector && satir.querySelector('a[href*="/C"], a[href*="/D"], a[href*="/G"]');
+        const m = a && a.getAttribute('href').match(/\/([CDG][A-Z0-9]{8,})(?:[/?#]|$)/);
+        return m ? m[1] : null;
     }
 
     function aktifHedefler() {
@@ -242,12 +275,14 @@
         const bulunanlar = new Set();
 
         for (const el of document.querySelectorAll(AD_SELECTOR)) {
-            const metin = normalize(el.textContent);
-            const eslesen = hedefler.find((h) => normalize(h) === metin);
+            const id = kanalId(el.closest(SATIR_SELECTOR) || el);
+            const metin = gevsek(el.textContent);
+            const eslesen = hedefler.find((h) => (id && h.id === id) || h.adlar.some((a) => gevsek(a) === metin));
             if (!eslesen) continue;
-
-            bulunanlar.add(eslesen);
-            durum.set(eslesen, { unread: unreadMi(el), kayipSayisi: 0 });
+            // Aynı satırın iç içe ad elemanlarından biri okunmamış görünüyorsa satır okunmamıştır
+            const onceki = bulunanlar.has(eslesen.id) ? durum.get(eslesen.id).unread : false;
+            bulunanlar.add(eslesen.id);
+            durum.set(eslesen.id, { unread: onceki || unreadMi(el), kayipSayisi: 0 });
         }
 
         // Bu turda sidebar'da görünmeyen hedefler: hiç kaydı yoksa "read"
@@ -255,7 +290,7 @@
         // eski unread durumunu koru (geçici DOM kaybı ihtimaline karşı) —
         // ancak eşik aşılırsa arayüzde "belirsiz" olarak işaretle ki alarm
         // sessizce ve kalıcı biçimde takılı kalmasın.
-        for (const hedef of hedefler) {
+        for (const { id: hedef } of hedefler) {
             if (bulunanlar.has(hedef)) continue;
             const mevcut = durum.get(hedef);
             if (!mevcut) {
@@ -267,7 +302,7 @@
 
         // Kademe düşürüldüğünde eski hedefler durumda kalmasın.
         for (const anahtar of [...durum.keys()]) {
-            if (!hedefler.includes(anahtar)) durum.delete(anahtar);
+            if (!hedefler.some((h) => h.id === anahtar)) durum.delete(anahtar);
         }
 
         tekrarTimeriGuncelle();
