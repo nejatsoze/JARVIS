@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GT Transactions — işlem geçmişi
 // @namespace    palentis.gt
-// @version      1.2.0
+// @version      1.2.1
 // @description  Transaction History sayfası: 1. Aşama / 2. Aşama (AI ÖZET: yüksek oranlı kazanç dedektörü + genel özet, Alt+A) / 3. Aşama / CRE (Alt+X / Alt+D / Alt+C), "Show Transactions From" yanına bir gün geri (<<) butonu, listenin başı/sonu arasında gidip gelen kaydırma butonu ve CRE'nin yanında Ratio Checker (sabit oran eşiği + GT Sports/Betby oran rozetleri). GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
@@ -1752,7 +1752,7 @@ log(`GT Transactions v${(typeof GM_info !== 'undefined' && GM_info.script && GM_
     '</header>' +
     '<div class="gtz-section-label" data-ref="overviewLabel">Genel özet</div>' +
     '<div class="gtz-stats" data-ref="statsOverview"></div>' +
-    '<div class="gtz-section-label" data-ref="flaggedLabel">Şüpheli turlar</div>' +
+    '<div class="gtz-section-label" data-ref="flaggedLabel">Yüksek Kazançlar</div>' +
     '<div class="gtz-stats" data-ref="stats"></div>' +
     '<div class="gtz-controls">' +
       '<div class="gtz-row">' +
@@ -2002,7 +2002,7 @@ log(`GT Transactions v${(typeof GM_info !== 'undefined' && GM_info.script && GM_
   function syncHeader() {
     const r = store.result;
     ui.refs.sub.textContent = r
-      ? `${nfInt.format(r.flagged.length)} şüpheli tur · ${nfInt.format(r.scanned)} tur / ${nfInt.format(store.rows.size)} işlem tarandı`
+      ? `${nfInt.format(r.flagged.length)} yüksek kazanç · ${nfInt.format(r.scanned)} tur / ${nfInt.format(store.rows.size)} işlem tarandı`
       : 'Veri bekleniyor — işlem listesini bir kez yükleyin.';
   }
 
@@ -2133,7 +2133,7 @@ log(`GT Transactions v${(typeof GM_info !== 'undefined' && GM_info.script && GM_
         ? 'Veri isteniyor…\n"Go" otomatik tetiklendi, sonuç gelince burada görünecek. Gelmezse tabloyu elle bir sayfala/filtrele.'
         : ui.searchTerm
           ? 'Bu aramayla eşleşen tur yok.'
-          : 'Bu eşikte şüpheli tur bulunamadı.';
+          : 'Bu eşikte yüksek kazanç bulunamadı.';
       empty.style.whiteSpace = 'pre-line';
       list.appendChild(empty);
       return;
