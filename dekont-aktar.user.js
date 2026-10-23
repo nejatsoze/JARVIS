@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dekont Aktar — Slack'ten Megapay / Hemen Pay Telegram grubuna
 // @namespace    palentis.dekont-aktar
-// @version      2.3.3
+// @version      2.3.4
 // @description  C08TKRJQ96G kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesajın altına YALNIZ SENİN TARAYICINDA görünen bir kart çizer (Slack'e cevap gönderilmez): oyuncu bilgileri (Party ID, ad soyad), [Megapay] [Hemen Pay], [Altyapıda Sorgula] (yatırımı seç → açık Pingwi sekmesinden işlem bulunur → Transaction check formu dekont dahil kendiliğinden dolar), [📋 Kopyala] (Telegram Web'de tek Ctrl+V ile görsel + açıklama), [TALEP] [ONAY] (thread'e gerçek mesaj). Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir. Telegram'da Megapay / Hemen Pay sohbetlerinde yazma kutusunun üstünde "Talep" butonu ("Talep kt lütfen" gönderir).
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -901,9 +901,9 @@ function slackSide() {
         const P = W, pg = (o) => (typeof cloneInto === 'function' ? cloneInto(o, P, { wrapReflectors: true }) : o);
         const u8 = new Uint8Array(await blob.arrayBuffer());
         const f = new P.File(pg([u8]), file.name || 'dekont.jpg', pg({ type: blob.type || file.type || 'image/jpeg' }));
+        const mk = () => { const dt = new P.DataTransfer(); dt.items.add(f); return dt; };
         const put = (input) => {
-            const dt = new P.DataTransfer(); dt.items.add(f);
-            (input.wrappedJSObject || input).files = dt.files;
+            (input.wrappedJSObject || input).files = mk().files;
             input.dispatchEvent(new (P.Event)('input', pg({ bubbles: true })));
             input.dispatchEvent(new (P.Event)('change', pg({ bubbles: true })));
         };
@@ -911,28 +911,43 @@ function slackSide() {
         if (ready) { put(ready); return 'kutu'; }
         const btn = [...modal.querySelectorAll('button, [role="button"], label')].find(x => /upload file|dosya yükle|add file|dosya ekle/i.test((x.textContent || '').trim()));
         if (!btn) throw new Error('formda Upload File butonu bulunamadı');
+        // Slack dosya seçici penceresini açmaya kalkarsa kutu yakalanır, pencere açılmaz
         const proto = P.HTMLInputElement.prototype, origClick = proto.click, origPicker = proto.showPicker;
-        return new Promise((resolve, reject) => {
-            let done = false;
-            const finish = (input, how) => {
-                if (done) return; done = true; restore();
-                try { put(input); resolve(how); } catch (err) { reject(err); }
-            };
-            const onClick = (ev) => { const t = ev.target; if (t && t.type === 'file') { ev.preventDefault(); finish(t, 'tık'); } };
-            const wrap = (fn) => (typeof exportFunction === 'function' ? exportFunction(fn, P) : fn);
-            function restore() { proto.click = origClick; if (origPicker) proto.showPicker = origPicker; document.removeEventListener('click', onClick, true); clearTimeout(timer); }
-            proto.click = wrap(function () { if (this.type === 'file') return finish(this, 'seçici'); return origClick.call(this); });
-            if (origPicker) proto.showPicker = wrap(function () { if (this.type === 'file') return finish(this, 'seçici'); return origPicker.call(this); });
-            document.addEventListener('click', onClick, true);
-            const timer = setTimeout(() => { if (!done) { done = true; restore(); reject(new Error('dosya kutusu açılmadı')); } }, 5000);
+        const wrap = (fn) => (typeof exportFunction === 'function' ? exportFunction(fn, P) : fn);
+        let picked = null;
+        const onClick = (ev) => { const t = ev.target; if (t && t.type === 'file') { ev.preventDefault(); picked = t; } };
+        proto.click = wrap(function () { if (this.type === 'file') { picked = this; return; } return origClick.call(this); });
+        if (origPicker) proto.showPicker = wrap(function () { if (this.type === 'file') { picked = this; return; } return origPicker.call(this); });
+        document.addEventListener('click', onClick, true);
+        const UPBTN = '[data-qa="file-input-dialog__upload-button"]';
+        const untouched = (zone) => document.contains(zone) && !!zone.querySelector(UPBTN);   // "Paste or drag a file here" hâlâ duruyor
+        try {
             btn.click();
-            // Bazı sürümlerde önce "bilgisayarından yükle" menüsü çıkar
-            setTimeout(() => {
-                if (done) return;
-                const it = [...document.querySelectorAll('[role="menuitem"], [role="option"], button')].find(x => /computer|bilgisayar/i.test(x.textContent || ''));
-                it?.click();
-            }, 400);
-        });
+            for (let i = 0; i < 25; i++) {
+                if (picked) { put(picked); return 'seçici'; }
+                const inp = modal.querySelector('input[type=file]');
+                if (inp) { put(inp); return 'kutu'; }
+                // "Add file" penceresi: sürükle-bırak ve yapıştırma kabul ediyor
+                const zone = document.querySelector('[data-qa="file-input-drop-zone"]');
+                if (zone) {
+                    for (const type of ['dragenter', 'dragover', 'drop']) zone.dispatchEvent(new P.DragEvent(type, pg({ bubbles: true, cancelable: true, dataTransfer: mk() })));
+                    await sleep(1200);
+                    if (!untouched(zone)) return 'bırak';
+                    zone.dispatchEvent(new P.ClipboardEvent('paste', pg({ bubbles: true, cancelable: true, clipboardData: mk() })));
+                    await sleep(1200);
+                    if (!untouched(zone)) return 'yapıştır';
+                    zone.querySelector(UPBTN)?.click();
+                    await sleep(500);
+                    if (picked) { put(picked); return 'seçici'; }
+                    throw new Error('Add file penceresi dosyayı almadı');
+                }
+                await sleep(200);
+            }
+            throw new Error('dosya penceresi açılmadı');
+        } finally {
+            proto.click = origClick; if (origPicker) proto.showPicker = origPicker;
+            document.removeEventListener('click', onClick, true);
+        }
     }
     let filling = false;
     async function autofillWorkflow() {
