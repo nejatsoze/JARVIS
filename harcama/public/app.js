@@ -1,5 +1,7 @@
 const TOKEN_KEY = 'harcama.token';
 const CACHE_PREFIX = 'harcama.cache.';
+// Gösterim para birimi telefona özel; ortak kullanımda diğer cihazı etkilemez.
+const CURRENCY_KEY = 'harcama.currency';
 const CATEGORY_COLORS = {
   'Market': 'var(--c-market)',
   'Yeme-İçme': 'var(--c-food)',
@@ -135,13 +137,18 @@ function showLogin(message = '') {
   $('login-token').focus();
 }
 
+function currencyQuery() {
+  const code = storage((s) => s.getItem(CURRENCY_KEY));
+  return code && CURRENCIES[code] ? `&currency=${code}` : '';
+}
+
 async function load() {
   $('month-label').textContent = monthLabel(state.month);
   $('next-month').disabled = state.month >= currentMonth();
   try {
     const [summary, list] = await Promise.all([
-      cachedGet(`/api/summary?month=${state.month}`),
-      cachedGet(`/api/transactions?month=${state.month}`),
+      cachedGet(`/api/summary?month=${state.month}${currencyQuery()}`),
+      cachedGet(`/api/transactions?month=${state.month}${currencyQuery()}`),
     ]);
     state.summary = summary.data;
     state.currency = summary.data.currency;
@@ -470,13 +477,13 @@ function openCurrency() {
 
 async function chooseCurrency(code) {
   if (code === state.currency) return $('currency-dialog').close();
-  for (const b of $('currency-list').querySelectorAll('button')) b.setAttribute('aria-selected', String(b.dataset.code === code));
-  try {
-    await api('/api/settings', { method: 'PUT', body: { display_currency: code } });
-    $('currency-dialog').close();
-    await load();
-  } catch (err) {
-    $('fx-info').textContent = err instanceof AuthError ? 'Oturum geçersiz.' : `Kaydedilemedi: ${err.message}`;
+  const previous = storage((s) => s.getItem(CURRENCY_KEY));
+  storage((s) => s.setItem(CURRENCY_KEY, code));
+  $('currency-dialog').close();
+  await load();
+  // Yükleme başarısızsa (ör. çevrimdışı) önceki seçime dön.
+  if (state.currency !== code) {
+    storage((s) => (previous ? s.setItem(CURRENCY_KEY, previous) : s.removeItem(CURRENCY_KEY)));
   }
 }
 

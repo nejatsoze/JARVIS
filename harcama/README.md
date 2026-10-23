@@ -27,6 +27,8 @@ Apple Pay ödemesi ─► Kestirmeler "İşlem" otomasyonu ─► POST /api/tran
   kullanılan yöntemlerden ya da "Nakit"ten seçilir. Ana ekranda ödeme yöntemine göre dağılım.
 - Elle harcama ekleme (online alışverişler veya nakit için), düzenleme, silme.
 - Banka tutar göndermezse kayıt "Tutar gir" olarak işaretlenir, dokunup girebilirsiniz.
+- Ortak kullanım: aynı adres ve anahtarla birden çok telefon aynı veriyi görür
+  ([ORTAK-KURULUM.md](ORTAK-KURULUM.md)). Gösterim para birimi her telefonun kendi tercihidir.
 - Para birimi seçici (TRY, USD, EUR, IDR, THB, JPY, SGD): her harcama kendi para biriminde
   saklanır, tüm toplamlar ve grafikler seçilen birime güncel kurla çevrilir. Kurlar
   open.er-api.com'dan (yedek: Frankfurter/ECB) saatlik önbellekle alınır; servis çökerse son
