@@ -70,16 +70,16 @@
     <section class="block" aria-labelledby="cat-title">
       <h2 id="cat-title">Kategoriler</h2>
       <div class="cat-bar" id="cat-bar"></div>
-      <ul id="cat-list" class="cat-list"></ul>
+      <ul id="cat-list" class="group-list"></ul>
     </section>
 
     <section class="block" aria-labelledby="card-title">
-      <h2 id="card-title">Ödeme yöntemleri</h2>
-      <ul id="card-list" class="cat-list"></ul>
+      <h2 id="card-title">Ödeme Yöntemleri</h2>
+      <ul id="card-list" class="group-list"></ul>
     </section>
 
     <section class="block" aria-labelledby="hist-title">
-      <h2 id="hist-title">Son 6 ay</h2>
+      <h2 id="hist-title">Son 6 Ay</h2>
       <div id="history-chart" class="history"></div>
     </section>
 
@@ -101,7 +101,7 @@
     <div class="sheet-body">
       <header class="sheet-head">
         <span></span>
-        <h2>Para birimi</h2>
+        <h2>Para Birimi</h2>
         <button type="button" class="text-btn strong" data-close>Bitti</button>
       </header>
       <p class="sheet-hint">Tüm harcamalar seçtiğiniz para birimine güncel kurla çevrilir.</p>
@@ -116,7 +116,7 @@
       <header class="sheet-head">
         <button type="button" class="text-btn" data-close>Vazgeç</button>
         <h2 id="tx-dialog-title">Harcama</h2>
-        <button type="submit" class="text-btn strong">Kaydet</button>
+        <button type="button" class="text-btn danger" id="delete-tx" hidden>Sil</button>
       </header>
       <div class="amount-field">
         <input name="amount" inputmode="decimal" placeholder="0" autocomplete="off" aria-label="Tutar">
@@ -126,7 +126,7 @@
         <input name="merchant" required maxlength="120" autocomplete="off">
       </label>
       <div class="field">
-        <label for="tx-card-input">Ödeme yöntemi</label>
+        <label for="tx-card-input">Ödeme Yöntemi</label>
         <input id="tx-card-input" name="card" maxlength="80" autocomplete="off" placeholder="Ör. Garanti Bonus, Nakit">
         <div class="chips small" id="card-chips"></div>
       </div>
@@ -142,7 +142,7 @@
       </label>
       <p class="sheet-foot" id="tx-card"></p>
       <p class="error" id="tx-error" role="alert"></p>
-      <button type="button" class="btn-danger" id="delete-tx" hidden>Harcamayı sil</button>
+      <button type="submit" class="btn-primary sheet-save">Kaydet</button>
     </form>
   </dialog>
 
@@ -162,7 +162,7 @@
             <span class="set-icon" style="--tint: var(--lagoon)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5"/></svg>
             </span>
-            <span class="set-label">Aylık bütçe</span>
+            <span class="set-label">Aylık Bütçe</span>
             <span class="set-input">
               <input name="budget" inputmode="decimal" placeholder="Yok" autocomplete="off">
               <span id="budget-currency">TRY</span>
@@ -179,7 +179,7 @@
             <span class="set-icon" style="--tint: var(--c-transport)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.3 3.6 5.1 3.6 8.5s-1.2 6.2-3.6 8.5c-2.4-2.3-3.6-5.1-3.6-8.5s1.2-6.2 3.6-8.5Z"/></svg>
             </span>
-            <span class="set-label">Para birimi</span>
+            <span class="set-label">Para Birimi</span>
             <span class="set-value" id="settings-currency-value"></span>
             <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
           </button>
@@ -188,20 +188,20 @@
       </section>
 
       <section class="set-group" aria-labelledby="set-shortcut-title">
-        <h3 class="set-title" id="set-shortcut-title">Apple Pay kestirmesi</h3>
+        <h3 class="set-title" id="set-shortcut-title">Apple Pay Kestirmesi</h3>
         <div class="set-card">
           <div class="set-row">
             <span class="set-icon" style="--tint: var(--ink)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="6" width="17" height="12" rx="2.5"/><path d="M3.5 10h17M7 14.5h3"/></svg>
             </span>
-            <span class="set-label">Son Apple Pay kaydı</span>
+            <span class="set-label">Son Apple Pay Kaydı</span>
             <span class="set-value" id="last-shortcut"></span>
           </div>
           <div class="set-row stacked">
             <span class="set-icon" style="--tint: var(--c-fun)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>
             </span>
-            <span class="set-label">Kestirme adresi</span>
+            <span class="set-label">Kestirme Adresi</span>
             <button type="button" class="pill-btn" id="copy-url">Kopyala</button>
             <code id="api-url"></code>
           </div>
@@ -215,7 +215,7 @@
             <span class="set-icon" style="--tint: var(--coral)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h3.5A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5H14M10 16l-4-4 4-4M6 12h9"/></svg>
             </span>
-            <span class="set-label">Bu cihazdan çıkış yap</span>
+            <span class="set-label">Bu Cihazdan Çıkış Yap</span>
           </button>
         </div>
       </section>

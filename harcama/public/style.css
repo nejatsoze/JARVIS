@@ -215,18 +215,44 @@ button { font: inherit; color: inherit; }
   display: flex; gap: 3px; height: 14px; margin: 0 0 14px; border-radius: var(--r-control); overflow: hidden;
 }
 .cat-bar span { min-width: 4px; }
-.cat-list {
-  list-style: none; margin: 0; padding: 4px 0; border-radius: var(--r-group); background: var(--group);
+/* Kategoriler ve ödeme yöntemleri: dokununca son harcamaları açan gruplar. */
+.group-list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-group); background: var(--group); overflow: hidden; }
+.group-item + .group-item { box-shadow: inset 0 0.5px 0 var(--hairline); }
+.group-empty { padding: 24px 16px; text-align: center; color: var(--slate); }
+.group-head {
+  display: grid; grid-template-columns: 28px minmax(0, 1fr) auto 40px 14px; gap: 12px; align-items: center;
+  width: 100%; padding: 11px 16px; border: 0; background: none; text-align: left; cursor: pointer; font-size: 16px;
 }
-.cat-list li {
-  display: grid; grid-template-columns: 12px minmax(0, 1fr) auto 44px; gap: 12px; align-items: center;
-  padding: 11px 16px; font-size: 16px;
+.group-head:active { background: var(--group-press); }
+.group-lead { display: grid; place-items: center; }
+.group-lead .dot { width: 12px; height: 12px; border-radius: 4px; }
+.group-icon {
+  display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px;
+  background: var(--group-press); color: var(--slate);
 }
-.cat-list li + li { box-shadow: inset 0 0.5px 0 var(--hairline); }
-.cat-list .dot { width: 12px; height: 12px; border-radius: 4px; }
-.cat-list .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cat-list .amt { font: 600 16px var(--round); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.cat-list .pct { color: var(--slate); font-size: 14px; text-align: right; font-variant-numeric: tabular-nums; }
+.group-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.group-head .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-head .name small { display: block; color: var(--slate); font-size: 13px; }
+.group-item.muted .name { color: var(--slate); }
+.group-head .amt { font: 600 16px var(--round); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.group-head .pct { color: var(--slate); font-size: 14px; text-align: right; font-variant-numeric: tabular-nums; }
+.group-head .chev {
+  width: 14px; height: 14px; fill: none; stroke: var(--slate); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round;
+  opacity: 0.6; transition: transform 0.2s ease;
+}
+.group-head[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.group-panel { margin: 0 10px 10px; border-radius: 16px; background: var(--group-press); overflow: hidden; }
+.group-panel .tx { padding: 10px 12px; grid-template-columns: 34px minmax(0, 1fr) auto; }
+.group-panel .tx .glyph { width: 34px; height: 34px; border-radius: 11px; font-size: 14px; }
+.group-panel .tx .amount { font-size: 16px; }
+.group-more {
+  display: block; width: 100%; padding: 12px; border: 0; background: none; cursor: pointer;
+  box-shadow: inset 0 0.5px 0 var(--hairline); color: var(--lagoon); font-weight: 600; font-size: 15px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .group-panel { animation: unfold 0.22s ease-out; }
+  @keyframes unfold { from { opacity: 0; transform: translateY(-6px); } }
+}
 
 .history { padding: 16px 12px 10px; border-radius: var(--r-group); background: var(--group); }
 .history svg { display: block; width: 100%; height: auto; overflow: visible; }
@@ -310,6 +336,7 @@ button { font: inherit; color: inherit; }
 
 .text-btn { border: 0; background: none; color: var(--lagoon); font-size: 17px; padding: 8px 0; cursor: pointer; }
 .text-btn.strong { font-weight: 600; }
+.text-btn.danger { color: var(--coral); font-weight: 600; }
 
 .currency-list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-group); background: var(--group); overflow: hidden; }
 .currency-list button {
@@ -356,14 +383,6 @@ input:focus, select:focus { outline: none; border-color: var(--lagoon); }
 .chips.small { margin-top: 2px; }
 .chips.small .chip { padding: 6px 12px; font-size: 14px; }
 .field label { color: inherit; }
-.card-list-icon {
-  display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px;
-  background: var(--group-press); color: var(--slate);
-}
-.card-list-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.cat-list li.card-row { grid-template-columns: 28px minmax(0, 1fr) auto 64px; }
-.cat-list .name small { display: block; color: var(--slate); font-size: 13px; }
-.cat-list li.card-row.unset .name { color: var(--slate); }
 .chip[aria-pressed="true"] { background: var(--ink); color: var(--mist); }
 
 code {
@@ -375,10 +394,6 @@ code {
   height: 52px; border: 0; border-radius: var(--r-control); background: var(--lagoon); color: #fff;
   font: 600 17px var(--round); cursor: pointer;
 }
-.btn-danger, .btn-plain {
-  height: 50px; border: 0; border-radius: var(--r-control); background: var(--group); font-weight: 600; cursor: pointer;
-}
-.btn-danger { color: var(--coral); }
 
 .error { margin: 0; color: var(--coral); font-size: 14px; }
 .error:empty { display: none; }
@@ -436,3 +451,9 @@ button.set-row:active { background: var(--group-press); }
   background: color-mix(in srgb, var(--lagoon) 16%, transparent); color: var(--lagoon); font-size: 15px; font-weight: 600;
 }
 .pill-btn.done { background: var(--lagoon); color: #fff; }
+
+/* Uzun formda Kaydet her zaman parmak altında. */
+.sheet-save {
+  position: sticky; bottom: calc(var(--sab) + 8px); z-index: 1;
+  box-shadow: 0 8px 24px rgb(14 159 154 / 0.35);
+}

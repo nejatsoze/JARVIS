@@ -262,61 +262,116 @@ function renderDial() {
     stats.push([remaining >= 0 ? 'Kalan' : 'Aşım', money(Math.abs(remaining), state.currency, { whole: true }), remaining < 0]);
     if (isCurrent) {
       const daysLeft = n - elapsed + 1;
-      stats.push(['Günlük limit', remaining > 0 ? money(remaining / daysLeft, state.currency, { whole: true }) : '—']);
-      stats.push(['Ay sonu tahmini', money(avg * n, state.currency, { whole: true }), avg * n > budget]);
+      stats.push(['Günlük Limit', remaining > 0 ? money(remaining / daysLeft, state.currency, { whole: true }) : '—']);
+      stats.push(['Ay Sonu Tahmini', money(avg * n, state.currency, { whole: true }), avg * n > budget]);
     } else {
-      stats.push(['Günlük ortalama', money(avg, state.currency, { whole: true })]);
-      stats.push(['Bütçe kullanımı', `%${Math.round((s.total_minor / budget) * 100)}`, s.total_minor > budget]);
+      stats.push(['Günlük Ortalama', money(avg, state.currency, { whole: true })]);
+      stats.push(['Bütçe Kullanımı', `%${Math.round((s.total_minor / budget) * 100)}`, s.total_minor > budget]);
     }
   } else {
     stats.push(['Harcama', String(s.count)]);
-    stats.push(['Günlük ortalama', money(avg, state.currency, { whole: true })]);
-    if (isCurrent) stats.push(['Ay sonu tahmini', money(avg * n, state.currency, { whole: true })]);
+    stats.push(['Günlük Ortalama', money(avg, state.currency, { whole: true })]);
+    if (isCurrent) stats.push(['Ay Sonu Tahmini', money(avg * n, state.currency, { whole: true })]);
   }
   $('stats').innerHTML = stats
     .map(([label, value, bad]) => `<div><dt>${esc(label)}</dt><dd class="${bad ? 'bad' : ''}">${esc(value)}</dd></div>`)
     .join('');
 }
 
-function renderCategories() {
-  const cats = state.summary.by_category.filter((c) => c.total_minor > 0);
-  const total = cats.reduce((a, c) => a + c.total_minor, 0);
-  if (!total) {
-    $('cat-bar').innerHTML = '';
-    $('cat-list').outerHTML = '<p id="cat-list" class="empty">Bu ay henüz harcama yok.</p>';
-    return;
-  }
-  if ($('cat-list').tagName !== 'UL') $('cat-list').outerHTML = '<ul id="cat-list" class="cat-list"></ul>';
-  $('cat-bar').innerHTML = cats
-    .map((c) => `<span style="flex:${c.total_minor};background:${colorOf(c.category)}" title="${esc(c.category)}"></span>`)
-    .join('');
-  $('cat-list').innerHTML = cats
-    .map((c) => `<li><span class="dot" style="background:${colorOf(c.category)}"></span>
-      <span class="name">${esc(c.category)}</span>
-      <span class="amt">${esc(money(c.total_minor, state.currency, { whole: true }))}</span>
-      <span class="pct">%${Math.round((c.total_minor / total) * 100)}</span></li>`)
-    .join('');
-}
-
+const GROUP_PAGE = 5;
+const CHEVRON = '<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
 const CARD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="6" width="17" height="12" rx="2.5"/><path d="M3.5 10h17"/></svg>';
 const CASH_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="10" rx="2"/><circle cx="12" cy="12" r="2.2"/></svg>';
 const isCash = (card) => /^nakit$/i.test(card || '');
 
-function renderCards() {
-  const cards = state.summary.by_card || [];
-  const total = cards.reduce((a, c) => a + c.total_minor, 0);
-  const list = $('card-list');
-  if (!cards.length) {
-    list.innerHTML = '<li class="card-row unset"><span></span><span class="name">Bu ay harcama yok.</span></li>';
+// Açık gruplar ve kaç harcamanın gösterildiği: { cat: Map(anahtar → adet), card: Map(...) }.
+// Ay ya da para birimi değişince yeniden çizimde korunur.
+const expanded = { cat: new Map(), card: new Map() };
+const GROUP_FILTERS = {
+  cat: (key) => (t) => t.category === key,
+  card: (key) => (t) => (t.card || '') === key,
+};
+
+/**
+ * Kategoriler ve ödeme yöntemleri için ortak açılır liste.
+ * groups: [{ key, label, lead, total, count, muted }]
+ */
+function renderGroups(list, kind, groups) {
+  const total = groups.reduce((a, g) => a + g.total, 0);
+  list.innerHTML = groups
+    .map((g) => {
+      const limit = expanded[kind].get(g.key);
+      const open = limit !== undefined;
+      let panel = '';
+      if (open) {
+        const items = state.transactions.filter(GROUP_FILTERS[kind](g.key));
+        panel = `<div class="group-panel">${items.slice(0, limit).map((t) => txRow(t, { hide: kind })).join('')}
+          ${items.length > limit ? `<button type="button" class="group-more" data-kind="${kind}" data-key="${esc(g.key)}">Daha Fazla</button>` : ''}</div>`;
+      }
+      return `<li class="group-item${g.muted ? ' muted' : ''}">
+        <button type="button" class="group-head" aria-expanded="${open}" data-kind="${kind}" data-key="${esc(g.key)}">
+          <span class="group-lead">${g.lead}</span>
+          <span class="name">${esc(g.label)}<small>${g.count} harcama</small></span>
+          <span class="amt">${esc(money(g.total, state.currency, { whole: true }))}</span>
+          <span class="pct">%${total ? Math.round((g.total / total) * 100) : 0}</span>
+          ${CHEVRON}
+        </button>${panel}</li>`;
+    })
+    .join('');
+}
+
+function renderCategories() {
+  const cats = state.summary.by_category.filter((c) => c.count > 0);
+  const total = cats.reduce((a, c) => a + c.total_minor, 0);
+  $('cat-bar').innerHTML = cats
+    .filter((c) => c.total_minor > 0)
+    .map((c) => `<span style="flex:${c.total_minor};background:${colorOf(c.category)}" title="${esc(c.category)}"></span>`)
+    .join('');
+  $('cat-bar').hidden = !total;
+  if (!cats.length) {
+    $('cat-list').innerHTML = '<li class="group-empty">Bu ay henüz harcama yok.</li>';
     return;
   }
-  list.innerHTML = cards
-    .map((c) => `<li class="card-row${c.card ? '' : ' unset'}">
-      <span class="card-list-icon">${isCash(c.card) ? CASH_ICON : CARD_ICON}</span>
-      <span class="name">${esc(c.card || 'Belirtilmemiş')}<small>${c.count} harcama</small></span>
-      <span class="amt">${esc(money(c.total_minor, state.currency, { whole: true }))}</span>
-      <span class="pct">%${total ? Math.round((c.total_minor / total) * 100) : 0}</span></li>`)
-    .join('');
+  renderGroups($('cat-list'), 'cat', cats.map((c) => ({
+    key: c.category,
+    label: c.category,
+    lead: `<span class="dot" style="background:${colorOf(c.category)}"></span>`,
+    total: c.total_minor,
+    count: c.count,
+  })));
+}
+
+function renderCards() {
+  const cards = state.summary.by_card || [];
+  if (!cards.length) {
+    $('card-list').innerHTML = '<li class="group-empty">Bu ay henüz harcama yok.</li>';
+    return;
+  }
+  renderGroups($('card-list'), 'card', cards.map((c) => ({
+    key: c.card || '',
+    label: c.card || 'Belirtilmemiş',
+    lead: `<span class="group-icon">${isCash(c.card) ? CASH_ICON : CARD_ICON}</span>`,
+    total: c.total_minor,
+    count: c.count,
+    muted: !c.card,
+  })));
+}
+
+function onGroupClick(e) {
+  const head = e.target.closest('.group-head');
+  const more = e.target.closest('.group-more');
+  const target = head || more;
+  if (!target) return;
+  const map = expanded[target.dataset.kind];
+  const key = target.dataset.key;
+  if (head) {
+    if (map.has(key)) map.delete(key);
+    else map.set(key, GROUP_PAGE);
+  } else {
+    map.set(key, map.get(key) + GROUP_PAGE);
+  }
+  if (target.dataset.kind === 'cat') renderCategories();
+  else renderCards();
 }
 
 function renderCardChips(current) {
@@ -349,6 +404,26 @@ function renderHistory() {
   $('history-chart').innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Son 6 ayın toplamları (${esc(state.currency)})">${svg}</svg>`;
 }
 
+/** Tek harcama satırı. `hide`: grup içinde tekrar eden bilgiyi gizler ("cat" ya da "card"). */
+function txRow(t, { hide } = {}) {
+  const foreign = t.currency !== state.currency;
+  let amount = '<span class="amount missing">Tutar gir</span>';
+  if (t.amount_minor !== null) {
+    const shown = t.converted_minor ?? t.amount_minor;
+    const shownCurrency = t.converted_minor === null ? t.currency : state.currency;
+    amount = `<span class="amount">${esc(money(shown, shownCurrency))}</span>`;
+    if (foreign && t.converted_minor !== null) amount += `<span class="orig">${esc(money(t.amount_minor, t.currency))}</span>`;
+  }
+  // Grup içinde gün başlığı olmadığı için tarih de gösterilir.
+  const when = hide ? `${dayLabel(t.local_date).split(' ').slice(0, 2).join(' ')} ${timeLabel(t.occurred_at)}` : timeLabel(t.occurred_at);
+  const meta = [hide === 'cat' ? null : t.category, when, hide === 'card' ? null : t.card, t.note]
+    .filter(Boolean).map((m) => `<span>${esc(m)}</span>`).join('');
+  return `<button type="button" class="tx" data-id="${t.id}">
+    <span class="glyph" style="background:${colorOf(t.category)}">${esc(t.merchant.trim().charAt(0).toLocaleUpperCase('tr-TR'))}</span>
+    <span class="who"><span class="merchant">${esc(t.merchant)}</span><span class="meta">${meta}</span></span>
+    <span class="money">${amount}</span></button>`;
+}
+
 function renderTransactions() {
   const list = $('tx-list');
   if (!state.transactions.length) {
@@ -364,21 +439,7 @@ function renderTransactions() {
   for (const [date, items] of days) {
     const dayTotal = items.reduce((a, t) => a + (t.converted_minor || 0), 0);
     html += `<div class="tx-day"><h3><span>${esc(dayLabel(date))}</span><span>${esc(money(dayTotal))}</span></h3><div class="tx-group">`;
-    for (const t of items) {
-      const foreign = t.currency !== state.currency;
-      let money_ = '<span class="amount missing">Tutar gir</span>';
-      if (t.amount_minor !== null) {
-        const shown = t.converted_minor ?? t.amount_minor;
-        const shownCurrency = t.converted_minor === null ? t.currency : state.currency;
-        money_ = `<span class="amount">${esc(money(shown, shownCurrency))}</span>`;
-        if (foreign && t.converted_minor !== null) money_ += `<span class="orig">${esc(money(t.amount_minor, t.currency))}</span>`;
-      }
-      const meta = [t.category, timeLabel(t.occurred_at), t.card, t.note].filter(Boolean).map((m) => `<span>${esc(m)}</span>`).join('');
-      html += `<button class="tx" data-id="${t.id}">
-        <span class="glyph" style="background:${colorOf(t.category)}">${esc(t.merchant.trim().charAt(0).toLocaleUpperCase('tr-TR'))}</span>
-        <span class="who"><span class="merchant">${esc(t.merchant)}</span><span class="meta">${meta}</span></span>
-        <span class="money">${money_}</span></button>`;
-    }
+    for (const t of items) html += txRow(t);
     html += '</div></div>';
   }
   list.innerHTML = html;
@@ -430,7 +491,7 @@ function renderChips(selected) {
 function openTx(tx) {
   state.editing = tx;
   const form = $('tx-form');
-  $('tx-dialog-title').textContent = tx ? 'Harcamayı düzenle' : 'Yeni harcama';
+  $('tx-dialog-title').textContent = tx ? 'Harcamayı Düzenle' : 'Yeni Harcama';
   const codes = Object.keys(CURRENCIES);
   const current = tx?.currency || state.currency;
   if (!codes.includes(current)) codes.push(current);
@@ -556,10 +617,13 @@ $('login-form').addEventListener('submit', async (e) => {
 $('prev-month').addEventListener('click', () => { state.month = shiftMonth(state.month, -1); load(); });
 $('next-month').addEventListener('click', () => { state.month = shiftMonth(state.month, 1); load(); });
 $('add-tx').addEventListener('click', () => openTx(null));
-$('tx-list').addEventListener('click', (e) => {
+// Harcama satırları hem listede hem açılır gruplarda var.
+$('app').addEventListener('click', (e) => {
   const btn = e.target.closest('.tx');
   if (btn) openTx(state.transactions.find((t) => t.id === Number(btn.dataset.id)));
 });
+$('cat-list').addEventListener('click', onGroupClick);
+$('card-list').addEventListener('click', onGroupClick);
 $('category-chips').addEventListener('click', (e) => {
   const chip = e.target.closest('.chip');
   if (!chip) return;
