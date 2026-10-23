@@ -25,7 +25,10 @@ Apple Pay ödemesi ─► Kestirmeler "İşlem" otomasyonu ─► POST /api/tran
 - Grafikler: ay içi kümülatif harcama, kategori dağılımı, son 6 ayın karşılaştırması.
 - Elle harcama ekleme (online alışverişler veya nakit için), düzenleme, silme.
 - Banka tutar göndermezse kayıt "Tutar gir" olarak işaretlenir, dokunup girebilirsiniz.
-- Yabancı para harcamaları ayrı tutulur, TL toplamına karışmaz.
+- Para birimi seçici (TRY, USD, EUR, IDR, THB, JPY, SGD): her harcama kendi para biriminde
+  saklanır, tüm toplamlar ve grafikler seçilen birime güncel kurla çevrilir. Kurlar
+  open.er-api.com'dan (yedek: Frankfurter/ECB) saatlik önbellekle alınır; servis çökerse son
+  bilinen kurlar kullanılır. Yurt dışı ödemelerde `฿`, `S$`, `¥`, `Rp` gibi semboller tanınır.
 
 ---
 
@@ -146,12 +149,12 @@ Tüm uçlar (`/api/health` hariç) `Authorization: Bearer <API_TOKEN>` ister.
 | Yöntem | Yol | Açıklama |
 |---|---|---|
 | `POST` | `/api/transactions` | `{merchant, amount?, card?, note?, category?, date?, currency?}`. 90 sn içinde aynı işyeri+tutar gelirse mevcut kaydı döner (`duplicate: true`). |
-| `GET` | `/api/transactions?month=YYYY-AA` | Ayın kayıtları. |
+| `GET` | `/api/transactions?month=YYYY-AA[&currency=USD]` | Ayın kayıtları, her biri `converted_minor` ile gösterim birimine çevrilmiş. |
 | `PATCH` | `/api/transactions/:id` | Alanları günceller. Kategori değişirse işyeri öğrenilir (`learn: false` ile kapatılır). |
 | `DELETE` | `/api/transactions/:id` | Kaydı siler. |
-| `GET` | `/api/summary?month=YYYY-AA` | Toplam, kategori ve gün kırılımı, bütçe, son 6 ay. |
-| `GET` / `PUT` | `/api/settings` | `{monthly_budget}`. Boş değer bütçeyi kaldırır. |
+| `GET` | `/api/summary?month=YYYY-AA[&currency=USD]` | Gösterim biriminde toplam, kategori ve gün kırılımı, bütçe, son 6 ay, kurlar. |
+| `GET` / `PUT` | `/api/settings` | `{monthly_budget, budget_currency, display_currency}`. Boş bütçe kaldırır. |
 | `GET` | `/api/health` | Sağlık kontrolü (veritabanına da dokunur). |
 
 Tutarlar veritabanında kuruş cinsinden tamsayı olarak saklanır (`amount_minor`).
-Para birimi ve saat dilimi `wrangler.jsonc` içindeki `CURRENCY` / `TIMEZONE` ile değiştirilebilir.
+`CURRENCY` (`wrangler.jsonc`), para birimi belirtilmemiş ödemelerin varsayılanıdır; saat dilimi `TIMEZONE` ile değişir.

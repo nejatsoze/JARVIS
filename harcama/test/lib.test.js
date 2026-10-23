@@ -9,6 +9,7 @@ import {
   parseOccurredAt,
   previousMonths,
   daysInMonth,
+  convertMinor,
 } from '../src/lib.js';
 
 test('parseAmount: Kestirmeler biçimleri', () => {
@@ -78,4 +79,29 @@ test('ay yardımcıları', () => {
   assert.deepEqual(previousMonths('2026-02', 3), ['2025-12', '2026-01', '2026-02']);
   assert.equal(daysInMonth('2028-02'), 29);
   assert.equal(daysInMonth('2026-10'), 31);
+});
+
+test('parseAmount: Asya para birimleri', () => {
+  assert.deepEqual(parseAmount('S$12.50'), { minor: 1250, currency: 'SGD' });
+  assert.deepEqual(parseAmount('US$5'), { minor: 500, currency: 'USD' });
+  assert.deepEqual(parseAmount('฿120.00'), { minor: 12000, currency: 'THB' });
+  assert.deepEqual(parseAmount('¥1,200'), { minor: 120000, currency: 'JPY' });
+  assert.deepEqual(parseAmount('Rp 50.000'), { minor: 5000000, currency: 'IDR' });
+  assert.deepEqual(parseAmount('Rp50.000'), { minor: 5000000, currency: 'IDR' });
+});
+
+test('convertMinor: USD tabanlı kurlarla çevirme', () => {
+  const rates = { USD: 1, TRY: 40, EUR: 0.8, JPY: 150 };
+  assert.equal(convertMinor(4000, 'TRY', 'USD', rates), 100);
+  assert.equal(convertMinor(100, 'USD', 'TRY', rates), 4000);
+  assert.equal(convertMinor(800, 'EUR', 'JPY', rates), 150000);
+  assert.equal(convertMinor(500, 'TRY', 'TRY', {}), 500);
+  assert.equal(convertMinor(500, 'GBP', 'TRY', rates), null);
+  assert.equal(convertMinor(null, 'TRY', 'USD', rates), null);
+});
+
+test('guessCategory: Asya zincirleri', () => {
+  assert.equal(guessCategory('7-ELEVEN SUKHUMVIT'), 'Market');
+  assert.equal(guessCategory('LAWSON SHIBUYA'), 'Market');
+  assert.equal(guessCategory('GRAB SINGAPORE'), 'Ulaşım');
 });

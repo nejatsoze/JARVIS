@@ -1,20 +1,29 @@
 const TOKEN_KEY = 'harcama.token';
 const CACHE_PREFIX = 'harcama.cache.';
 const CATEGORY_COLORS = {
-  'Market': 'var(--c1)',
-  'Yeme-İçme': 'var(--c2)',
-  'Ulaşım': 'var(--c3)',
-  'Akaryakıt': 'var(--c4)',
-  'Alışveriş': 'var(--c5)',
-  'Faturalar': 'var(--c6)',
-  'Sağlık': 'var(--c7)',
-  'Eğlence': 'var(--c8)',
-  'Diğer': 'var(--c9)',
+  'Market': 'var(--c-market)',
+  'Yeme-İçme': 'var(--c-food)',
+  'Ulaşım': 'var(--c-transport)',
+  'Akaryakıt': 'var(--c-fuel)',
+  'Alışveriş': 'var(--c-shopping)',
+  'Faturalar': 'var(--c-bills)',
+  'Sağlık': 'var(--c-health)',
+  'Eğlence': 'var(--c-fun)',
+  'Diğer': 'var(--c-other)',
 };
 const CATEGORIES = Object.keys(CATEGORY_COLORS);
+const CURRENCIES = {
+  TRY: { flag: '🇹🇷', name: 'Türk lirası' },
+  USD: { flag: '🇺🇸', name: 'ABD doları' },
+  EUR: { flag: '🇪🇺', name: 'Euro' },
+  IDR: { flag: '🇮🇩', name: 'Endonezya rupisi' },
+  THB: { flag: '🇹🇭', name: 'Tayland bahtı' },
+  JPY: { flag: '🇯🇵', name: 'Japon yeni' },
+  SGD: { flag: '🇸🇬', name: 'Singapur doları' },
+};
 
 const $ = (id) => document.getElementById(id);
-const state = { month: currentMonth(), currency: 'TRY', summary: null, transactions: [], editing: null };
+const state = { month: currentMonth(), currency: 'TRY', summary: null, transactions: [], editing: null, animated: false };
 
 // ---------- yardımcılar ----------
 
@@ -40,10 +49,11 @@ function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
 
-function money(minor, currency = state.currency, opts = {}) {
-  return new Intl.NumberFormat('tr-TR', {
-    style: 'currency', currency, maximumFractionDigits: opts.whole ? 0 : 2, minimumFractionDigits: opts.whole ? 0 : 2,
-  }).format((minor || 0) / 100);
+/** Tutarlar her para biriminde ×100 saklanır (JPY/IDR dahil). */
+function money(minor, currency = state.currency, { whole = false } = {}) {
+  const opts = { style: 'currency', currency };
+  if (whole) { opts.maximumFractionDigits = 0; opts.minimumFractionDigits = 0; }
+  return new Intl.NumberFormat('tr-TR', opts).format((minor || 0) / 100);
 }
 
 function compact(minor) {
@@ -58,7 +68,12 @@ function monthLabel(month, style = 'long') {
 
 function dayLabel(iso) {
   const [y, m, d] = iso.split('-').map(Number);
-  return new Intl.DateTimeFormat('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' }).format(new Date(y, m - 1, d));
+  const date = new Date(y, m - 1, d);
+  const today = new Date();
+  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+  if (date.toDateString() === today.toDateString()) return 'Bugün';
+  if (date.toDateString() === yesterday.toDateString()) return 'Dün';
+  return new Intl.DateTimeFormat('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' }).format(date);
 }
 
 function timeLabel(iso) {
@@ -67,7 +82,8 @@ function timeLabel(iso) {
 
 function minorToInput(minor) {
   if (minor === null || minor === undefined) return '';
-  return (minor / 100).toFixed(2).replace('.', ',');
+  const value = minor / 100;
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace('.', ',');
 }
 
 function toLocalInput(iso) {
@@ -75,6 +91,8 @@ function toLocalInput(iso) {
   const pad = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+const colorOf = (category) => CATEGORY_COLORS[category] || 'var(--c-other)';
 
 // ---------- API ----------
 
@@ -128,28 +146,47 @@ async function load() {
     state.summary = summary.data;
     state.currency = summary.data.currency;
     state.transactions = list.data.transactions;
-    $('offline').hidden = !(summary.stale || list.stale);
+    state.offline = summary.stale || list.stale;
     $('login').hidden = true;
     $('app').hidden = false;
     render();
   } catch (err) {
     if (err instanceof AuthError) {
       storage((s) => s.removeItem(TOKEN_KEY));
-      showLogin('Anahtar geçersiz.');
+      showLogin('Anahtar geçersiz. Kurulumda oluşturduğunuz anahtarı girin.');
     } else {
       $('app').hidden = false;
-      $('offline').hidden = false;
-      $('offline').textContent = `Veriler yüklenemedi: ${err.message}`;
+      showNotice([`Veriler yüklenemedi: ${err.message}`]);
     }
   }
 }
 
 function render() {
-  renderBudget();
-  renderTrend();
+  const meta = CURRENCIES[state.currency] || { flag: '' };
+  $('currency-flag').textContent = meta.flag;
+  $('currency-code').textContent = state.currency;
+  renderDial();
+  renderNotices();
   renderCategories();
   renderHistory();
   renderTransactions();
+}
+
+function showNotice(lines) {
+  $('notice').hidden = !lines.length;
+  $('notice').textContent = lines.join(' ');
+}
+
+function renderNotices() {
+  const s = state.summary;
+  const lines = [];
+  if (state.offline) lines.push('Bağlantı yok, son yüklenen veriler gösteriliyor.');
+  if (s.missing_amount_count) lines.push(`${s.missing_amount_count} harcamanın tutarı gelmedi. Listede “Tutar gir” yazanlara dokunup tutarı ekleyin.`);
+  if (s.unconverted.length) {
+    lines.push(`Kuru bulunamayan harcamalar toplama katılmadı: ${s.unconverted.map((u) => money(u.total_minor, u.currency)).join(', ')}.`);
+  }
+  if (s.fx?.stale) lines.push('Kur servisine ulaşılamadı, son bilinen kurlar kullanılıyor.');
+  showNotice(lines);
 }
 
 /** Ayın kaçıncı günündeyiz (geçmiş ay → tamamı, gelecek ay → 0). */
@@ -161,159 +198,131 @@ function elapsedDays() {
   return new Date().getDate();
 }
 
-function renderBudget() {
+function renderDial() {
   const s = state.summary;
   const n = daysIn(state.month);
   const elapsed = elapsedDays();
   const isCurrent = state.month === currentMonth();
   const budget = s.budget_minor;
+  const C = 150;
+  const polar = (r, frac) => {
+    const a = (frac * 360 - 90) * (Math.PI / 180);
+    return [C + r * Math.cos(a), C + r * Math.sin(a)];
+  };
 
-  $('budget-title').textContent = isCurrent ? 'Bu ay harcanan' : `${monthLabel(state.month)} harcaması`;
-  $('spent').innerHTML = budget
-    ? `${esc(money(s.total_minor))} <small>/ ${esc(money(budget, undefined, { whole: true }))}</small>`
-    : esc(money(s.total_minor));
+  // Gün çentikleri: uzunluk o günün harcamasıyla orantılı.
+  const byDay = new Map(s.by_day.map((d) => [Number(d.date.slice(8, 10)), d.total_minor]));
+  const maxDay = Math.max(...byDay.values(), 1);
+  let svg = '';
+  for (let d = 1; d <= n; d++) {
+    const v = byDay.get(d) || 0;
+    const len = v ? 7 + 15 * Math.sqrt(v / maxDay) : 4;
+    const frac = (d - 0.5) / n;
+    const [x1, y1] = polar(126, frac);
+    const [x2, y2] = polar(126 + len, frac);
+    const cls = d > elapsed ? 'future' : (isCurrent && d === elapsed ? 'today' : (v ? 'spent' : ''));
+    svg += `<line class="tick ${cls}" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"/>`;
+  }
 
-  const progress = $('progress');
-  progress.hidden = !budget;
-  $('set-budget').hidden = !!budget;
-  const meta = [];
-  const avg = elapsed ? s.total_minor / elapsed : 0;
-
+  // Bütçe halkası.
+  const R = 106;
+  const circ = 2 * Math.PI * R;
+  svg += `<circle class="track" cx="${C}" cy="${C}" r="${R}"/>`;
   if (budget) {
     const ratio = s.total_minor / budget;
-    const paceRatio = elapsed / n;
-    $('progress-fill').style.width = `${Math.min(ratio, 1) * 100}%`;
-    $('progress-pace').style.left = `calc(${paceRatio * 100}% - 1px)`;
-    $('progress-pace').hidden = !isCurrent;
-    progress.classList.toggle('over', ratio > 1);
-    progress.classList.toggle('ahead', ratio <= 1 && isCurrent && ratio > paceRatio);
-    progress.setAttribute('aria-valuenow', String(Math.round(ratio * 100)));
+    const pace = elapsed / n;
+    const len = Math.min(ratio, 1) * circ;
+    const tone = ratio > 1 ? 'over' : (isCurrent && ratio > pace ? 'ahead' : '');
+    const animate = state.animated ? '' : 'animate';
+    if (len > 0) {
+      svg += `<circle class="fill ${tone} ${animate}" cx="${C}" cy="${C}" r="${R}" style="--len:${len.toFixed(1)}"
+        stroke-dasharray="${len.toFixed(1)} ${circ.toFixed(1)}" transform="rotate(-90 ${C} ${C})"/>`;
+    }
+    if (isCurrent) {
+      const [px, py] = polar(R, pace);
+      svg += `<circle class="pace" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="6"><title>Bugüne kadarki ideal harcama</title></circle>`;
+    }
+    state.animated = true;
+  }
+  $('dial-svg').innerHTML = svg;
 
+  $('spent').textContent = money(s.total_minor, state.currency, { whole: true });
+  $('dial-sub').textContent = budget
+    ? `${money(budget, state.currency, { whole: true })} bütçeden`
+    : (isCurrent ? 'bu ay harcandı' : `${monthLabel(state.month)} toplamı`);
+  $('set-budget').hidden = !!budget;
+  $('dial-hint').hidden = !(budget && isCurrent);
+
+  // Alt istatistikler.
+  const avg = elapsed ? s.total_minor / elapsed : 0;
+  const stats = [];
+  if (budget) {
     const remaining = budget - s.total_minor;
-    meta.push([remaining >= 0 ? 'Kalan' : 'Aşım', money(Math.abs(remaining), undefined, { whole: true }), remaining < 0]);
+    stats.push([remaining >= 0 ? 'Kalan' : 'Aşım', money(Math.abs(remaining), state.currency, { whole: true }), remaining < 0]);
     if (isCurrent) {
       const daysLeft = n - elapsed + 1;
-      meta.push(['Günlük limit', remaining > 0 ? money(remaining / daysLeft, undefined, { whole: true }) : '—']);
-      const projected = avg * n;
-      meta.push(['Ay sonu tahmini', money(projected, undefined, { whole: true }), projected > budget]);
+      stats.push(['Günlük limit', remaining > 0 ? money(remaining / daysLeft, state.currency, { whole: true }) : '—']);
+      stats.push(['Ay sonu tahmini', money(avg * n, state.currency, { whole: true }), avg * n > budget]);
     } else {
-      meta.push(['Günlük ort.', money(avg, undefined, { whole: true })]);
-      meta.push(['Bütçe kullanımı', `%${Math.round(ratio * 100)}`, ratio > 1]);
+      stats.push(['Günlük ortalama', money(avg, state.currency, { whole: true })]);
+      stats.push(['Bütçe kullanımı', `%${Math.round((s.total_minor / budget) * 100)}`, s.total_minor > budget]);
     }
   } else {
-    meta.push(['İşlem', String(s.count)]);
-    meta.push(['Günlük ort.', money(avg, undefined, { whole: true })]);
-    if (isCurrent) meta.push(['Ay sonu tahmini', money(avg * n, undefined, { whole: true })]);
+    stats.push(['Harcama', String(s.count)]);
+    stats.push(['Günlük ortalama', money(avg, state.currency, { whole: true })]);
+    if (isCurrent) stats.push(['Ay sonu tahmini', money(avg * n, state.currency, { whole: true })]);
   }
-  $('budget-meta').innerHTML = meta
-    .map(([label, value, neg]) => `<div><span>${esc(label)}</span><strong class="${neg ? 'neg' : ''}">${esc(value)}</strong></div>`)
+  $('stats').innerHTML = stats
+    .map(([label, value, bad]) => `<div><dt>${esc(label)}</dt><dd class="${bad ? 'bad' : ''}">${esc(value)}</dd></div>`)
     .join('');
-
-  const missing = $('missing');
-  missing.hidden = !s.missing_amount_count;
-  missing.textContent = `${s.missing_amount_count} harcamanın tutarı gelmedi. Listeden dokunup tutarı girin.`;
-  if (s.other_currencies.length) {
-    missing.hidden = false;
-    const others = s.other_currencies.map((o) => money(o.total_minor, o.currency)).join(', ');
-    missing.textContent = (s.missing_amount_count ? missing.textContent + ' ' : '') + `Yabancı para harcamaları toplama dahil değil: ${others}.`;
-  }
-}
-
-function renderTrend() {
-  const s = state.summary;
-  const n = daysIn(state.month);
-  const elapsed = elapsedDays();
-  const W = 340, H = 150, L = 34, R = 6, T = 8, B = 20;
-  const byDay = new Map(s.by_day.map((d) => [Number(d.date.slice(8, 10)), d.total_minor]));
-
-  const points = [[0, 0]];
-  let running = 0;
-  for (let d = 1; d <= elapsed; d++) {
-    running += byDay.get(d) || 0;
-    points.push([d, running]);
-  }
-  const maxY = Math.max(s.budget_minor || 0, running, 1) * 1.08;
-  const x = (d) => L + (d / n) * (W - L - R);
-  const y = (v) => T + (1 - v / maxY) * (H - T - B);
-
-  let svg = '';
-  for (const f of [0, 0.5, 1]) {
-    const v = maxY * f;
-    svg += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>`;
-    svg += `<text x="${L - 6}" y="${y(v) + 3}" text-anchor="end">${esc(compact(v))}</text>`;
-  }
-  for (const d of [1, 10, 20, n]) svg += `<text x="${x(d)}" y="${H - 4}" text-anchor="middle">${d}</text>`;
-
-  if (s.budget_minor) {
-    svg += `<line class="budget-line" x1="${L}" x2="${W - R}" y1="${y(s.budget_minor)}" y2="${y(s.budget_minor)}"/>`;
-    svg += `<line class="pace-line" x1="${x(0)}" y1="${y(0)}" x2="${x(n)}" y2="${y(s.budget_minor)}"/>`;
-  }
-  if (points.length > 1) {
-    const line = points.map(([d, v]) => `${x(d).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
-    svg += `<polygon class="spent-area" points="${x(0)},${y(0)} ${line} ${x(elapsed)},${y(0)}"/>`;
-    svg += `<polyline class="spent-line" points="${line}"/>`;
-    svg += `<circle class="today-dot" r="4" cx="${x(elapsed)}" cy="${y(running)}"/>`;
-  }
-  $('trend-chart').innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Ay içi kümülatif harcama">${svg}</svg>`;
-  $('trend-legend').innerHTML =
-    `<span><i></i>Harcama</span>` +
-    (s.budget_minor ? `<span><i class="pace"></i>İdeal tempo</span><span><i class="budget"></i>Bütçe</span>` : '');
 }
 
 function renderCategories() {
   const cats = state.summary.by_category.filter((c) => c.total_minor > 0);
   const total = cats.reduce((a, c) => a + c.total_minor, 0);
   if (!total) {
-    $('donut').innerHTML = '';
-    $('cat-list').innerHTML = '<li class="empty" style="display:block">Henüz harcama yok.</li>';
+    $('cat-bar').innerHTML = '';
+    $('cat-list').outerHTML = '<p id="cat-list" class="empty">Bu ay henüz harcama yok.</p>';
     return;
   }
-  const r = 52, C = 2 * Math.PI * r;
-  let offset = 0;
-  let arcs = '';
-  for (const c of cats) {
-    const len = (c.total_minor / total) * C;
-    arcs += `<circle r="${r}" cx="66" cy="66" fill="none" stroke="${CATEGORY_COLORS[c.category] || 'var(--c9)'}" stroke-width="18"
-      stroke-dasharray="${Math.max(len - 1.5, 0.5)} ${C}" stroke-dashoffset="${-offset}" transform="rotate(-90 66 66)"/>`;
-    offset += len;
-  }
-  $('donut').innerHTML = `<svg viewBox="0 0 132 132" role="img" aria-label="Kategori dağılımı">${arcs}
-    <text class="center" x="66" y="68" text-anchor="middle">${esc(compact(total))}</text>
-    <text class="center-sub" x="66" y="82" text-anchor="middle">${esc(state.currency)}</text></svg>`;
+  if ($('cat-list').tagName !== 'UL') $('cat-list').outerHTML = '<ul id="cat-list" class="cat-list"></ul>';
+  $('cat-bar').innerHTML = cats
+    .map((c) => `<span style="flex:${c.total_minor};background:${colorOf(c.category)}" title="${esc(c.category)}"></span>`)
+    .join('');
   $('cat-list').innerHTML = cats
-    .map((c) => `<li><span class="dot" style="background:${CATEGORY_COLORS[c.category] || 'var(--c9)'}"></span>
+    .map((c) => `<li><span class="dot" style="background:${colorOf(c.category)}"></span>
       <span class="name">${esc(c.category)}</span>
-      <span class="amt">${esc(money(c.total_minor, undefined, { whole: true }))}<span class="pct">%${Math.round((c.total_minor / total) * 100)}</span></span></li>`)
+      <span class="amt">${esc(money(c.total_minor, state.currency, { whole: true }))}</span>
+      <span class="pct">%${Math.round((c.total_minor / total) * 100)}</span></li>`)
     .join('');
 }
 
 function renderHistory() {
   const h = state.summary.history;
-  const W = 340, H = 130, T = 18, B = 18;
-  const max = Math.max(...h.map((m) => m.total_minor), state.summary.budget_minor || 0, 1);
+  const budget = state.summary.budget_minor;
+  const W = 340, H = 140, T = 20, B = 20;
+  const max = Math.max(...h.map((m) => m.total_minor), budget || 0, 1);
   const slot = W / h.length;
-  const bw = Math.min(34, slot * 0.6);
+  const bw = Math.min(30, slot * 0.5);
   const y = (v) => T + (1 - v / max) * (H - T - B);
   let svg = '';
-  if (state.summary.budget_minor) {
-    const by = y(state.summary.budget_minor);
-    svg += `<line class="budget-line" x1="0" x2="${W}" y1="${by}" y2="${by}" stroke-dasharray="3 3"/>`;
-  }
+  if (budget) svg += `<line class="budget" x1="0" x2="${W}" y1="${y(budget)}" y2="${y(budget)}"/>`;
   h.forEach((m, i) => {
     const cx = slot * i + slot / 2;
     const top = y(m.total_minor);
     const current = m.month === state.month;
-    svg += `<rect class="bar${current ? ' current' : ''}" x="${cx - bw / 2}" y="${top}" width="${bw}" height="${Math.max(H - B - top, 0)}" rx="6"/>`;
-    if (m.total_minor) svg += `<text class="${current ? 'bar-label' : ''}" x="${cx}" y="${top - 5}" text-anchor="middle">${esc(compact(m.total_minor))}</text>`;
+    const height = Math.max(H - B - top, m.total_minor ? 4 : 0);
+    svg += `<rect class="bar${current ? ' current' : ''}" x="${cx - bw / 2}" y="${H - B - height}" width="${bw}" height="${height}" rx="${bw / 2 > 8 ? 8 : bw / 2}"/>`;
+    if (m.total_minor) svg += `<text class="value" x="${cx}" y="${H - B - height - 6}" text-anchor="middle">${esc(compact(m.total_minor))}</text>`;
     svg += `<text x="${cx}" y="${H - 4}" text-anchor="middle">${esc(monthLabel(m.month, 'short'))}</text>`;
   });
-  $('history-chart').innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Son 6 ayın toplamları">${svg}</svg>`;
+  $('history-chart').innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Son 6 ayın toplamları (${esc(state.currency)})">${svg}</svg>`;
 }
 
 function renderTransactions() {
   const list = $('tx-list');
   if (!state.transactions.length) {
-    list.innerHTML = '<p class="empty">Bu ay kayıt yok. Apple Pay ile ödeme yaptığınızda burada görünecek.</p>';
+    list.innerHTML = '<p class="empty">Bu ay kayıt yok. Apple Pay ile ödediğinizde harcama burada görünür.</p>';
     return;
   }
   const days = new Map();
@@ -323,30 +332,71 @@ function renderTransactions() {
   }
   let html = '';
   for (const [date, items] of days) {
-    const dayTotal = items.filter((t) => t.currency === state.currency).reduce((a, t) => a + (t.amount_minor || 0), 0);
-    const hasLocal = items.some((t) => t.currency === state.currency);
-    html += `<div class="tx-day"><h3><span>${esc(dayLabel(date))}</span><span>${hasLocal ? esc(money(dayTotal)) : ''}</span></h3><div class="tx-group">`;
+    const dayTotal = items.reduce((a, t) => a + (t.converted_minor || 0), 0);
+    html += `<div class="tx-day"><h3><span>${esc(dayLabel(date))}</span><span>${esc(money(dayTotal))}</span></h3><div class="tx-group">`;
     for (const t of items) {
-      const color = CATEGORY_COLORS[t.category] || 'var(--c9)';
-      const sub = [t.category, timeLabel(t.occurred_at), t.card, t.note].filter(Boolean).join(' · ');
-      const amount = t.amount_minor === null
-        ? '<span class="amount missing">Tutar gir</span>'
-        : `<span class="amount">${esc(money(t.amount_minor, t.currency))}</span>`;
+      const foreign = t.currency !== state.currency;
+      let money_ = '<span class="amount missing">Tutar gir</span>';
+      if (t.amount_minor !== null) {
+        const shown = t.converted_minor ?? t.amount_minor;
+        const shownCurrency = t.converted_minor === null ? t.currency : state.currency;
+        money_ = `<span class="amount">${esc(money(shown, shownCurrency))}</span>`;
+        if (foreign && t.converted_minor !== null) money_ += `<span class="orig">${esc(money(t.amount_minor, t.currency))}</span>`;
+      }
+      const meta = [t.category, timeLabel(t.occurred_at), t.card, t.note].filter(Boolean).map((m) => `<span>${esc(m)}</span>`).join('');
       html += `<button class="tx" data-id="${t.id}">
-        <span class="badge" style="background:${color}">${esc(t.category.slice(0, 2))}</span>
-        <span class="main"><span class="merchant">${esc(t.merchant)}</span><span class="sub">${esc(sub)}</span></span>
-        ${amount}</button>`;
+        <span class="glyph" style="background:${colorOf(t.category)}">${esc(t.merchant.trim().charAt(0).toLocaleUpperCase('tr-TR'))}</span>
+        <span class="who"><span class="merchant">${esc(t.merchant)}</span><span class="meta">${meta}</span></span>
+        <span class="money">${money_}</span></button>`;
     }
     html += '</div></div>';
   }
   list.innerHTML = html;
 }
 
+// ---------- para birimi ----------
+
+function rateLine(code) {
+  const rates = state.summary?.fx?.rates;
+  if (!rates || code === state.currency || !rates[code] || !rates[state.currency]) return '';
+  const value = rates[state.currency] / rates[code];
+  const unit = value < 0.1 ? 1000 : 1;
+  return `${unit.toLocaleString('tr-TR')} ${code} = ${money(value * unit * 100, state.currency)}`;
+}
+
+function openCurrency() {
+  $('currency-list').innerHTML = Object.entries(CURRENCIES)
+    .map(([code, c]) => `<li><button type="button" role="option" aria-selected="${code === state.currency}" data-code="${code}">
+      <span class="flag" aria-hidden="true">${c.flag}</span>
+      <span class="label"><strong>${code}</strong><span>${esc(c.name)}</span></span>
+      <span class="rate">${esc(rateLine(code))}</span>
+      <svg class="check" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+    </button></li>`)
+    .join('');
+  const fx = state.summary?.fx;
+  $('fx-info').textContent = fx
+    ? `Kurlar ${new Intl.DateTimeFormat('tr-TR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }).format(new Date(fx.as_of))} itibarıyla, kaynak ${fx.source}.`
+    : 'Kurlar henüz alınamadı.';
+  $('currency-dialog').showModal();
+}
+
+async function chooseCurrency(code) {
+  if (code === state.currency) return $('currency-dialog').close();
+  for (const b of $('currency-list').querySelectorAll('button')) b.setAttribute('aria-selected', String(b.dataset.code === code));
+  try {
+    await api('/api/settings', { method: 'PUT', body: { display_currency: code } });
+    $('currency-dialog').close();
+    await load();
+  } catch (err) {
+    $('fx-info').textContent = err instanceof AuthError ? 'Oturum geçersiz.' : `Kaydedilemedi: ${err.message}`;
+  }
+}
+
 // ---------- düzenleme ----------
 
 function renderChips(selected) {
   $('category-chips').innerHTML = CATEGORIES
-    .map((c) => `<button type="button" class="chip" aria-pressed="${c === selected}" data-cat="${esc(c)}">${esc(c)}</button>`)
+    .map((c) => `<button type="button" class="chip" aria-pressed="${c === selected}" data-cat="${esc(c)}"><i style="background:${colorOf(c)}"></i>${esc(c)}</button>`)
     .join('');
 }
 
@@ -354,12 +404,16 @@ function openTx(tx) {
   state.editing = tx;
   const form = $('tx-form');
   $('tx-dialog-title').textContent = tx ? 'Harcamayı düzenle' : 'Yeni harcama';
+  const codes = Object.keys(CURRENCIES);
+  const current = tx?.currency || state.currency;
+  if (!codes.includes(current)) codes.push(current);
+  form.currency.innerHTML = codes.map((c) => `<option value="${c}"${c === current ? ' selected' : ''}>${c}</option>`).join('');
   form.amount.value = tx ? minorToInput(tx.amount_minor) : '';
   form.merchant.value = tx?.merchant || '';
   form.note.value = tx?.note || '';
   form.date.value = toLocalInput(tx?.occurred_at || new Date().toISOString());
   renderChips(tx?.category || 'Diğer');
-  $('tx-card').textContent = tx?.card ? `Kart: ${tx.card}${tx.source === 'shortcut' ? ' · Apple Pay' : ''}` : '';
+  $('tx-card').textContent = tx?.card ? `${tx.card} ile ${tx.source === 'shortcut' ? 'Apple Pay' : 'elle eklendi'}` : '';
   $('delete-tx').hidden = !tx;
   $('tx-error').textContent = '';
   $('tx-dialog').showModal();
@@ -369,19 +423,19 @@ function openTx(tx) {
 async function saveTx(event) {
   event.preventDefault();
   const form = $('tx-form');
-  const category = document.querySelector('#category-chips [aria-pressed="true"]')?.dataset.cat;
   const body = {
     amount: form.amount.value.trim(),
+    currency: form.currency.value,
     merchant: form.merchant.value.trim(),
     note: form.note.value.trim(),
-    category,
+    category: document.querySelector('#category-chips [aria-pressed="true"]')?.dataset.cat,
     date: new Date(form.date.value).toISOString(),
   };
   try {
     if (state.editing) {
       await api(`/api/transactions/${state.editing.id}`, { method: 'PATCH', body });
     } else {
-      if (!body.amount) throw new Error('Tutar girin.');
+      if (!body.amount) throw new Error('Tutarı girin.');
       await api('/api/transactions', { method: 'POST', body: { ...body, source: 'manual' } });
     }
     $('tx-dialog').close();
@@ -402,18 +456,22 @@ async function deleteTx() {
   }
 }
 
-async function openSettings() {
+function openSettings() {
   const form = $('settings-form');
   $('api-url').textContent = `${location.origin}/api/transactions`;
+  $('budget-currency').textContent = state.currency;
   $('settings-error').textContent = '';
-  form.budget.value = state.summary?.budget_minor ? minorToInput(state.summary.budget_minor) : '';
+  form.budget.value = state.summary?.budget_minor ? minorToInput(Math.round(state.summary.budget_minor / 100) * 100) : '';
   $('settings-dialog').showModal();
 }
 
 async function saveSettings(event) {
   event.preventDefault();
   try {
-    await api('/api/settings', { method: 'PUT', body: { monthly_budget: $('settings-form').budget.value.trim() } });
+    await api('/api/settings', {
+      method: 'PUT',
+      body: { monthly_budget: $('settings-form').budget.value.trim(), budget_currency: state.currency },
+    });
     $('settings-dialog').close();
     await load();
   } catch (err) {
@@ -425,8 +483,7 @@ async function saveSettings(event) {
 
 $('login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const token = $('login-token').value.trim();
-  storage((s) => s.setItem(TOKEN_KEY, token));
+  storage((s) => s.setItem(TOKEN_KEY, $('login-token').value.trim()));
   await load();
 });
 $('prev-month').addEventListener('click', () => { state.month = shiftMonth(state.month, -1); load(); });
@@ -440,6 +497,11 @@ $('category-chips').addEventListener('click', (e) => {
   const chip = e.target.closest('.chip');
   if (!chip) return;
   for (const c of $('category-chips').children) c.setAttribute('aria-pressed', String(c === chip));
+});
+$('open-currency').addEventListener('click', openCurrency);
+$('currency-list').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-code]');
+  if (btn) chooseCurrency(btn.dataset.code);
 });
 $('tx-form').addEventListener('submit', saveTx);
 $('delete-tx').addEventListener('click', deleteTx);
@@ -456,9 +518,13 @@ $('logout').addEventListener('click', () => {
 for (const btn of document.querySelectorAll('[data-close]')) {
   btn.addEventListener('click', () => btn.closest('dialog').close());
 }
+// Sayfa dışına (arka plana) dokununca kapat.
+for (const dialog of document.querySelectorAll('dialog')) {
+  dialog.addEventListener('click', (e) => { if (e.target === dialog) dialog.close(); });
+}
 // Uygulamaya geri dönülünce (ör. ödeme sonrası) verileri tazele.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && !$('app').hidden) load();
+  if (document.visibilityState === 'visible' && !$('app').hidden && !document.querySelector('dialog[open]')) load();
 });
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});

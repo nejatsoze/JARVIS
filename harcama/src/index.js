@@ -1,7 +1,9 @@
 import {
   CATEGORIES,
+  DISPLAY_CURRENCIES,
   ValidationError,
   cleanText,
+  convertMinor,
   guessCategory,
   isMonth,
   localDate,
@@ -15,6 +17,9 @@ const MAX_BODY_BYTES = 10_000;
 // Kestirme aynı ödeme için iki kez çalışırsa (ya da yeniden denenirse) çift kayıt olmasın.
 const DEDUPE_WINDOW_MS = 90_000;
 const HISTORY_MONTHS = 6;
+// Ücretsiz kaynaklar günde birkaç kez güncelleniyor; saatlik önbellek yeterli ve kotayı korur.
+const FX_TTL_MS = 60 * 60 * 1000;
+const FX_TIMEOUT_MS = 4000;
 
 class HttpError extends Error {
   constructor(status, code, message) {
@@ -179,15 +184,33 @@ function requireMonth(url) {
   return month;
 }
 
+function displayCurrency(url, settings) {
+  const requested = url.searchParams.get('currency');
+  if (requested === null) return settings.display_currency;
+  if (!DISPLAY_CURRENCIES.includes(requested)) {
+    throw new ValidationError(`currency şunlardan biri olmalı: ${DISPLAY_CURRENCIES.join(', ')}`);
+  }
+  return requested;
+}
+
 async function listTransactions(env, url) {
   const month = requireMonth(url);
-  const { results } = await env.DB.prepare(
-    `SELECT * FROM transactions WHERE local_date BETWEEN ?1 AND ?2
-     ORDER BY occurred_at DESC, id DESC`,
-  )
-    .bind(`${month}-01`, `${month}-31`)
-    .all();
-  return json({ transactions: results });
+  const settings = await getSettings(env);
+  const currency = displayCurrency(url, settings);
+  const [{ results }, fx] = await Promise.all([
+    env.DB.prepare(
+      `SELECT * FROM transactions WHERE local_date BETWEEN ?1 AND ?2
+       ORDER BY occurred_at DESC, id DESC`,
+    )
+      .bind(`${month}-01`, `${month}-31`)
+      .all(),
+    getRates(env),
+  ]);
+  const transactions = results.map((t) => ({
+    ...t,
+    converted_minor: convertMinor(t.amount_minor, t.currency, currency, fx?.rates),
+  }));
+  return json({ currency, transactions });
 }
 
 async function updateTransaction(request, env, id) {
@@ -200,6 +223,7 @@ async function updateTransaction(request, env, id) {
   if ('card' in body) next.card = cleanText(body.card, 'Kart', 80);
   if ('note' in body) next.note = cleanText(body.note, 'Not', 280);
   if ('amount' in body) next.amount_minor = parseAmount(body.amount).minor;
+  if ('currency' in body) next.currency = validCurrency(String(body.currency).trim().toUpperCase());
   if ('category' in body) {
     const category = validCategory(body.category);
     if (!category) throw new ValidationError('Kategori gerekli');
@@ -214,9 +238,9 @@ async function updateTransaction(request, env, id) {
   const statements = [
     env.DB.prepare(
       `UPDATE transactions
-       SET merchant = ?1, card = ?2, note = ?3, amount_minor = ?4, category = ?5, occurred_at = ?6, local_date = ?7
-       WHERE id = ?8 RETURNING *`,
-    ).bind(next.merchant, next.card, next.note, next.amount_minor, next.category, next.occurred_at, next.local_date, id),
+       SET merchant = ?1, card = ?2, note = ?3, amount_minor = ?4, category = ?5, occurred_at = ?6, local_date = ?7, currency = ?8
+       WHERE id = ?9 RETURNING *`,
+    ).bind(next.merchant, next.card, next.note, next.amount_minor, next.category, next.occurred_at, next.local_date, next.currency, id),
   ];
   // Kategori elle değiştirildiyse bu işyeri için hatırla (istenmezse "learn": false).
   if (next.category !== existing.category && body.learn !== false) {
@@ -237,75 +261,189 @@ async function deleteTransaction(env, id) {
   return new Response(null, { status: 204 });
 }
 
+const SETTING_KEYS = ['monthly_budget_minor', 'budget_currency', 'display_currency'];
+
 async function getSettings(env) {
-  const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'monthly_budget_minor'").first();
-  return { monthly_budget_minor: row ? Number(row.value) : null, currency: env.CURRENCY, timezone: env.TIMEZONE };
+  const { results } = await env.DB.prepare(
+    `SELECT key, value FROM settings WHERE key IN (${SETTING_KEYS.map(() => '?').join(', ')})`,
+  )
+    .bind(...SETTING_KEYS)
+    .all();
+  const map = Object.fromEntries(results.map((r) => [r.key, r.value]));
+  return {
+    monthly_budget_minor: map.monthly_budget_minor ? Number(map.monthly_budget_minor) : null,
+    // Eski kayıtlarda bütçe para birimi yok: o zamanlar tek para birimi CURRENCY idi.
+    budget_currency: map.budget_currency || env.CURRENCY,
+    display_currency: map.display_currency || env.CURRENCY,
+    currencies: DISPLAY_CURRENCIES,
+    timezone: env.TIMEZONE,
+  };
 }
+
+const upsertSetting = (env, key, value) =>
+  env.DB.prepare(
+    `INSERT INTO settings (key, value) VALUES (?1, ?2)
+     ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+  ).bind(key, value);
 
 async function putSettings(request, env) {
   const body = await readJson(request);
+  const statements = [];
+  let display = null;
+  if ('display_currency' in body) {
+    if (!DISPLAY_CURRENCIES.includes(body.display_currency)) {
+      throw new ValidationError(`Para birimi şunlardan biri olmalı: ${DISPLAY_CURRENCIES.join(', ')}`);
+    }
+    display = body.display_currency;
+    statements.push(upsertSetting(env, 'display_currency', display));
+  }
   if ('monthly_budget' in body) {
     const { minor } = parseAmount(body.monthly_budget);
     if (minor === null) {
-      await env.DB.prepare("DELETE FROM settings WHERE key = 'monthly_budget_minor'").run();
+      statements.push(env.DB.prepare("DELETE FROM settings WHERE key IN ('monthly_budget_minor', 'budget_currency')"));
     } else {
-      await env.DB.prepare(
-        `INSERT INTO settings (key, value) VALUES ('monthly_budget_minor', ?1)
-         ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
-      )
-        .bind(String(minor))
-        .run();
+      // Bütçe, girildiği andaki gösterim para biriminde saklanır; diğer birimlere kurla çevrilir.
+      const budgetCurrency = body.budget_currency || display || (await getSettings(env)).display_currency;
+      if (!DISPLAY_CURRENCIES.includes(budgetCurrency)) throw new ValidationError('Bütçe para birimi geçersiz');
+      statements.push(upsertSetting(env, 'monthly_budget_minor', String(minor)));
+      statements.push(upsertSetting(env, 'budget_currency', budgetCurrency));
     }
   }
+  if (statements.length) await env.DB.batch(statements);
   return json(await getSettings(env));
 }
+
+// ---------- Döviz kurları ----------
+
+function validRates(rates) {
+  if (!rates || typeof rates !== 'object') return null;
+  const clean = {};
+  for (const [code, value] of Object.entries(rates)) {
+    if (/^[A-Z]{3}$/.test(code) && typeof value === 'number' && value > 0 && Number.isFinite(value)) clean[code] = value;
+  }
+  clean.USD = 1;
+  return DISPLAY_CURRENCIES.every((c) => clean[c]) ? clean : null;
+}
+
+const FX_SOURCES = [
+  {
+    name: 'open.er-api.com',
+    url: 'https://open.er-api.com/v6/latest/USD',
+    parse: (d) => (d.result === 'success' ? { rates: validRates(d.rates), as_of: new Date(d.time_last_update_unix * 1000).toISOString() } : null),
+  },
+  {
+    name: 'frankfurter',
+    url: 'https://api.frankfurter.dev/v1/latest?base=USD',
+    parse: (d) => ({ rates: validRates(d.rates), as_of: `${d.date}T16:00:00Z` }),
+  },
+];
+
+async function fetchRates() {
+  for (const source of FX_SOURCES) {
+    try {
+      const res = await fetch(source.url, { signal: AbortSignal.timeout(FX_TIMEOUT_MS) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const parsed = source.parse(await res.json());
+      if (parsed?.rates) return { ...parsed, source: source.name };
+      throw new Error('beklenmeyen yanıt');
+    } catch (err) {
+      console.error(JSON.stringify({ msg: 'fx_fetch_failed', source: source.name, error: String(err) }));
+    }
+  }
+  return null;
+}
+
+/**
+ * USD tabanlı kurlar. Önbellek tazeyse onu, değilse kaynaklardan yenisini döner;
+ * kaynaklar çökerse son bilinen kurlarla (stale: true) devam eder.
+ */
+async function getRates(env) {
+  const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'fx_rates'").first();
+  const cached = row ? JSON.parse(row.value) : null;
+  if (cached && Date.now() - Date.parse(cached.fetched_at) < FX_TTL_MS) return { ...cached, stale: false };
+
+  const fresh = await fetchRates();
+  if (fresh) {
+    const record = { ...fresh, fetched_at: new Date().toISOString() };
+    await upsertSetting(env, 'fx_rates', JSON.stringify(record)).run();
+    return { ...record, stale: false };
+  }
+  return cached ? { ...cached, stale: true } : null;
+}
+
+// ---------- Özet ----------
 
 async function summary(env, url) {
   const month = requireMonth(url);
   const from = `${month}-01`;
   const to = `${month}-31`;
   const months = previousMonths(month, HISTORY_MONTHS);
+  const settings = await getSettings(env);
+  const currency = displayCurrency(url, settings);
 
-  const [totals, byCategory, byDay, others, history, settings] = await Promise.all([
+  const [byCategory, byDay, history, fx] = await Promise.all([
     env.DB.prepare(
-      `SELECT COALESCE(SUM(amount_minor), 0) AS total_minor, COUNT(*) AS count,
-              SUM(amount_minor IS NULL) AS missing_amount_count
-       FROM transactions WHERE local_date BETWEEN ?1 AND ?2 AND currency = ?3`,
-    ).bind(from, to, env.CURRENCY).first(),
+      `SELECT category, currency, COALESCE(SUM(amount_minor), 0) AS total_minor, COUNT(*) AS count,
+              SUM(amount_minor IS NULL) AS missing
+       FROM transactions WHERE local_date BETWEEN ?1 AND ?2
+       GROUP BY category, currency`,
+    ).bind(from, to).all(),
     env.DB.prepare(
-      `SELECT category, COALESCE(SUM(amount_minor), 0) AS total_minor, COUNT(*) AS count
-       FROM transactions WHERE local_date BETWEEN ?1 AND ?2 AND currency = ?3
-       GROUP BY category ORDER BY total_minor DESC`,
-    ).bind(from, to, env.CURRENCY).all(),
+      `SELECT local_date AS date, currency, COALESCE(SUM(amount_minor), 0) AS total_minor
+       FROM transactions WHERE local_date BETWEEN ?1 AND ?2
+       GROUP BY local_date, currency`,
+    ).bind(from, to).all(),
     env.DB.prepare(
-      `SELECT local_date AS date, COALESCE(SUM(amount_minor), 0) AS total_minor
-       FROM transactions WHERE local_date BETWEEN ?1 AND ?2 AND currency = ?3
-       GROUP BY local_date ORDER BY local_date`,
-    ).bind(from, to, env.CURRENCY).all(),
-    env.DB.prepare(
-      `SELECT currency, COALESCE(SUM(amount_minor), 0) AS total_minor, COUNT(*) AS count
-       FROM transactions WHERE local_date BETWEEN ?1 AND ?2 AND currency != ?3
-       GROUP BY currency`,
-    ).bind(from, to, env.CURRENCY).all(),
-    env.DB.prepare(
-      `SELECT substr(local_date, 1, 7) AS month, COALESCE(SUM(amount_minor), 0) AS total_minor
-       FROM transactions WHERE local_date BETWEEN ?1 AND ?2 AND currency = ?3
-       GROUP BY month`,
-    ).bind(`${months[0]}-01`, to, env.CURRENCY).all(),
-    getSettings(env),
+      `SELECT substr(local_date, 1, 7) AS month, currency, COALESCE(SUM(amount_minor), 0) AS total_minor
+       FROM transactions WHERE local_date BETWEEN ?1 AND ?2
+       GROUP BY month, currency`,
+    ).bind(`${months[0]}-01`, to).all(),
+    getRates(env),
   ]);
 
-  const historyByMonth = new Map(history.results.map((r) => [r.month, r.total_minor]));
+  // Kuru bulunamayan para birimleri toplama katılmaz, ayrıca raporlanır.
+  const unconverted = new Map();
+  const convert = (minor, from, track) => {
+    const value = convertMinor(minor, from, currency, fx?.rates);
+    if (value === null && minor && track) unconverted.set(from, (unconverted.get(from) || 0) + minor);
+    return value || 0;
+  };
+  const sumInto = (map, key, value) => map.set(key, (map.get(key) || 0) + value);
+
+  const categories = new Map();
+  let total = 0;
+  let count = 0;
+  let missing = 0;
+  for (const r of byCategory.results) {
+    const value = convert(r.total_minor, r.currency, true);
+    const entry = categories.get(r.category) || { category: r.category, total_minor: 0, count: 0 };
+    entry.total_minor += value;
+    entry.count += r.count;
+    categories.set(r.category, entry);
+    total += value;
+    count += r.count;
+    missing += r.missing || 0;
+  }
+  const days = new Map();
+  for (const r of byDay.results) sumInto(days, r.date, convert(r.total_minor, r.currency, false));
+  const monthTotals = new Map();
+  for (const r of history.results) sumInto(monthTotals, r.month, convert(r.total_minor, r.currency, false));
+
+  const pick = (rates) => rates && Object.fromEntries(DISPLAY_CURRENCIES.map((c) => [c, rates[c]]));
   return json({
     month,
-    currency: env.CURRENCY,
-    total_minor: totals.total_minor,
-    count: totals.count,
-    missing_amount_count: totals.missing_amount_count || 0,
-    budget_minor: settings.monthly_budget_minor,
-    by_category: byCategory.results,
-    by_day: byDay.results,
-    history: months.map((m) => ({ month: m, total_minor: historyByMonth.get(m) || 0 })),
-    other_currencies: others.results,
+    currency,
+    total_minor: total,
+    count,
+    missing_amount_count: missing,
+    budget_minor: settings.monthly_budget_minor === null
+      ? null
+      : convertMinor(settings.monthly_budget_minor, settings.budget_currency, currency, fx?.rates),
+    budget_currency: settings.budget_currency,
+    by_category: [...categories.values()].sort((a, b) => b.total_minor - a.total_minor),
+    by_day: [...days].sort(([a], [b]) => a.localeCompare(b)).map(([date, total_minor]) => ({ date, total_minor })),
+    history: months.map((m) => ({ month: m, total_minor: monthTotals.get(m) || 0 })),
+    unconverted: [...unconverted].map(([code, total_minor]) => ({ currency: code, total_minor })),
+    fx: fx ? { rates: pick(fx.rates), as_of: fx.as_of, fetched_at: fx.fetched_at, source: fx.source, stale: fx.stale } : null,
   });
 }

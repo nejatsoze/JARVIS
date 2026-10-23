@@ -14,22 +14,43 @@ export const CATEGORIES = [
 
 // Öğrenilmiş bir eşleşme yoksa ilk tahmin için anahtar kelimeler.
 const KEYWORDS = [
-  ['Market', ['migros', 'carrefour', 'a101', 'bim', 'sok market', 'macrocenter', 'file market', 'hakmar', 'getir', 'istegelsin', 'market', 'bakkal', 'manav', 'kasap', 'firin']],
+  ['Market', ['migros', 'carrefour', 'a101', 'bim', 'sok market', 'macrocenter', 'file market', 'hakmar', 'getir', 'istegelsin', 'market', 'bakkal', 'manav', 'kasap', 'firin', 'eleven', 'lawson', 'familymart', 'family mart', 'fairprice', 'indomaret', 'alfamart', 'big c', 'lotus']],
   ['Yeme-İçme', ['starbucks', 'kahve', 'coffee', 'cafe', 'kafe', 'restoran', 'restaurant', 'burger', 'pizza', 'doner', 'kebap', 'lokanta', 'simit', 'yemeksepeti', 'trendyol yemek', 'mcdonald', 'kfc', 'popeyes', 'pastane', 'baklava']],
   ['Sağlık', ['eczane', 'pharmacy', 'hastane', 'hospital', 'klinik', 'acibadem', 'medical park', 'dis hekim', 'dis klinig']],
   ['Akaryakıt', ['shell', 'opet', 'bp', 'petrol ofisi', 'total', 'aytemiz', 'lukoil', 'akaryakit', 'petrol']],
-  ['Ulaşım', ['istanbulkart', 'metro', 'iett', 'uber', 'bitaksi', 'taksi', 'taxi', 'otopark', 'thy', 'pegasus', 'ajet', 'hgs', 'ogs', 'marmaray', 'vapur', 'marti']],
+  ['Ulaşım', ['istanbulkart', 'metro', 'iett', 'uber', 'bitaksi', 'taksi', 'taxi', 'otopark', 'thy', 'pegasus', 'ajet', 'hgs', 'ogs', 'marmaray', 'vapur', 'marti', 'grab', 'gojek', 'bolt', 'bts', 'mrt', 'suica', 'pasmo']],
   ['Faturalar', ['turkcell', 'vodafone', 'turk telekom', 'superonline', 'enerjisa', 'igdas', 'iski', 'elektrik', 'dogalgaz', 'su idaresi', 'netflix', 'spotify', 'youtube', 'apple.com', 'icloud', 'disney', 'exxen', 'blutv']],
   ['Eğlence', ['sinema', 'cinema', 'cinemaximum', 'biletix', 'passo', 'steam', 'playstation', 'xbox', 'konser', 'muze', 'bowling']],
   ['Alışveriş', ['trendyol', 'hepsiburada', 'amazon', 'zara', 'h&m', 'lc waikiki', 'koton', 'mavi', 'decathlon', 'teknosa', 'mediamarkt', 'vatan', 'ikea', 'boyner', 'ebebek', 'gratis', 'watsons', 'rossmann']],
 ];
 
+// Sıra önemli: "S$" "$"dan önce denenmeli.
 const CURRENCY_SYMBOLS = [
   [/₺|\bTL\b|\bTRY\b/i, 'TRY'],
+  [/(?<!U)S\$|\bSGD\b/i, 'SGD'],
   [/\$|\bUSD\b/i, 'USD'],
   [/€|\bEUR\b/i, 'EUR'],
   [/£|\bGBP\b/i, 'GBP'],
+  [/฿|\bTHB\b/i, 'THB'],
+  [/¥|円|\bJPY\b/i, 'JPY'],
+  [/\bRp\.?(?=\s|\d|$)|\bIDR\b/i, 'IDR'],
 ];
+
+// Arayüzde seçilebilen gösterim para birimleri.
+export const DISPLAY_CURRENCIES = ['TRY', 'USD', 'EUR', 'IDR', 'THB', 'JPY', 'SGD'];
+
+/**
+ * Kuruş cinsinden tutarı başka para birimine çevirir. `rates` aynı tabana (ör. USD=1) göre.
+ * Kur yoksa null döner; çağıran bunu "çevrilemedi" olarak raporlar.
+ */
+export function convertMinor(minor, from, to, rates) {
+  if (minor === null || minor === undefined) return null;
+  if (from === to) return minor;
+  const rf = rates?.[from];
+  const rt = rates?.[to];
+  if (!rf || !rt) return null;
+  return Math.round((minor * rt) / rf);
+}
 
 export class ValidationError extends Error {
   constructor(message) {
