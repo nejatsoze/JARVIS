@@ -37,7 +37,9 @@ Apple Pay ödemesi ─► Kestirmeler "İşlem" otomasyonu ─► POST /api/tran
 
 ```bash
 git clone https://github.com/nejatsoze/JARVIS.git
-cd JARVIS/harcama
+cd JARVIS
+git checkout claude/blissful-cori-4xfjwn   # ana dala birleştirilene kadar gerekli
+cd harcama
 npm install
 npx wrangler login          # tarayıcıda Cloudflare hesabınızla izin verin
 ```
