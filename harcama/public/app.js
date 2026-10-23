@@ -168,6 +168,7 @@ function render() {
   renderDial();
   renderNotices();
   renderCategories();
+  renderCards();
   renderHistory();
   renderTransactions();
 }
@@ -297,6 +298,35 @@ function renderCategories() {
     .join('');
 }
 
+const CARD_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="6" width="17" height="12" rx="2.5"/><path d="M3.5 10h17"/></svg>';
+const CASH_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="10" rx="2"/><circle cx="12" cy="12" r="2.2"/></svg>';
+const isCash = (card) => /^nakit$/i.test(card || '');
+
+function renderCards() {
+  const cards = state.summary.by_card || [];
+  const total = cards.reduce((a, c) => a + c.total_minor, 0);
+  const list = $('card-list');
+  if (!cards.length) {
+    list.innerHTML = '<li class="card-row unset"><span></span><span class="name">Bu ay harcama yok.</span></li>';
+    return;
+  }
+  list.innerHTML = cards
+    .map((c) => `<li class="card-row${c.card ? '' : ' unset'}">
+      <span class="card-list-icon">${isCash(c.card) ? CASH_ICON : CARD_ICON}</span>
+      <span class="name">${esc(c.card || 'Belirtilmemiş')}<small>${c.count} harcama</small></span>
+      <span class="amt">${esc(money(c.total_minor, state.currency, { whole: true }))}</span>
+      <span class="pct">%${total ? Math.round((c.total_minor / total) * 100) : 0}</span></li>`)
+    .join('');
+}
+
+function renderCardChips(current) {
+  const recent = state.summary?.recent_cards || [];
+  const options = [...new Set([...recent, 'Nakit'])];
+  $('card-chips').innerHTML = options
+    .map((c) => `<button type="button" class="chip" aria-pressed="${c === current}" data-card="${esc(c)}">${esc(c)}</button>`)
+    .join('');
+}
+
 function renderHistory() {
   const h = state.summary.history;
   const budget = state.summary.budget_minor;
@@ -408,9 +438,11 @@ function openTx(tx) {
   form.amount.value = tx ? minorToInput(tx.amount_minor) : '';
   form.merchant.value = tx?.merchant || '';
   form.note.value = tx?.note || '';
+  form.card.value = tx?.card || '';
+  renderCardChips(tx?.card || '');
   form.date.value = toLocalInput(tx?.occurred_at || new Date().toISOString());
   renderChips(tx?.category || 'Diğer');
-  $('tx-card').textContent = tx?.card ? `${tx.card} ile ${tx.source === 'shortcut' ? 'Apple Pay' : 'elle eklendi'}` : '';
+  $('tx-card').textContent = tx ? (tx.source === 'shortcut' ? 'Apple Pay ile otomatik kaydedildi.' : 'Elle eklendi.') : '';
   $('delete-tx').hidden = !tx;
   $('tx-error').textContent = '';
   $('tx-dialog').showModal();
@@ -425,6 +457,7 @@ async function saveTx(event) {
     currency: form.currency.value,
     merchant: form.merchant.value.trim(),
     note: form.note.value.trim(),
+    card: form.card.value.trim(),
     category: document.querySelector('#category-chips [aria-pressed="true"]')?.dataset.cat,
     date: new Date(form.date.value).toISOString(),
   };
@@ -538,6 +571,15 @@ $('currency-list').addEventListener('click', (e) => {
   if (btn) chooseCurrency(btn.dataset.code);
 });
 $('tx-form').addEventListener('submit', saveTx);
+$('card-chips').addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  $('tx-form').card.value = chip.dataset.card;
+  for (const c of $('card-chips').children) c.setAttribute('aria-pressed', String(c === chip));
+});
+$('tx-card-input').addEventListener('input', (e) => {
+  for (const c of $('card-chips').children) c.setAttribute('aria-pressed', String(c.dataset.card === e.target.value.trim()));
+});
 $('delete-tx').addEventListener('click', deleteTx);
 $('open-settings').addEventListener('click', openSettings);
 $('set-budget').addEventListener('click', openSettings);

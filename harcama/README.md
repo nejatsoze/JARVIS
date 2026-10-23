@@ -23,6 +23,8 @@ Apple Pay ödemesi ─► Kestirmeler "İşlem" otomasyonu ─► POST /api/tran
   kategorisini değiştirdiğinizde o işyeri hatırlanır, sonraki ödemeler de o kategoriye düşer.
 - Aylık bütçe: kalan tutar, günlük harcama limiti, ay sonu tahmini, ideal tempo çizgisi.
 - Grafikler: ay içi kümülatif harcama, kategori dağılımı, son 6 ayın karşılaştırması.
+- Ödeme yöntemi: Apple Pay kayıtlarında Wallet'taki kart adı otomatik gelir; elle eklerken son
+  kullanılan yöntemlerden ya da "Nakit"ten seçilir. Ana ekranda ödeme yöntemine göre dağılım.
 - Elle harcama ekleme (online alışverişler veya nakit için), düzenleme, silme.
 - Banka tutar göndermezse kayıt "Tutar gir" olarak işaretlenir, dokunup girebilirsiniz.
 - Para birimi seçici (TRY, USD, EUR, IDR, THB, JPY, SGD): her harcama kendi para biriminde

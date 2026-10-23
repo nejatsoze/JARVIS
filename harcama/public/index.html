@@ -73,6 +73,11 @@
       <ul id="cat-list" class="cat-list"></ul>
     </section>
 
+    <section class="block" aria-labelledby="card-title">
+      <h2 id="card-title">Ödeme yöntemleri</h2>
+      <ul id="card-list" class="cat-list"></ul>
+    </section>
+
     <section class="block" aria-labelledby="hist-title">
       <h2 id="hist-title">Son 6 ay</h2>
       <div id="history-chart" class="history"></div>
@@ -120,6 +125,11 @@
       <label class="field">İşyeri
         <input name="merchant" required maxlength="120" autocomplete="off">
       </label>
+      <div class="field">
+        <label for="tx-card-input">Ödeme yöntemi</label>
+        <input id="tx-card-input" name="card" maxlength="80" autocomplete="off" placeholder="Ör. Garanti Bonus, Nakit">
+        <div class="chips small" id="card-chips"></div>
+      </div>
       <fieldset class="field">
         <legend>Kategori</legend>
         <div class="chips" id="category-chips"></div>

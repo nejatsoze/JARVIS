@@ -353,6 +353,17 @@ input:focus, select:focus { outline: none; border-color: var(--lagoon); }
   border: 0; background: var(--group); font-size: 15px; font-weight: 500; cursor: pointer;
 }
 .chip i { width: 9px; height: 9px; border-radius: 3px; }
+.chips.small { margin-top: 2px; }
+.chips.small .chip { padding: 6px 12px; font-size: 14px; }
+.field label { color: inherit; }
+.card-list-icon {
+  display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px;
+  background: var(--group-press); color: var(--slate);
+}
+.card-list-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.cat-list li.card-row { grid-template-columns: 28px minmax(0, 1fr) auto 64px; }
+.cat-list .name small { display: block; color: var(--slate); font-size: 13px; }
+.cat-list li.card-row.unset .name { color: var(--slate); }
 .chip[aria-pressed="true"] { background: var(--ink); color: var(--mist); }
 
 code {

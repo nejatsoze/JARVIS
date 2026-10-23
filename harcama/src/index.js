@@ -17,6 +17,7 @@ const MAX_BODY_BYTES = 10_000;
 // Kestirme aynı ödeme için iki kez çalışırsa (ya da yeniden denenirse) çift kayıt olmasın.
 const DEDUPE_WINDOW_MS = 90_000;
 const HISTORY_MONTHS = 6;
+const RECENT_CARDS_LIMIT = 8;
 // Ücretsiz kaynaklar günde birkaç kez güncelleniyor; saatlik önbellek yeterli ve kotayı korur.
 const FX_TTL_MS = 60 * 60 * 1000;
 const FX_TIMEOUT_MS = 4000;
@@ -381,7 +382,7 @@ async function summary(env, url) {
   const settings = await getSettings(env);
   const currency = displayCurrency(url, settings);
 
-  const [byCategory, byDay, history, fx] = await Promise.all([
+  const [byCategory, byDay, history, byCard, recentCards, fx] = await Promise.all([
     env.DB.prepare(
       `SELECT category, currency, COALESCE(SUM(amount_minor), 0) AS total_minor, COUNT(*) AS count,
               SUM(amount_minor IS NULL) AS missing
@@ -398,6 +399,16 @@ async function summary(env, url) {
        FROM transactions WHERE local_date BETWEEN ?1 AND ?2
        GROUP BY month, currency`,
     ).bind(`${months[0]}-01`, to).all(),
+    env.DB.prepare(
+      `SELECT card, currency, COALESCE(SUM(amount_minor), 0) AS total_minor, COUNT(*) AS count
+       FROM transactions WHERE local_date BETWEEN ?1 AND ?2
+       GROUP BY card, currency`,
+    ).bind(from, to).all(),
+    // Formdaki hızlı seçim için: tüm zamanlarda en son kullanılan ödeme yöntemleri.
+    env.DB.prepare(
+      `SELECT card FROM transactions WHERE card IS NOT NULL
+       GROUP BY card ORDER BY MAX(occurred_at) DESC LIMIT ?1`,
+    ).bind(RECENT_CARDS_LIMIT).all(),
     getRates(env),
   ]);
 
@@ -426,6 +437,13 @@ async function summary(env, url) {
   }
   const days = new Map();
   for (const r of byDay.results) sumInto(days, r.date, convert(r.total_minor, r.currency, false));
+  const cards = new Map();
+  for (const r of byCard.results) {
+    const entry = cards.get(r.card) || { card: r.card, total_minor: 0, count: 0 };
+    entry.total_minor += convert(r.total_minor, r.currency, false);
+    entry.count += r.count;
+    cards.set(r.card, entry);
+  }
   const monthTotals = new Map();
   for (const r of history.results) sumInto(monthTotals, r.month, convert(r.total_minor, r.currency, false));
 
@@ -441,6 +459,8 @@ async function summary(env, url) {
       : convertMinor(settings.monthly_budget_minor, settings.budget_currency, currency, fx?.rates),
     budget_currency: settings.budget_currency,
     by_category: [...categories.values()].sort((a, b) => b.total_minor - a.total_minor),
+    by_card: [...cards.values()].sort((a, b) => b.total_minor - a.total_minor),
+    recent_cards: recentCards.results.map((r) => r.card),
     by_day: [...days].sort(([a], [b]) => a.localeCompare(b)).map(([date, total_minor]) => ({ date, total_minor })),
     history: months.map((m) => ({ month: m, total_minor: monthTotals.get(m) || 0 })),
     unconverted: [...unconverted].map(([code, total_minor]) => ({ currency: code, total_minor })),
