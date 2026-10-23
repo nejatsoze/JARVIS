@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dekont Aktar — Slack'ten Megapay / Hemen Pay Telegram grubuna
 // @namespace    palentis.dekont-aktar
-// @version      2.3.1
+// @version      2.3.2
 // @description  C08TKRJQ96G kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesajın altına YALNIZ SENİN TARAYICINDA görünen bir kart çizer (Slack'e cevap gönderilmez): oyuncu bilgileri (Party ID, ad soyad), [Megapay] [Hemen Pay], [Altyapıda Sorgula] (yatırımı seç → açık Pingwi sekmesinden işlem bulunur → Transaction check formu dekont dahil kendiliğinden dolar), [📋 Kopyala] (Telegram Web'de tek Ctrl+V ile görsel + açıklama), [TALEP] [ONAY] (thread'e gerçek mesaj). Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir. Telegram'da Megapay / Hemen Pay sohbetlerinde yazma kutusunun üstünde "Talep" butonu ("Talep kt lütfen" gönderir).
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -47,6 +47,7 @@ const CONFIG = {
     ],
     ALTYAPI_CHANNEL: 'C07MNHZ1KDM',                      // "Altyapıda Sorgula": Transaction check iş akışının kanalı
     WORKFLOW_URL: 'https://slack.com/shortcuts/Ft0B25CC7A4R/03cdfbfc53b717e48f71117346f043f7',                                    // Transaction check iş akışı. Tarayıcıda açılamıyor: bu link ekranda (kanal yer imi / mesaj) görünüyorsa ona basılır, yoksa form elle açılır — her iki durumda da kendiliğinden dolar
+    WORKFLOW_NAME: 'Zumabet transaction check request', // kanalın Workflows sekmesindeki adı (oradaki ▷ ile başlatılır)
     PINGWI_API: 'https://pingwi-admin.safepaymentprocessingservice.com/api/transactions',
     COPY_LABEL: '📋 Kopyala',                            // dekont + oyuncu bilgilerini birlikte panoya alan geniş buton
     EMAIL_RE: /([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/,
@@ -839,16 +840,32 @@ function slackSide() {
         };
         GM_setValue('wfPending', { at: Date.now(), fields, file: e.file || null, pid: e.pid, dep: d.id });
         const pwLine = tx ? `Pingwi: ${esc(tx.amount)} · ${esc(tx.status)}` : `<span class="dk-warn">Pingwi: ${esc(pw ? pw.msg : 'Pingwi sekmesi cevap vermedi')}</span>`;
-        const opened = openWorkflow();
+        const opened = await openWorkflow();
         panel.innerHTML = `<div class="dk-note">✓ ${esc(d.id)} hazır · ${pwLine}<br>${opened ? 'Transaction check formu açılıyor' : 'Transaction check formunu aç'} — alanlar ve dekont kendiliğinden dolacak.</div>`;
         tr(`altyapı formu hazır ${e.pid} / ${d.id}${tx ? '' : ' (Pingwi yok)'}${opened ? ' · form açıldı' : ''}`);
     }
-    /** Slack iş akışı linkini adres çubuğundan açtırmıyor: ekrandaki kendi linkine (kanal yer imi, mesajdaki link) basılır, Slack formu kendisi açar. */
-    function openWorkflow() {
+    /** Slack iş akışı linkini adres çubuğundan açtırmıyor: ekrandaki linkine basılır; yoksa kanalın Workflows sekmesindeki ▷ ile başlatılıp Messages'a dönülür. */
+    async function openWorkflow() {
         const id = CONFIG.WORKFLOW_URL.split('/shortcuts/')[1]?.split('/')[0];
         const a = id && [...document.querySelectorAll('a[href]')].find(x => x.href.includes(`/shortcuts/${id}`) && !x.closest('.dk-card'));
-        if (a) a.click();
-        return !!a;
+        if (a) { a.click(); return true; }
+        const tab = (name) => [...document.querySelectorAll('[role="tab"]')].find(x => (x.textContent || '').trim() === name);
+        const wfTab = tab('Workflows');
+        if (!wfTab) return false;
+        wfTab.click();
+        let run = null;
+        for (let i = 0; i < 25 && !run; i++) {
+            await sleep(200);
+            const title = [...document.querySelectorAll('span, div, a, h3, p')].find(x => !x.children.length && (x.textContent || '').trim() === CONFIG.WORKFLOW_NAME);
+            // satırdaki ilk buton ▷ (⋮ "daha fazla" düğmesi atlanır)
+            for (let n = title?.parentElement, j = 0; n && j < 6 && !run; n = n.parentElement, j++) {
+                run = [...n.querySelectorAll('button')].find(x => !/more|daha|⋮/i.test(`${x.getAttribute('aria-label') || ''} ${x.textContent}`)) || null;
+            }
+        }
+        if (run) run.click();
+        await sleep(1200);
+        tab('Messages')?.click();   // form açık kalır, kanal mesajlara döner
+        return !!run;
     }
 
     /** Slack form alanına değer yaz (React'in fark etmesi için tarayıcının kendi yazma yolu, olmazsa değer + olaylar) */
