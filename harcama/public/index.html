@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Harcama</title>
+  <meta name="theme-color" content="#f4f3ef" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121212" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Harcama">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- Giriş -->
+  <section id="login" class="login" hidden>
+    <div class="login-card">
+      <img src="/icons/icon.svg" alt="" width="64" height="64">
+      <h1>Harcama</h1>
+      <p>Kurulumda belirlediğiniz API anahtarını girin. Bu cihazda saklanır.</p>
+      <form id="login-form">
+        <input id="login-token" type="password" autocomplete="current-password" placeholder="API anahtarı" required>
+        <button type="submit" class="btn primary">Giriş</button>
+        <p id="login-error" class="error" role="alert"></p>
+      </form>
+    </div>
+  </section>
+
+  <!-- Ana ekran -->
+  <main id="app" hidden>
+    <header class="topbar">
+      <button class="icon-btn" id="prev-month" aria-label="Önceki ay">‹</button>
+      <h1 id="month-label">—</h1>
+      <button class="icon-btn" id="next-month" aria-label="Sonraki ay">›</button>
+      <button class="icon-btn settings" id="open-settings" aria-label="Ayarlar">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Zm7.43-2.53c.04-.32.07-.64.07-.97s-.03-.66-.07-1l2.11-1.63a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.61-.22l-2.49 1a7.3 7.3 0 0 0-1.69-.98l-.38-2.65A.49.49 0 0 0 14 2h-4a.49.49 0 0 0-.49.42l-.38 2.65c-.61.25-1.17.58-1.69.98l-2.49-1a.5.5 0 0 0-.61.22l-2 3.46a.49.49 0 0 0 .12.64L4.57 11c-.04.34-.07.67-.07 1s.03.65.07.97l-2.11 1.66a.49.49 0 0 0-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1.01c.52.4 1.08.73 1.69.98l.38 2.65c.04.24.25.42.49.42h4c.24 0 .45-.18.49-.42l.38-2.65c.61-.25 1.17-.58 1.69-.98l2.49 1.01c.22.08.49 0 .61-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.11-1.66Z"/></svg>
+      </button>
+    </header>
+
+    <p id="offline" class="banner" hidden>Bağlantı yok — son yüklenen veriler gösteriliyor.</p>
+
+    <section class="card budget" aria-labelledby="budget-title">
+      <h2 id="budget-title" class="eyebrow">Bu ay harcanan</h2>
+      <p class="big" id="spent">—</p>
+      <div class="progress" id="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+        <div class="progress-fill" id="progress-fill"></div>
+        <div class="progress-pace" id="progress-pace" title="Bugüne kadarki ideal harcama"></div>
+      </div>
+      <div class="budget-meta" id="budget-meta"></div>
+      <button class="link" id="set-budget" hidden>Aylık bütçe belirle →</button>
+    </section>
+
+    <p id="missing" class="banner warn" hidden></p>
+
+    <section class="card" aria-labelledby="trend-title">
+      <h2 id="trend-title" class="eyebrow">Ay içi gidişat</h2>
+      <div id="trend-chart" class="chart"></div>
+      <div class="legend" id="trend-legend"></div>
+    </section>
+
+    <section class="card" aria-labelledby="cat-title">
+      <h2 id="cat-title" class="eyebrow">Kategoriler</h2>
+      <div class="cats">
+        <div id="donut" class="donut"></div>
+        <ul id="cat-list" class="cat-list"></ul>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="hist-title">
+      <h2 id="hist-title" class="eyebrow">Son 6 ay</h2>
+      <div id="history-chart" class="chart"></div>
+    </section>
+
+    <section aria-labelledby="tx-title" class="tx-section">
+      <h2 id="tx-title" class="eyebrow pad">Harcamalar</h2>
+      <div id="tx-list"></div>
+    </section>
+
+    <button class="fab" id="add-tx" aria-label="Harcama ekle">+</button>
+  </main>
+
+  <!-- Harcama ekle/düzenle -->
+  <dialog id="tx-dialog" class="sheet">
+    <form id="tx-form" method="dialog">
+      <header class="sheet-head">
+        <button type="button" class="link" data-close>Vazgeç</button>
+        <h2 id="tx-dialog-title">Harcama</h2>
+        <button type="submit" class="link strong">Kaydet</button>
+      </header>
+      <label>Tutar
+        <input name="amount" inputmode="decimal" placeholder="0,00" autocomplete="off">
+      </label>
+      <label>İşyeri
+        <input name="merchant" required maxlength="120" autocomplete="off">
+      </label>
+      <fieldset>
+        <legend>Kategori</legend>
+        <div class="chips" id="category-chips"></div>
+      </fieldset>
+      <label>Tarih
+        <input name="date" type="datetime-local" required>
+      </label>
+      <label>Not
+        <input name="note" maxlength="280" autocomplete="off">
+      </label>
+      <p class="muted small" id="tx-card"></p>
+      <p class="error" id="tx-error" role="alert"></p>
+      <button type="button" class="btn danger" id="delete-tx" hidden>Harcamayı sil</button>
+    </form>
+  </dialog>
+
+  <!-- Ayarlar -->
+  <dialog id="settings-dialog" class="sheet">
+    <form id="settings-form" method="dialog">
+      <header class="sheet-head">
+        <button type="button" class="link" data-close>Kapat</button>
+        <h2>Ayarlar</h2>
+        <button type="submit" class="link strong">Kaydet</button>
+      </header>
+      <label>Aylık bütçe
+        <input name="budget" inputmode="decimal" placeholder="Ör. 25.000" autocomplete="off">
+      </label>
+      <div class="info">
+        <h3>Kestirme bağlantısı</h3>
+        <p class="small">Kestirmeler’deki “URL’nin İçeriğini Al” eyleminde bu adresi kullanın:</p>
+        <code id="api-url"></code>
+      </div>
+      <p class="error" id="settings-error" role="alert"></p>
+      <button type="button" class="btn" id="logout">Bu cihazdan çıkış yap</button>
+    </form>
+  </dialog>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

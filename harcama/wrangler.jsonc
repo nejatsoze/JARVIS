@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "harcama",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "harcama",
+      // `npx wrangler d1 create harcama` çıktısındaki id ile değiştirin.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "CURRENCY": "TRY",
+    "TIMEZONE": "Europe/Istanbul"
+  },
+  "observability": { "enabled": true }
+  // API_TOKEN gizli değişkendir: `npx wrangler secret put API_TOKEN`
+}
