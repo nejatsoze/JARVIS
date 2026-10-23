@@ -32,6 +32,9 @@
   --text: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   --r-group: 22px;
   --r-control: 999px;
+  /* Çentik/durum çubuğu boşlukları; testte simüle edilebilsin diye değişkende. */
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
   color-scheme: light;
 }
 
@@ -85,14 +88,27 @@ body {
 .aurora {
   position: fixed; inset: -20vh -20vw; z-index: -1; pointer-events: none;
   background:
-    radial-gradient(38vmax 30vmax at 18% 8%, var(--aurora-a), transparent 70%),
-    radial-gradient(34vmax 28vmax at 92% 22%, var(--aurora-b), transparent 70%),
+    radial-gradient(38vmax 30vmax at 18% 34%, var(--aurora-a), transparent 70%),
+    radial-gradient(34vmax 28vmax at 92% 42%, var(--aurora-b), transparent 70%),
     radial-gradient(30vmax 24vmax at 50% 108%, var(--aurora-c), transparent 70%);
+}
+
+/* Durum çubuğu zemini: kayan içerik saatin altına bulanık değil, net bir geçişle girer. */
+.status-edge {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 9; pointer-events: none;
+  height: calc(var(--sat) + 72px);
+  background: linear-gradient(
+    to bottom,
+    var(--mist) 0,
+    var(--mist) var(--sat),
+    color-mix(in srgb, var(--mist) 88%, transparent) calc(var(--sat) + 28px),
+    color-mix(in srgb, var(--mist) 0%, transparent) 100%
+  );
 }
 
 main {
   max-width: 560px; margin: 0 auto;
-  padding: calc(env(safe-area-inset-top) + 8px) 16px calc(env(safe-area-inset-bottom) + 112px);
+  padding: calc(var(--sat) + 8px) 16px calc(var(--sab) + 112px);
 }
 
 button { font: inherit; color: inherit; }
@@ -119,7 +135,7 @@ button { font: inherit; color: inherit; }
 /* ---------- Üst çubuk ---------- */
 
 .topbar {
-  position: sticky; top: calc(env(safe-area-inset-top) + 8px); z-index: 10;
+  position: sticky; top: calc(var(--sat) + 8px); z-index: 10;
   display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
 }
 .month-switch {
@@ -252,7 +268,7 @@ button { font: inherit; color: inherit; }
 /* ---------- Alt dok ---------- */
 
 .dock {
-  position: fixed; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom) + 16px); z-index: 10;
+  position: fixed; left: 0; right: 0; bottom: calc(var(--sab) + 16px); z-index: 10;
   display: flex; justify-content: center; pointer-events: none;
 }
 .dock-btn {
@@ -278,7 +294,7 @@ button { font: inherit; color: inherit; }
   .sheet[open] { animation: rise 0.32s cubic-bezier(0.2, 0.9, 0.25, 1); }
   @keyframes rise { from { transform: translateY(60px); opacity: 0.4; } }
 }
-.sheet-body { display: grid; gap: 16px; padding: 8px 16px calc(env(safe-area-inset-bottom) + 24px); }
+.sheet-body { display: grid; gap: 16px; padding: 8px 16px calc(var(--sab) + 24px); }
 .sheet-body::before {
   content: ""; justify-self: center; width: 36px; height: 5px; border-radius: 3px; background: var(--slate); opacity: 0.35;
 }
@@ -368,3 +384,44 @@ code {
   .stats dd { font-size: 16px; }
   .currency-btn { padding: 0 12px 0 10px; }
 }
+
+/* ---------- Ayarlar ---------- */
+
+.set-group { display: grid; gap: 8px; }
+.set-title { margin: 4px 0 0 16px; font-size: 14px; font-weight: 600; color: var(--slate); }
+.set-card { border-radius: var(--r-group); background: var(--group); overflow: hidden; }
+.set-row {
+  display: grid; grid-template-columns: 32px minmax(0, 1fr) auto auto; gap: 12px; align-items: center;
+  width: 100%; min-height: 56px; padding: 10px 16px; border: 0; background: none; text-align: left;
+  font-size: 17px; cursor: default;
+}
+button.set-row { cursor: pointer; }
+button.set-row:active { background: var(--group-press); }
+.set-row + .set-row { box-shadow: inset 60px 0 0 -60px transparent, inset 0 0.5px 0 var(--hairline); }
+.set-icon {
+  display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px;
+  background: var(--tint); color: #fff;
+}
+.set-icon svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+@media (prefers-color-scheme: dark) { .set-icon { color: #07111d; } }
+.set-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-value { color: var(--slate); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.set-row .chev { width: 18px; height: 18px; fill: none; stroke: var(--slate); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; opacity: 0.6; }
+.set-row.danger .set-label { color: var(--coral); font-weight: 500; }
+.set-row.stacked { grid-template-columns: 32px minmax(0, 1fr) auto; }
+.set-row.stacked code { grid-column: 2 / -1; margin: 0; padding: 10px 12px; background: var(--group-press); }
+.set-input { display: flex; align-items: baseline; gap: 6px; }
+.set-input input {
+  width: 9ch; padding: 0; border: 0; background: none; text-align: right;
+  font: 600 19px var(--round); font-variant-numeric: tabular-nums;
+}
+.set-input input:focus { border: 0; }
+.set-input input::placeholder { color: var(--slate); font-weight: 400; }
+#budget-currency { color: var(--slate); font: 600 15px var(--round); }
+.set-foot { margin: 0 16px; color: var(--slate); font-size: 13px; line-height: 1.4; }
+.set-foot:empty { display: none; }
+.pill-btn {
+  padding: 7px 14px; border: 0; border-radius: var(--r-control); cursor: pointer;
+  background: color-mix(in srgb, var(--lagoon) 16%, transparent); color: var(--lagoon); font-size: 15px; font-weight: 600;
+}
+.pill-btn.done { background: var(--lagoon); color: #fff; }

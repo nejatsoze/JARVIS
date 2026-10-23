@@ -82,8 +82,8 @@ function timeLabel(iso) {
 
 function minorToInput(minor) {
   if (minor === null || minor === undefined) return '';
-  const value = minor / 100;
-  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace('.', ',');
+  // "11.671" / "1.234,5" biçimi; sunucu bu ayraçları doğru okur.
+  return new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 2 }).format(minor / 100);
 }
 
 function toLocalInput(iso) {
@@ -373,10 +373,7 @@ function openCurrency() {
       <svg class="check" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
     </button></li>`)
     .join('');
-  const fx = state.summary?.fx;
-  $('fx-info').textContent = fx
-    ? `Kurlar ${new Intl.DateTimeFormat('tr-TR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }).format(new Date(fx.as_of))} itibarıyla, kaynak ${fx.source}.`
-    : 'Kurlar henüz alınamadı.';
+  $('fx-info').textContent = fxLine();
   $('currency-dialog').showModal();
 }
 
@@ -456,13 +453,50 @@ async function deleteTx() {
   }
 }
 
+function fxLine() {
+  const fx = state.summary?.fx;
+  if (!fx) return 'Kurlar henüz alınamadı.';
+  const when = new Intl.DateTimeFormat('tr-TR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }).format(new Date(fx.as_of));
+  return `Kurlar ${when} itibarıyla, kaynak ${fx.source}.${fx.stale ? ' Kur servisine şu an ulaşılamıyor.' : ''}`;
+}
+
+function lastShortcutLabel() {
+  const last = state.transactions
+    .filter((t) => t.source === 'shortcut')
+    .reduce((a, t) => (!a || t.created_at > a ? t.created_at : a), null);
+  if (!last) return 'Bu ay yok';
+  const day = dayLabel(toLocalInput(last).slice(0, 10));
+  const short = day === 'Bugün' || day === 'Dün' ? day : day.split(' ').slice(0, 2).join(' ');
+  return `${short} ${timeLabel(last)}`;
+}
+
 function openSettings() {
   const form = $('settings-form');
+  const meta = CURRENCIES[state.currency] || { flag: '' };
   $('api-url').textContent = `${location.origin}/api/transactions`;
   $('budget-currency').textContent = state.currency;
+  $('settings-currency-value').textContent = `${meta.flag} ${state.currency}`;
+  $('settings-fx').textContent = fxLine();
+  $('last-shortcut').textContent = lastShortcutLabel();
   $('settings-error').textContent = '';
+  $('copy-url').textContent = 'Kopyala';
+  $('copy-url').classList.remove('done');
   form.budget.value = state.summary?.budget_minor ? minorToInput(Math.round(state.summary.budget_minor / 100) * 100) : '';
   $('settings-dialog').showModal();
+}
+
+async function copyUrl() {
+  const btn = $('copy-url');
+  try {
+    await navigator.clipboard.writeText($('api-url').textContent);
+    btn.textContent = 'Kopyalandı';
+    btn.classList.add('done');
+  } catch {
+    // Pano izni yoksa metni seçili bırak, kullanıcı elle kopyalasın.
+    getSelection().selectAllChildren($('api-url'));
+    btn.textContent = 'Seçildi';
+  }
+  setTimeout(() => { btn.textContent = 'Kopyala'; btn.classList.remove('done'); }, 1800);
 }
 
 async function saveSettings(event) {
@@ -507,6 +541,8 @@ $('tx-form').addEventListener('submit', saveTx);
 $('delete-tx').addEventListener('click', deleteTx);
 $('open-settings').addEventListener('click', openSettings);
 $('set-budget').addEventListener('click', openSettings);
+$('copy-url').addEventListener('click', copyUrl);
+$('settings-currency').addEventListener('click', () => { $('settings-dialog').close(); openCurrency(); });
 $('settings-form').addEventListener('submit', saveSettings);
 $('logout').addEventListener('click', () => {
   storage((s) => {
