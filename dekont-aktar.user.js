@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dekont Aktar — Slack'ten Megapay / Hemen Pay Telegram grubuna
 // @namespace    palentis.dekont-aktar
-// @version      2.3.2
+// @version      2.3.3
 // @description  C08TKRJQ96G kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesajın altına YALNIZ SENİN TARAYICINDA görünen bir kart çizer (Slack'e cevap gönderilmez): oyuncu bilgileri (Party ID, ad soyad), [Megapay] [Hemen Pay], [Altyapıda Sorgula] (yatırımı seç → açık Pingwi sekmesinden işlem bulunur → Transaction check formu dekont dahil kendiliğinden dolar), [📋 Kopyala] (Telegram Web'de tek Ctrl+V ile görsel + açıklama), [TALEP] [ONAY] (thread'e gerçek mesaj). Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir. Telegram'da Megapay / Hemen Pay sohbetlerinde yazma kutusunun üstünde "Talep" butonu ("Talep kt lütfen" gönderir).
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
@@ -893,17 +893,46 @@ function slackSide() {
         }
         return null;
     }
+    /** Dekontu formun dosya alanına koy. Slack dosya kutusunu çoğu zaman "Upload File"a basınca yaratır:
+     *  o anda açılacak dosya seçici penceresi engellenir, dosya doğrudan o kutuya verilir. */
     async function attachFile(modal, file) {
-        const input = modal.querySelector('input[type=file]');
-        if (!input || !file?.url) return false;
+        if (!file?.url) throw new Error('kartta dekont yok');
         const blob = await fetchBlob(file.url);
         const P = W, pg = (o) => (typeof cloneInto === 'function' ? cloneInto(o, P, { wrapReflectors: true }) : o);
         const u8 = new Uint8Array(await blob.arrayBuffer());
         const f = new P.File(pg([u8]), file.name || 'dekont.jpg', pg({ type: blob.type || file.type || 'image/jpeg' }));
-        const dt = new P.DataTransfer(); dt.items.add(f);
-        (input.wrappedJSObject || input).files = dt.files;
-        input.dispatchEvent(new (P.Event)('change', pg({ bubbles: true })));
-        return true;
+        const put = (input) => {
+            const dt = new P.DataTransfer(); dt.items.add(f);
+            (input.wrappedJSObject || input).files = dt.files;
+            input.dispatchEvent(new (P.Event)('input', pg({ bubbles: true })));
+            input.dispatchEvent(new (P.Event)('change', pg({ bubbles: true })));
+        };
+        const ready = modal.querySelector('input[type=file]');
+        if (ready) { put(ready); return 'kutu'; }
+        const btn = [...modal.querySelectorAll('button, [role="button"], label')].find(x => /upload file|dosya yükle|add file|dosya ekle/i.test((x.textContent || '').trim()));
+        if (!btn) throw new Error('formda Upload File butonu bulunamadı');
+        const proto = P.HTMLInputElement.prototype, origClick = proto.click, origPicker = proto.showPicker;
+        return new Promise((resolve, reject) => {
+            let done = false;
+            const finish = (input, how) => {
+                if (done) return; done = true; restore();
+                try { put(input); resolve(how); } catch (err) { reject(err); }
+            };
+            const onClick = (ev) => { const t = ev.target; if (t && t.type === 'file') { ev.preventDefault(); finish(t, 'tık'); } };
+            const wrap = (fn) => (typeof exportFunction === 'function' ? exportFunction(fn, P) : fn);
+            function restore() { proto.click = origClick; if (origPicker) proto.showPicker = origPicker; document.removeEventListener('click', onClick, true); clearTimeout(timer); }
+            proto.click = wrap(function () { if (this.type === 'file') return finish(this, 'seçici'); return origClick.call(this); });
+            if (origPicker) proto.showPicker = wrap(function () { if (this.type === 'file') return finish(this, 'seçici'); return origPicker.call(this); });
+            document.addEventListener('click', onClick, true);
+            const timer = setTimeout(() => { if (!done) { done = true; restore(); reject(new Error('dosya kutusu açılmadı')); } }, 5000);
+            btn.click();
+            // Bazı sürümlerde önce "bilgisayarından yükle" menüsü çıkar
+            setTimeout(() => {
+                if (done) return;
+                const it = [...document.querySelectorAll('[role="menuitem"], [role="option"], button')].find(x => /computer|bilgisayar/i.test(x.textContent || ''));
+                it?.click();
+            }, 400);
+        });
     }
     let filling = false;
     async function autofillWorkflow() {
@@ -924,11 +953,11 @@ function slackSide() {
                 await setField(el, String(value)); n++;
                 await sleep(150);
             }
-            let fileOk = false;
-            try { fileOk = await attachFile(modal, pend.file); } catch (err) { warn('dekont eklenemedi:', err.message); }
+            let fileOk = false, why = '';
+            try { fileOk = !!(await attachFile(modal, pend.file)); } catch (err) { why = err.message; warn('dekont eklenemedi:', why); }
             GM_deleteValue('wfPending');
-            tr(`form dolduruldu: ${n} alan${fileOk ? ' + dekont' : pend.file ? ' (dekont eklenemedi)' : ''}`);
-            toast(`✓ Transaction check: ${n} alan dolduruldu${fileOk ? ', dekont eklendi' : pend.file ? ' — dekontu elle ekleyin' : ''}`, fileOk || !pend.file);
+            tr(`form dolduruldu: ${n} alan${fileOk ? ' + dekont' : pend.file ? ` (dekont eklenemedi: ${why})` : ''}`);
+            toast(`✓ Transaction check: ${n} alan dolduruldu${fileOk ? ', dekont eklendi' : pend.file ? ` — dekontu elle ekleyin (${why})` : ''}`, fileOk || !pend.file);
         } finally { filling = false; }
     }
 
