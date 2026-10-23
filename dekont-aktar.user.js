@@ -46,7 +46,7 @@ const CONFIG = {
         { id: 'hemenpay', label: 'Hemen Pay', url: 'https://web.telegram.org/k/#-4487917824', hash: '#-4487917824' },
     ],
     ALTYAPI_CHANNEL: 'C07MNHZ1KDM',                      // "Altyapıda Sorgula": Transaction check iş akışının kanalı
-    WORKFLOW_URL: '',                                    // Transaction check iş akışının linki (boşsa form elle açılır, yine otomatik dolar)
+    WORKFLOW_URL: 'https://slack.com/shortcuts/Ft0B25CC7A4R/03cdfbfc53b717e48f71117346f043f7',                                    // Transaction check iş akışının linki (boşsa form elle açılır, yine otomatik dolar)
     PINGWI_API: 'https://pingwi-admin.safepaymentprocessingservice.com/api/transactions',
     COPY_LABEL: '📋 Kopyala',                            // dekont + oyuncu bilgilerini birlikte panoya alan geniş buton
     EMAIL_RE: /([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/,
@@ -829,7 +829,7 @@ function slackSide() {
         const pw = await ask('pwReq', 'pwRes', { ref: d.id });
         const tx = pw?.ok ? pw.tx : null;
         const fields = {
-            'Client ID': tx?.clientId || e.pid,
+            'Client ID': e.pid,   // Merchant Client ID = Party ID
             'Merchant order ID': d.id,
             'Pingwi transaction ID': tx?.uuid || '',
             'Date of the transaction': tx?.created || d.atStr || whenFmt(d.at),
@@ -839,7 +839,7 @@ function slackSide() {
         };
         GM_setValue('wfPending', { at: Date.now(), fields, file: e.file || null, pid: e.pid, dep: d.id });
         const pwLine = tx ? `Pingwi: ${esc(tx.amount)} · ${esc(tx.status)}` : `<span class="dk-warn">Pingwi: ${esc(pw ? pw.msg : 'Pingwi sekmesi cevap vermedi')}</span>`;
-        panel.innerHTML = `<div class="dk-note">✓ ${esc(d.id)} hazır · ${pwLine}<br>Transaction check formunu aç — alanlar ve dekont kendiliğinden dolacak.</div>`;
+        panel.innerHTML = `<div class="dk-note">✓ ${esc(d.id)} hazır · ${pwLine}<br>${CONFIG.WORKFLOW_URL ? 'Transaction check formu açılıyor' : 'Transaction check formunu aç'} — alanlar ve dekont kendiliğinden dolacak.</div>`;
         tr(`altyapı formu hazır ${e.pid} / ${d.id}${tx ? '' : ' (Pingwi yok)'}`);
         if (CONFIG.WORKFLOW_URL) W.open(CONFIG.WORKFLOW_URL, '_self');
     }
