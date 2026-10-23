@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         GamingTec — AI ÖZET (Yüksek Oranlı Kazanç Dedektörü + Genel Özet)
 // @namespace    gamingtec-ai-ozet
-// @version      6.8.0
-// @description  Aynı Game Tran ID'ye ait BET/WIN/iptal hareketlerini tek turda birleştirir, Win/Bet oranı eşiği aşan turları canlı filtrelenebilir bir panelde gösterir. Sayfalar arası biriktirme, sanal liste, CSV dışa aktarma. Paylaşımlı GT.observe() bus'ına (varsa) abone olarak SPA navigasyonunda güvenilir şekilde yeniden bağlanır. "Genel Özet": en sık oyun, toplam çevrim (vurgulu), toplam kazanç, net; eşi olmayan (bahissiz) kazanç varsa tam genişlikte nabız gibi vuran bir uyarı. "Şüpheli turlar": en yüksek oran ve en sık oyun. AI ÖZET butonu "Show Loyalty" yanına yerleşir, mor geçişli; açıldığında sayfadaki "Go" butonuna otomatik tıklayıp taze veri ister, her "Go" aramasında önceki oturumdan kalan veri temizlenir. Panel sağa sabitlenmiş, tam yükseklikte dar bir sidebar.
+// @version      6.9.0
+// @description  Aynı Game Tran ID'ye ait BET/WIN/iptal hareketlerini tek turda birleştirir, Win/Bet oranı eşiği aşan turları canlı filtrelenebilir bir panelde gösterir. Sayfalar arası biriktirme, sanal liste, CSV dışa aktarma. Paylaşımlı GT.observe() bus'ına (varsa) abone olarak SPA navigasyonunda güvenilir şekilde yeniden bağlanır. "Genel Özet": en sık oyun, toplam çevrim (vurgulu), toplam kazanç, net; eşi olmayan (bahissiz) kazanç varsa tam genişlikte nabız gibi vuran bir uyarı. "Şüpheli turlar": en yüksek oran ve en sık oyun. Buton GT Transactions'ın aşama grubunda "2. Aşama" adıyla 1. Aşama'nın sağında durur (GT Transactions yoksa "Show Loyalty" yanında mor geçişli AI ÖZET); açıldığında sayfadaki "Go" butonuna otomatik tıklayıp taze veri ister, her "Go" aramasında önceki oturumdan kalan veri temizlenir. Panel sağa sabitlenmiş, tam yükseklikte dar bir sidebar.
 // @author       —
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
@@ -15,7 +15,7 @@
   // ============================================================
   // 0. SABİTLER
   // ============================================================
-  const VERSION = '6.8.0';
+  const VERSION = '6.9.0';
   const PREFIX = '[AI ÖZET]';
   const EVENT_NAME = '__gtAiOzetResponse';
   const TARGETS = ['/ics/player-transactions/page'];
@@ -613,7 +613,7 @@
 
   /* ---------- FAB ("Show Loyalty" yanına yerleşen, mor geçişli AI butonu) ---------- */
   @keyframes gtzGradientShift { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
-  #gtz-fab {
+  #gtz-fab:not(.gt-btn) {
     position: relative; display: inline-flex; align-items: center; gap: 8px;
     margin-left: 10px; vertical-align: middle;
     padding: 10px 22px; border: 0; border-radius: 999px;
@@ -625,8 +625,8 @@
     transition: filter .15s ease, transform .15s ease, box-shadow .15s ease;
     animation: gtzGradientShift 6s ease infinite;
   }
-  #gtz-fab:hover { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 7px 22px rgba(168,85,247,.6), 0 0 0 1px rgba(255,255,255,.14) inset; }
-  #gtz-fab:active { transform: translateY(0); }
+  #gtz-fab:not(.gt-btn):hover { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 7px 22px rgba(168,85,247,.6), 0 0 0 1px rgba(255,255,255,.14) inset; }
+  #gtz-fab:not(.gt-btn):active { transform: translateY(0); }
   #gtz-fab .gtz-emoji { font-size: 16px; filter: drop-shadow(0 0 5px rgba(255,255,255,.65)); }
   #gtz-fab .gtz-badge {
     position: absolute; top: -8px; right: -8px; min-width: 20px; height: 20px; padding: 0 6px;
@@ -635,6 +635,9 @@
     box-shadow: 0 0 0 2px #fff;
   }
   #gtz-fab.gtz-hot .gtz-badge { animation: gtzPulse 1.9s infinite; }
+  /* Aşama grubundaki sade buton: sayı butonun içinde küçük kırmızı hap */
+  #gtz-fab.gt-btn .gtz-n { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 5px;
+    border-radius: 999px; background: #e5484d; color: #fff; font-size: 10.5px; font-weight: 700; line-height: 1; }
 
   /* ---------- Panel ---------- */
   #gtz-panel {
@@ -948,8 +951,27 @@
     return label.closest('div');
   }
 
+  /** GT Transactions'ın aşama adacığı (1. Aşama · 3. Aşama · CRE) — varsa buton onun içine, 1. Aşama'nın sağına girer. */
+  const stageGroup = () => document.getElementById('gt-asama-buttons');
+
   function mountFab() {
     if (ui.fab) return;
+    const group = stageGroup();
+    if (group && group.firstElementChild) {
+      mountStyles();
+      const fab = document.createElement('button');
+      fab.type = 'button';
+      fab.id = 'gtz-fab';
+      fab.className = 'gt-btn gt-btn--sm';
+      fab.title = 'AI ÖZET (Alt+A) — yüksek oranlı kazanç tespiti';
+      fab.innerHTML = '<span>2. Aşama</span>';
+      fab.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); togglePanel(); });
+      group.firstElementChild.insertAdjacentElement('afterend', fab);
+      ui.fab = fab;
+      syncFab();
+      log(`v${VERSION} hazır — aşama grubunda "2. Aşama" olarak yerleşti.`);
+      return;
+    }
     const anchor = findAnchorContainer();
     if (!anchor || !anchor.parentElement) return; // henüz DOM'da değil — sonraki taramada tekrar denenecek
     mountStyles();
@@ -967,11 +989,12 @@
   function syncFab() {
     if (!ui.fab) return;
     const count = store.result ? store.result.flagged.length : 0;
-    let badge = ui.fab.querySelector('.gtz-badge');
+    const cls = ui.fab.classList.contains('gt-btn') ? 'gtz-n' : 'gtz-badge';
+    let badge = ui.fab.querySelector('.' + cls);
     if (count > 0) {
       if (!badge) {
         badge = document.createElement('span');
-        badge.className = 'gtz-badge';
+        badge.className = cls;
         ui.fab.appendChild(badge);
       }
       badge.textContent = count > 99 ? '99+' : String(count);
@@ -1360,7 +1383,10 @@
 
   function ensureMounted() {
     if (!document.body) return;
-    if (!document.getElementById('gtz-fab')) {
+    const fab = document.getElementById('gtz-fab');
+    // Aşama adacığı sonradan geldiyse mor buton kalkar, buton adacığa taşınır
+    if (fab && !fab.classList.contains('gt-btn') && stageGroup()) fab.remove();
+    if (!fab || !fab.isConnected || (!fab.classList.contains('gt-btn') && stageGroup())) {
       // Eski referans artık DOM'da yok; mountFab'ın yeniden oluşturmasına izin ver.
       ui.fab = null;
       mountFab();

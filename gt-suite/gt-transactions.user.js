@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         GT Transactions — işlem geçmişi
 // @namespace    palentis.gt
-// @version      1.1.6
-// @description  Transaction History sayfası: 1. Aşama / 2. Aşama / CRE filtre otomasyonu (Alt+X / Alt+D / Alt+C), "Show Transactions From" yanına bir gün geri (<<) butonu, listenin başı/sonu arasında gidip gelen kaydırma butonu ve CRE'nin yanında Ratio Checker (sabit oran eşiği + GT Sports/Betby oran rozetleri). GT Core üzerine kurulur.
+// @version      1.1.7
+// @description  Transaction History sayfası: 1. Aşama / 3. Aşama / CRE filtre otomasyonu (Alt+X / Alt+D / Alt+C; arada AI ÖZET script'inin 2. Aşama butonu), "Show Transactions From" yanına bir gün geri (<<) butonu, listenin başı/sonu arasında gidip gelen kaydırma butonu ve CRE'nin yanında Ratio Checker (sabit oran eşiği + GT Sports/Betby oran rozetleri). GT Core üzerine kurulur.
 // @match        https://core-secundus.gmntc.com/*
 // @grant        none
 // @run-at       document-idle
@@ -145,8 +145,8 @@ function autoFill(keyword, tag) {
     }, 500);
 }
 
-const stage2 = () => setTimeout(() => autoFill('DEPOSIT', '2. Aşama'), 1000);
-const stageCre = () => setTimeout(() => autoFill('CRE_BONUS', '3. Aşama (CRE)'), 1000);
+const stage2 = () => setTimeout(() => autoFill('DEPOSIT', '3. Aşama'), 1000);
+const stageCre = () => setTimeout(() => autoFill('CRE_BONUS', 'CRE'), 1000);
 
 /* ════════════════════════════════════════════════════════════
    << — "From" tarihini bir gün geri al
@@ -248,7 +248,7 @@ GT.define({
             return loyalty ? (loyalty.closest('div[style*="inline-block"]') || loyalty.parentElement) : null;
         }, 'gt-asama-buttons', () => h('span', { class: 'gt-group' },
             ui.button({ label: '1. Aşama', small: true, key: 'alt+x', onClick: stage1 }),
-            ui.button({ label: '2. Aşama', small: true, key: 'alt+d', onClick: stage2 }),
+            ui.button({ label: '3. Aşama', small: true, key: 'alt+d', onClick: stage2 }),   // 2. Aşama: AI ÖZET script'i 1. Aşama'nın sağına koyar
             ui.button({ label: 'CRE', small: true, key: 'alt+c', id: 'gt-cre-btn', onClick: stageCre })), 'after');
 
         ctx.mount(() => label('Show Transactions From'), 'gt-prev-day-button', () =>
