@@ -4,8 +4,9 @@ Oyuncu işlem (transactions) ekranındaki ağ trafiğini dinleyip, aynı **Game 
 ait tüm hareketleri tek bir "tur" altında toplayan ve `Win / Bet` oranı eşiği aşan
 turları canlı filtrelenebilir bir panelde gösteren userscript.
 
-**Kurulum:** Tampermonkey / Violentmonkey'e `gamingtec-ai-ozet.user.js` dosyasını ekleyin.
-Sayfa açıldığında sağ altta **🤖 AI ÖZET** düğmesi belirir (`Alt+A` ile de açılır/kapanır).
+**Kurulum:** AI ÖZET artık ayrı bir script değil, `gt-suite/gt-transactions.user.js` içinde.
+Transactions sayfasındaki aşama adacığında **2. Aşama** butonu olarak durur (`Alt+A` ile de açılır/kapanır).
+Eski ayrı `gamingtec-ai-ozet.user.js` Tampermonkey'den silinmeli.
 
 ---
 
