@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         Dekont Aktar — Slack'ten Megapay / Hemen Pay Telegram grubuna
 // @namespace    palentis.dekont-aktar
-// @version      2.2.0
-// @description  C08TKRJQ96G kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesajın altına YALNIZ SENİN TARAYICINDA görünen bir kart çizer (Slack'e cevap gönderilmez): oyuncu bilgileri (Party ID, ad soyad), [Megapay] [Hemen Pay], [Altyapıda Sorgula] (C07MNHZ1KDM'ye dekont + bilgiler), [📋 Kopyala] (Telegram Web'de tek Ctrl+V ile görsel + açıklama), [TALEP] [ONAY] (thread'e gerçek mesaj). Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir. Telegram'da Megapay / Hemen Pay sohbetlerinde yazma kutusunun üstünde "Talep" butonu ("Talep kt lütfen" gönderir).
+// @version      2.3.0
+// @description  C08TKRJQ96G kanalında bir mesajda mail adresi ya da başına tırnak konmuş kullanıcı adı ("Ahmetokatan) geçince o mesajın altına YALNIZ SENİN TARAYICINDA görünen bir kart çizer (Slack'e cevap gönderilmez): oyuncu bilgileri (Party ID, ad soyad), [Megapay] [Hemen Pay], [Altyapıda Sorgula] (yatırımı seç → açık Pingwi sekmesinden işlem bulunur → Transaction check formu dekont dahil kendiliğinden dolar), [📋 Kopyala] (Telegram Web'de tek Ctrl+V ile görsel + açıklama), [TALEP] [ONAY] (thread'e gerçek mesaj). Butona basınca açık Telegram Web sekmesi ilgili gruba geçip dekontu ve oyuncu bilgilerini kendisi gönderir (tek tık). Telegram sekmesi cevap vermezse bilgiler panoya kopyalanır ve uyarı çıkar. Veriyi açık GT sekmesi okur, Slack sekmesi gönderir. Telegram'da Megapay / Hemen Pay sohbetlerinde yazma kutusunun üstünde "Talep" butonu ("Talep kt lütfen" gönderir).
 // @match        https://core-secundus.gmntc.com/*
 // @match        https://app.slack.com/*
 // @match        https://web.telegram.org/*
+// @match        https://*.safepaymentprocessingservice.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
@@ -44,7 +45,9 @@ const CONFIG = {
         { id: 'megapay', label: 'Megapay', url: 'https://t.me/c/2515555411/3', hash: '#-2515555411', topic: { id: 3, name: 'Megapay Havale' } },
         { id: 'hemenpay', label: 'Hemen Pay', url: 'https://web.telegram.org/k/#-4487917824', hash: '#-4487917824' },
     ],
-    ALTYAPI_CHANNEL: 'C07MNHZ1KDM',                      // "Altyapıda Sorgula": dekont + bilgiler bu Slack kanalına
+    ALTYAPI_CHANNEL: 'C07MNHZ1KDM',                      // "Altyapıda Sorgula": Transaction check iş akışının kanalı
+    WORKFLOW_URL: '',                                    // Transaction check iş akışının linki (boşsa form elle açılır, yine otomatik dolar)
+    PINGWI_API: 'https://pingwi-admin.safepaymentprocessingservice.com/api/transactions',
     COPY_LABEL: '📋 Kopyala',                            // dekont + oyuncu bilgilerini birlikte panoya alan geniş buton
     EMAIL_RE: /([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/,
     USER_RE: /(?:^|\s)["“”„](?=[A-Za-z0-9_.-]*[A-Za-z])([A-Za-z0-9_.-]{3,40})/,   // "Ahmetokatan → kullanıcı adı (en az bir harf: "100 TL" sayılmaz)
@@ -61,7 +64,35 @@ const tr = (msg) => { try { const t = GM_getValue('trace', []); t.push(`${new Da
 
 if (location.hostname === 'app.slack.com') slackSide();
 else if (location.hostname === 'web.telegram.org') telegramSide();
+else if (/safepaymentprocessingservice\.com$/.test(location.hostname)) pingwiSide();
 else gtSide();
+
+/* ════════════════════════════════════════════════════════════
+   PINGWI TARAFI — CORE TX ID ile Pingwi işlemini bul (Slack'in sorusuna cevap)
+   ════════════════════════════════════════════════════════════ */
+function pingwiSide() {
+    const ME = Math.random().toString(36).slice(2);
+    GM_setValue('pwAlive', { owner: ME, at: Date.now() });
+    GM_addValueChangeListener('pwReq', async (k, o, req) => {
+        if (!req?.id || Date.now() - req.at > 60000) return;
+        const claim = `pwClaim_${req.id}`;   // birden çok Pingwi sekmesi açıksa yalnız biri cevaplar
+        if (GM_getValue(claim, null)) return;
+        GM_setValue(claim, ME); await sleep(200);
+        if (GM_getValue(claim, null) !== ME) return;
+        const done = (v) => { GM_setValue('pwRes', { id: req.id, at: Date.now(), ...v }); GM_deleteValue(claim); };
+        try {
+            const n = Date.now();
+            const url = `${CONFIG.PINGWI_API}?${new URLSearchParams({ filterField: 'referenceNo', filterValue: req.ref, fromDate: String(n - 60 * 864e5), toDate: String(n + 432e5), updatedDate: 'false', page: '1', perPage: '10' })}`;
+            const res = await fetch(url, { credentials: 'include', headers: { Accept: 'application/json' } });
+            if (!res.ok) throw new Error(`Pingwi HTTP ${res.status}${res.status === 401 || res.status === 403 ? ' — Pingwi oturumu düşmüş olabilir' : ''}`);
+            const list = (await res.json())?.transactions?.content || [];
+            const tx = list.find(t => String(t.referenceNumber) === String(req.ref));   // birebir eşleşme şart
+            if (!tx) return done({ ok: false, msg: `Pingwi'de ${req.ref} bulunamadı` });
+            done({ ok: true, tx: { uuid: tx.transactionUUID || '', clientId: tx.client?.merchantClientId || '', amount: tx.amount || '', created: tx.createdDate || '', status: tx.status || '' } });
+        } catch (e) { done({ ok: false, msg: e.message }); }
+    });
+    log('Pingwi köprüsü hazır');
+}
 
 /* ════════════════════════════════════════════════════════════
    GT TARAFI — mail / kullanıcı adı → Party ID + ad soyad
@@ -153,6 +184,24 @@ function gtSide() {
     }
     GM_addValueChangeListener('reqPing', () => work());
     setInterval(work, 5000);
+
+    /* Slack kartı "Altyapıda Sorgula": oyuncunun son yatırımları (Deposits sekmesiyle aynı veri) */
+    GM_addValueChangeListener('depReq', async (k, o, req) => {
+        if (!req?.id || Date.now() - req.at > 60000 || !token()) return;
+        const claim = `depClaim_${req.id}`;
+        if (GM_getValue(claim, null)) return;
+        GM_setValue(claim, ME); await sleep(200);
+        if (GM_getValue(claim, null) !== ME) return;
+        const ymd = (t) => new Date(t).toISOString().slice(0, 10);
+        try {
+            const list = asList(await ics('player-deposit/query', { partyId: req.pid, startDate: ymd(Date.now() - 30 * 864e5), endDate: ymd(Date.now() + 864e5), currency: 'TRY' }))
+                .filter(d => String(d.paymentType || d.type || '').toUpperCase().startsWith('DEP'))
+                .sort((a, b) => (b.requestDate || 0) - (a.requestDate || 0)).slice(0, 8)
+                .map(d => ({ id: String(d.id), amount: Number(d.amount) || 0, method: d.methodName || '', status: d.status || d.paymentStatus || '', at: d.requestDate || 0, atStr: d.requestDateStr || '' }));
+            GM_setValue('depRes', { id: req.id, ok: true, list, at: Date.now() });
+        } catch (e) { GM_setValue('depRes', { id: req.id, ok: false, msg: e.message, at: Date.now() }); }
+        GM_deleteValue(claim);
+    });
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -702,7 +751,16 @@ function slackSide() {
 .dk-card .dk-blue:hover{background:#1570ef;border-color:#1570ef}
 .dk-card .dk-green{background:#12b76a;border-color:#12b76a;color:#fff}
 .dk-card .dk-green:hover{background:#039855;border-color:#039855}
-.dk-card .dk-sep{height:1px;background:#eaecf0;margin:12px 0 4px}`;
+.dk-card .dk-sep{height:1px;background:#eaecf0;margin:12px 0 4px}
+.dk-card .dk-dep{margin-top:8px;padding:8px;background:#f9fafb;border:1px solid #eaecf0;border-radius:10px;display:flex;flex-direction:column;gap:6px}
+.dk-card .dk-note{font-size:12.5px;color:#475467;line-height:1.45}
+.dk-card .dk-dep-item{display:grid;grid-template-columns:auto 1fr auto;grid-template-rows:auto auto;column-gap:10px;align-items:center;text-align:left;
+  padding:7px 10px;border:1px solid #d0d5dd;border-radius:8px;background:#fff;cursor:pointer;font:13px/1.3 Lato,"Segoe UI",sans-serif;color:#344054}
+.dk-card .dk-dep-item:hover{border-color:#2e90fa;background:#f5faff}
+.dk-card .dk-dep-amt{font-weight:800;grid-row:1}
+.dk-card .dk-dep-meta{color:#667085;font-size:12px;grid-row:1}
+.dk-card .dk-dep-st{font-size:11px;font-weight:700;color:#475467;background:#f2f4f7;border-radius:999px;padding:2px 8px;grid-row:1}
+.dk-card .dk-dep-id{grid-column:1 / -1;font:11px ui-monospace,Menlo,monospace;color:#98a2b3}`;
     function ensureCardCss() {
         if (document.getElementById('dk-card-css')) return;
         const st = document.createElement('style');
@@ -734,24 +792,122 @@ function slackSide() {
             onerror: () => reject(new Error('yükleme ağ hatası')), ontimeout: () => reject(new Error('yükleme zaman aşımı')),
         }));
     }
-    /** "Altyapıda Sorgula": dekont + oyuncu bilgileri ALTYAPI_CHANNEL'a (görsel dosya olarak, bilgiler açıklamada). */
-    async function altyapiSorgula(e, b) {
-        flashBtn(b, 'Gönderiliyor…', 60000);
-        try {
-            if (!token) await resolveToken();
-            const text = infoText(e);
-            if (e.file?.url) {
-                const blob = await fetchBlob(e.file.url);
-                const name = e.file.name || `dekont.${(blob.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg')}`;
-                const up = await api('files.getUploadURLExternal', { filename: name, length: String(blob.size) });
-                await putBytes(up.upload_url, blob);
-                await api('files.completeUploadExternal', { files: JSON.stringify([{ id: up.file_id, title: name }]), channel_id: CONFIG.ALTYAPI_CHANNEL, initial_comment: text });
-            } else await api('chat.postMessage', { channel: CONFIG.ALTYAPI_CHANNEL, text });
-            b.disabled = false; flashBtn(b, '✓ Gönderildi');
-            tr(`altyapıya gönderildi ${e.pid}${e.file?.url ? ' (dekontlu)' : ''}`);
-            toast(`✓ Altyapıya gönderildi (${e.pid})`);
-        } catch (err) { b.disabled = false; b.textContent = b.dataset.label; toast(`Altyapıya gönderilemedi: ${err.message}`, false); }
+    /* ── "Altyapıda Sorgula": yatırım seç → Pingwi → Transaction check formu kendiliğinden dolar (dekont dahil) ── */
+    /** GM köprüsüyle başka sekmeye soru sor, cevabı bekle (GT: depReq/depRes, Pingwi: pwReq/pwRes). */
+    function ask(reqKey, resKey, payload, ms = 15000) {
+        const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        return new Promise((resolve) => {
+            const t = setTimeout(() => { GM_removeValueChangeListener?.(lid); resolve(null); }, ms);
+            const lid = GM_addValueChangeListener(resKey, (k, o, v) => { if (v?.id === id) { clearTimeout(t); GM_removeValueChangeListener?.(lid); resolve(v); } });
+            GM_setValue(reqKey, { id, at: Date.now(), ...payload });
+        });
     }
+    const tlFmt = (n) => Number(n).toLocaleString('tr-TR', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    const whenFmt = (t) => { const d = new Date(t); return isNaN(d) ? '' : `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+    async function altyapiSorgula(e, b, box) {
+        let panel = box.querySelector('.dk-dep');
+        if (panel) { panel.remove(); return; }   // ikinci tıklama kapatır
+        panel = document.createElement('div'); panel.className = 'dk-dep';
+        panel.innerHTML = '<div class="dk-note">Yatırımlar getiriliyor…</div>';
+        b.closest('.dk-row').after(panel);
+        const r = await ask('depReq', 'depRes', { pid: e.pid });
+        if (!r) { panel.innerHTML = '<div class="dk-note dk-warn">Panel cevap vermedi — açık GT sekmesi var mı?</div>'; return; }
+        if (!r.ok) { panel.innerHTML = `<div class="dk-note dk-warn">${esc(r.msg)}</div>`; return; }
+        if (!r.list.length) { panel.innerHTML = '<div class="dk-note">Son 30 günde yatırım yok.</div>'; return; }
+        panel.innerHTML = '<div class="dk-note">Hangi yatırım? (Deposits sekmesi, en yenisi üstte)</div>';
+        for (const d of r.list) {
+            const it = document.createElement('button');
+            it.type = 'button'; it.className = 'dk-dep-item';
+            it.innerHTML = `<span class="dk-dep-amt">${esc(tlFmt(d.amount))} TL</span><span class="dk-dep-meta">${esc(whenFmt(d.at))} · ${esc(d.method)}</span><span class="dk-dep-st">${esc(d.status)}</span><span class="dk-dep-id">${esc(d.id)}</span>`;
+            it.addEventListener('mousedown', (ev) => { ev.preventDefault(); ev.stopPropagation(); });
+            it.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); chooseDeposit(e, d, panel); });
+            panel.appendChild(it);
+        }
+    }
+    async function chooseDeposit(e, d, panel) {
+        panel.innerHTML = `<div class="dk-note">${esc(d.id)} · Pingwi sorgulanıyor…</div>`;
+        const pw = await ask('pwReq', 'pwRes', { ref: d.id });
+        const tx = pw?.ok ? pw.tx : null;
+        const fields = {
+            'Client ID': tx?.clientId || e.pid,
+            'Merchant order ID': d.id,
+            'Pingwi transaction ID': tx?.uuid || '',
+            'Date of the transaction': tx?.created || d.atStr || whenFmt(d.at),
+            'Amount': tx?.amount || `${d.amount} TRY`,
+            'Status in CORE': d.status,
+            'What is the issue with the transaction': 'Not Credited',
+        };
+        GM_setValue('wfPending', { at: Date.now(), fields, file: e.file || null, pid: e.pid, dep: d.id });
+        const pwLine = tx ? `Pingwi: ${esc(tx.amount)} · ${esc(tx.status)}` : `<span class="dk-warn">Pingwi: ${esc(pw ? pw.msg : 'Pingwi sekmesi cevap vermedi')}</span>`;
+        panel.innerHTML = `<div class="dk-note">✓ ${esc(d.id)} hazır · ${pwLine}<br>Transaction check formunu aç — alanlar ve dekont kendiliğinden dolacak.</div>`;
+        tr(`altyapı formu hazır ${e.pid} / ${d.id}${tx ? '' : ' (Pingwi yok)'}`);
+        if (CONFIG.WORKFLOW_URL) W.open(CONFIG.WORKFLOW_URL, '_self');
+    }
+
+    /** Slack form alanına değer yaz (React'in fark etmesi için tarayıcının kendi yazma yolu, olmazsa değer + olaylar) */
+    async function setField(el, value) {
+        el.focus(); await sleep(30);
+        el.select?.();
+        if (document.execCommand('insertText', false, value) && el.value === value) { el.dispatchEvent(new Event('blur', { bubbles: true })); return; }
+        const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, 'value')?.set?.call(el, value);
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: value }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('blur', { bubbles: true }));
+    }
+    /** Etiketin hemen altındaki yazı kutusu (etiket birebir — "(optional)" ve parantezli ekler yok sayılır) */
+    function fieldFor(modal, label) {
+        const norm = (t) => String(t || '').replace(/\(.*?\)|optional|\?/gi, '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const want = norm(label);
+        const labels = [...modal.querySelectorAll('label, span, div, p')].filter(el => !el.children.length && norm(el.textContent) === want);
+        for (const lab of labels) {
+            for (let n = lab.parentElement, i = 0; n && n !== modal && i < 6; n = n.parentElement, i++) {
+                const inp = [...n.querySelectorAll('input:not([type=hidden]):not([type=file]), textarea')]
+                    .find(x => lab.compareDocumentPosition(x) & Node.DOCUMENT_POSITION_FOLLOWING);
+                if (inp) return inp;
+            }
+        }
+        return null;
+    }
+    async function attachFile(modal, file) {
+        const input = modal.querySelector('input[type=file]');
+        if (!input || !file?.url) return false;
+        const blob = await fetchBlob(file.url);
+        const P = W, pg = (o) => (typeof cloneInto === 'function' ? cloneInto(o, P, { wrapReflectors: true }) : o);
+        const u8 = new Uint8Array(await blob.arrayBuffer());
+        const f = new P.File(pg([u8]), file.name || 'dekont.jpg', pg({ type: blob.type || file.type || 'image/jpeg' }));
+        const dt = new P.DataTransfer(); dt.items.add(f);
+        (input.wrappedJSObject || input).files = dt.files;
+        input.dispatchEvent(new (P.Event)('change', pg({ bubbles: true })));
+        return true;
+    }
+    let filling = false;
+    async function autofillWorkflow() {
+        if (filling) return;
+        const pend = GM_getValue('wfPending', null);
+        if (!pend || Date.now() - pend.at > 20 * 60000) return;
+        const head = [...document.querySelectorAll('h1, h2, [data-qa*="modal_title"], [role="dialog"] *')].find(el => !el.children.length && (el.textContent || '').trim() === 'Transaction check');
+        const modal = head && (head.closest('[role="dialog"], .c-sk-modal, .p-block_kit_modal') || head.parentElement?.parentElement?.parentElement);
+        if (!modal || modal.dataset.dkFilled === pend.dep) return;
+        filling = true;
+        try {
+            modal.dataset.dkFilled = pend.dep;
+            let n = 0;
+            for (const [label, value] of Object.entries(pend.fields)) {
+                if (!value) continue;
+                const el = fieldFor(modal, label);
+                if (!el || el.value) continue;   // elle yazılmış alanı ezme
+                await setField(el, String(value)); n++;
+                await sleep(150);
+            }
+            let fileOk = false;
+            try { fileOk = await attachFile(modal, pend.file); } catch (err) { warn('dekont eklenemedi:', err.message); }
+            GM_deleteValue('wfPending');
+            tr(`form dolduruldu: ${n} alan${fileOk ? ' + dekont' : pend.file ? ' (dekont eklenemedi)' : ''}`);
+            toast(`✓ Transaction check: ${n} alan dolduruldu${fileOk ? ', dekont eklendi' : pend.file ? ' — dekontu elle ekleyin' : ''}`, fileOk || !pend.file);
+        } finally { filling = false; }
+    }
+
     function buildCard(e) {
         ensureCardCss();
         const box = document.createElement('div');
@@ -766,7 +922,7 @@ function slackSide() {
         const row = (...btns) => { const r = document.createElement('div'); r.className = 'dk-row'; r.append(...btns); return r; };
         if (!e.error) {
             box.appendChild(row(...CONFIG.TARGETS.map(t => cardButton(`✈ ${t.label}`, '', () => telegramClick(e, t)))));
-            box.appendChild(row(cardButton('🔍 Altyapıda Sorgula', '', (b) => altyapiSorgula(e, b))));
+            box.appendChild(row(cardButton('🔍 Altyapıda Sorgula', '', (b) => altyapiSorgula(e, b, box))));
             const copy = cardButton(CONFIG.COPY_LABEL, '', () => copyAll(e));
             copy.addEventListener('pointerenter', () => preparePng(e));
             box.appendChild(row(copy));
@@ -799,7 +955,7 @@ function slackSide() {
     new MutationObserver(() => {
         if (widenQueued) return;
         widenQueued = true;
-        setTimeout(() => { widenQueued = false; widenCopy(document); renderCards(); }, 400);   // Slack sık değişir: en fazla 400 ms'de bir bak
+        setTimeout(() => { widenQueued = false; widenCopy(document); renderCards(); autofillWorkflow(); }, 400);   // Slack sık değişir: en fazla 400 ms'de bir bak
     }).observe(document.documentElement, { childList: true, subtree: true });
 
     /** Telegram sekmesine iş bırak, sonucu bekle. */
