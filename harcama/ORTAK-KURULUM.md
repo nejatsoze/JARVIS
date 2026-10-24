@@ -1,6 +1,6 @@
-# Harcama uygulamasını telefonuna kurma
+# Love Budget uygulamasını telefonuna kurma
 
-Ortak harcama uygulamamızı telefonuna kurman için iki adım var. Toplam 5 dakika sürer.
+Ortak harcama uygulamamız Love Budget’ı telefonuna kurman için iki adım var. Toplam 5 dakika sürer.
 Telefon dili İngilizce olduğu için menü adlarını İngilizce yazdım.
 
 Bunlar lazım olacak:
@@ -15,7 +15,7 @@ Bunlar lazım olacak:
 1. **Safari**'de yukarıdaki adresi aç.
 2. Anahtarı yapıştırıp **Giriş yap**'a dokun.
 3. Alttaki **Share** (paylaş) düğmesine dokun, sonra **Add to Home Screen → Add** de.
-4. Bundan sonra uygulamayı ana ekrandaki **Harcama** ikonundan aç. İlk açılışta anahtarı
+4. Bundan sonra uygulamayı ana ekrandaki **Love Budget** ikonundan aç. İlk açılışta anahtarı
    bir kez daha isteyebilir.
 
 Para birimini sağ üstteki bayraklı düğmeden değiştirebilirsin. Bu seçim sadece senin

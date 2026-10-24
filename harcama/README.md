@@ -1,4 +1,4 @@
-# Harcama — Apple Pay harcama takibi
+# Love Budget — Apple Pay harcama takibi
 
 iPhone'da Apple Pay ile her ödemede **işyeri, tutar ve kartı** otomatik kaydeden,
 aylık bütçe ve grafiklerle gösteren kişisel bir PWA.
