@@ -4,8 +4,8 @@ const CACHE_PREFIX = 'harcama.cache.';
 const CURRENCY_KEY = 'harcama.currency';
 const CATEGORY_COLORS = {
   'Market': 'var(--c-market)',
-  'Yeme-İçme': 'var(--c-food)',
-  'Ulaşım': 'var(--c-transport)',
+  'Yeme & İçme': 'var(--c-food)',
+  'Ulaşım & Konaklama': 'var(--c-transport)',
   'Akaryakıt': 'var(--c-fuel)',
   'Alışveriş': 'var(--c-shopping)',
   'Faturalar': 'var(--c-bills)',

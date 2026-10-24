@@ -2,8 +2,8 @@
 
 export const CATEGORIES = [
   'Market',
-  'Yeme-İçme',
-  'Ulaşım',
+  'Yeme & İçme',
+  'Ulaşım & Konaklama',
   'Akaryakıt',
   'Alışveriş',
   'Faturalar',
@@ -15,10 +15,10 @@ export const CATEGORIES = [
 // Öğrenilmiş bir eşleşme yoksa ilk tahmin için anahtar kelimeler.
 const KEYWORDS = [
   ['Market', ['migros', 'carrefour', 'a101', 'bim', 'sok market', 'macrocenter', 'file market', 'hakmar', 'getir', 'istegelsin', 'market', 'bakkal', 'manav', 'kasap', 'firin', 'eleven', 'lawson', 'familymart', 'family mart', 'fairprice', 'indomaret', 'alfamart', 'big c', 'lotus']],
-  ['Yeme-İçme', ['starbucks', 'kahve', 'coffee', 'cafe', 'kafe', 'restoran', 'restaurant', 'burger', 'pizza', 'doner', 'kebap', 'lokanta', 'simit', 'yemeksepeti', 'trendyol yemek', 'mcdonald', 'kfc', 'popeyes', 'pastane', 'baklava']],
+  ['Yeme & İçme', ['starbucks', 'kahve', 'coffee', 'cafe', 'kafe', 'restoran', 'restaurant', 'burger', 'pizza', 'doner', 'kebap', 'lokanta', 'simit', 'yemeksepeti', 'trendyol yemek', 'mcdonald', 'kfc', 'popeyes', 'pastane', 'baklava']],
   ['Sağlık', ['eczane', 'pharmacy', 'hastane', 'hospital', 'klinik', 'acibadem', 'medical park', 'dis hekim', 'dis klinig']],
   ['Akaryakıt', ['shell', 'opet', 'bp', 'petrol ofisi', 'total', 'aytemiz', 'lukoil', 'akaryakit', 'petrol']],
-  ['Ulaşım', ['istanbulkart', 'metro', 'iett', 'uber', 'bitaksi', 'taksi', 'taxi', 'otopark', 'thy', 'pegasus', 'ajet', 'hgs', 'ogs', 'marmaray', 'vapur', 'marti', 'grab', 'gojek', 'bolt', 'bts', 'mrt', 'suica', 'pasmo']],
+  ['Ulaşım & Konaklama', ['istanbulkart', 'metro', 'iett', 'uber', 'bitaksi', 'taksi', 'taxi', 'otopark', 'thy', 'pegasus', 'ajet', 'hgs', 'ogs', 'marmaray', 'vapur', 'marti', 'grab', 'gojek', 'bolt', 'bts', 'mrt', 'suica', 'pasmo', 'otel', 'hotel', 'hostel', 'resort', 'airbnb', 'booking', 'agoda', 'expedia', 'marriott', 'hilton', 'radisson', 'ibis']],
   ['Faturalar', ['turkcell', 'vodafone', 'turk telekom', 'superonline', 'enerjisa', 'igdas', 'iski', 'elektrik', 'dogalgaz', 'su idaresi', 'netflix', 'spotify', 'youtube', 'apple.com', 'icloud', 'disney', 'exxen', 'blutv']],
   ['Eğlence', ['sinema', 'cinema', 'cinemaximum', 'biletix', 'passo', 'steam', 'playstation', 'xbox', 'konser', 'muze', 'bowling']],
   ['Alışveriş', ['trendyol', 'hepsiburada', 'amazon', 'zara', 'h&m', 'lc waikiki', 'koton', 'mavi', 'decathlon', 'teknosa', 'mediamarkt', 'vatan', 'ikea', 'boyner', 'ebebek', 'gratis', 'watsons', 'rossmann']],

@@ -53,8 +53,8 @@ test('merchantKey: şube numarası ve Türkçe harfler sadeleşir', () => {
 test('guessCategory: anahtar kelime ile tahmin', () => {
   assert.equal(guessCategory('MIGROS 4521 KADIKOY'), 'Market');
   assert.equal(guessCategory('A101 USKUDAR'), 'Market');
-  assert.equal(guessCategory('STARBUCKS MODA'), 'Yeme-İçme');
-  assert.equal(guessCategory("MCDONALDS BESIKTAS"), 'Yeme-İçme');
+  assert.equal(guessCategory('STARBUCKS MODA'), 'Yeme & İçme');
+  assert.equal(guessCategory("MCDONALDS BESIKTAS"), 'Yeme & İçme');
   assert.equal(guessCategory('SHELL PETROL'), 'Akaryakıt');
   assert.equal(guessCategory('MEDICAL PARK GOZTEPE'), 'Sağlık');
   assert.equal(guessCategory('BIMEKS ELEKTRONIK'), 'Diğer');
@@ -103,5 +103,10 @@ test('convertMinor: USD tabanlı kurlarla çevirme', () => {
 test('guessCategory: Asya zincirleri', () => {
   assert.equal(guessCategory('7-ELEVEN SUKHUMVIT'), 'Market');
   assert.equal(guessCategory('LAWSON SHIBUYA'), 'Market');
-  assert.equal(guessCategory('GRAB SINGAPORE'), 'Ulaşım');
+  assert.equal(guessCategory('GRAB SINGAPORE'), 'Ulaşım & Konaklama');
+});
+
+test('guessCategory: konaklama', () => {
+  assert.equal(guessCategory('HILTON BANGKOK'), 'Ulaşım & Konaklama');
+  assert.equal(guessCategory('AIRBNB * HM2X'), 'Ulaşım & Konaklama');
 });
