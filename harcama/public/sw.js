@@ -1,5 +1,5 @@
 // Uygulama kabuğunu önbellekten sun; API her zaman ağdan (veri tazeliği uygulamada yönetiliyor).
-const CACHE = 'harcama-v7';
+const CACHE = 'harcama-v8';
 const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/manifest.webmanifest', '/icons/icon.svg', '/icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (event) => {
